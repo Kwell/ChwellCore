@@ -31,6 +31,7 @@
 - `example_echo_server`（基础组件示例）
 - `example_protocol_server`（组件 + 协议路由示例）
 - `example_http_server`（简单 HTTP Server 示例）
+- `example_gateway_server`（网关服务，转发客户端请求到后端逻辑服）
 
 ### 运行示例服务器
 
@@ -46,6 +47,7 @@
 - 在 `example_echo_server` 下，发什么就回什么。
 - 在 `example_protocol_server` 下，按照简单协议 `cmd + len + body` 与服务交互。
  - 在 `example_http_server` 下，通过浏览器或 curl 访问 `http://127.0.0.1:8080/`、`/health`。
+- 在 `example_gateway_server` 下，客户端连接网关（默认 9001），网关将 ECHO/CHAT 转发到后端逻辑服（默认 127.0.0.1:9000），LOGIN/LOGOUT/HEARTBEAT 在网关本地处理。
 
 ### 组件与协议路由使用说明
 
@@ -87,7 +89,12 @@
 - **`NodeRegistry`**：节点注册表，支持节点注册、注销、按类型查找
 - **`RpcClient`**：基于 `TcpConnection` 的RPC客户端封装，支持异步/同步调用
 
-#### 4. 可靠性保障 (`chwell/reliability`)
+#### 4. 网关服务 (`chwell/gateway`)
+- **GatewayForwarderComponent**：网关转发组件，维护客户端与后端逻辑服的连接映射
+- **example_gateway_server**：完整网关示例，本地处理 LOGIN/LOGOUT/HEARTBEAT，转发 ECHO/CHAT 到后端
+- 支持环境变量：`GATEWAY_PORT`（监听端口）、`BACKEND_HOST`、`BACKEND_PORT`（后端地址）
+
+#### 5. 可靠性保障 (`chwell/reliability`)
 - **`HeartbeatManager`**：心跳管理器，定期检测超时连接
 - **`RateLimiter`**：令牌桶限流器，支持全局和按连接限流
 - **`Metrics`**：监控指标收集器（QPS、在线数、延迟统计）
@@ -125,5 +132,5 @@ reliability::Metrics::instance().increment_online();
 reliability::Metrics::instance().record_latency("rpc_call", 50);
 ```
 
-你可以把这里作为一个**功能完整的基础框架**，按你游戏的实际需求逐步补强业务逻辑、网关服、房间服等模块。
+你可以把这里作为一个**功能完整的基础框架**，按你游戏的实际需求逐步补强业务逻辑、房间服等模块。
 

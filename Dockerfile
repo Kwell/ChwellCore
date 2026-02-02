@@ -31,12 +31,14 @@ RUN apt-get update && \
 
 WORKDIR /app
 
-# 从构建阶段拷贝需要的可执行文件
+# 从构建阶段拷贝需要的可执行文件和配置
+COPY --from=build /app/gateway.conf /app/gateway.conf
 COPY --from=build /app/build/example_http_server /usr/local/bin/example_http_server
 COPY --from=build /app/build/example_protocol_server /usr/local/bin/example_protocol_server
+COPY --from=build /app/build/example_gateway_server /usr/local/bin/example_gateway_server
 
 # 暴露端口（按需调整）
-EXPOSE 8080 9000
+EXPOSE 8080 9000 9001
 
 # 通过环境变量选择要启动的服务，默认 http server
 ENV SERVICE_BINARY=example_http_server

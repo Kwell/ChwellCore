@@ -27,6 +27,7 @@ add_library(chwell_core
     src/http/http_server.cpp
     src/codec/codec.cpp
     src/rpc/rpc_client.cpp
+    src/gateway/gateway_forwarder.cpp
 )
 
 target_include_directories(chwell_core
@@ -50,5 +51,10 @@ if (CHWELL_BUILD_EXAMPLES)
         examples/http_server.cpp
     )
     target_link_libraries(example_http_server PRIVATE chwell_core)
+
+    add_executable(example_gateway_server
+        examples/gateway_server.cpp
+    )
+    target_link_libraries(example_gateway_server PRIVATE chwell_core)
 endif()
 
