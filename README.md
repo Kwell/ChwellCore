@@ -2,7 +2,7 @@
 
 ### 特性概览
 - 核心目标：为分布式游戏服务器提供一个**可扩展、可定制的基础骨架**，专注连接管理、线程模型和节点抽象。
-- 基于 **C++11** 与 **Asio**（使用 header-only 形式，兼容 Windows）。
+- 基于 **C++11** 与 **POSIX 套接字**（标准库 + 自实现，无第三方网络库依赖）。
 - 提供：
   - **日志模块**：简单线程安全控制台日志。
   - **配置模块**：当前为内建默认值（可扩展为 JSON/INI）。
@@ -22,12 +22,7 @@
 
 ### 构建步骤（使用 CMake）
 
-#### 1. 准备 Asio 头文件（header-only）
-- 从 Asio 官方仓库或发行包中获取 Asio 源码（只需头文件部分）。
-- 将 Asio 的 `asio` 目录（或其上层 `include` 目录）放到本工程的 `3rdparty/asio/include` 下：
-  - 也就是说，最终应当能通过 `3rdparty/asio/include/asio.hpp` 被找到。
-
-#### 2. 配置与编译
+#### 配置与编译
 - `cd build`
 - `cmake ..`
 - `cmake --build . --config Release`

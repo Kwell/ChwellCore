@@ -11,9 +11,9 @@ int main() {
     core::Logger::instance().info("Starting HTTP Server...");
 
     core::Config cfg;
-    cfg.load_from_file("http.conf"); // 目前未使用，可后续扩展
+    cfg.load_from_file("http.conf");
 
-    asio::io_service io_service;
+    net::IoService io_service;
 
     http::HttpServer server(io_service, 8080);
 
@@ -52,7 +52,7 @@ int main() {
     std::string line;
     std::getline(std::cin, line);
 
+    server.stop();
     io_service.stop();
     return 0;
 }
-

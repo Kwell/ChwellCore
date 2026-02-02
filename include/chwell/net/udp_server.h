@@ -1,42 +1,40 @@
 #pragma once
 
-#include <asio.hpp>
 #include <functional>
 #include <vector>
+#include <thread>
+#include <atomic>
+
+#include "chwell/net/posix_io.h"
 
 namespace chwell {
 namespace net {
 
-class UdpServer;
-
 typedef std::function<void(const std::vector<char>& data,
-                           const asio::ip::udp::endpoint& remote)> UdpMessageCallback;
+                           const UdpEndpoint& remote)> UdpMessageCallback;
 
-// 简单的 UDP 服务器封装：单端口收发
+// 简单的 UDP 服务器封装：单端口收发，使用线程 + 阻塞 recvfrom
 class UdpServer {
 public:
-    UdpServer(asio::io_service& io_service, unsigned short port);
+    UdpServer(IoService& io_service, unsigned short port);
 
-    // 启动异步接收
     void start_receive();
+    void stop();
 
-    // 发送数据到指定地址
-    void send_to(const std::vector<char>& data,
-                 const asio::ip::udp::endpoint& remote);
+    void send_to(const std::vector<char>& data, const UdpEndpoint& remote);
 
     void set_message_callback(const UdpMessageCallback& cb) { message_cb_ = cb; }
 
 private:
-    void do_receive();
-    void on_receive(const asio::error_code& ec, std::size_t bytes_transferred);
+    void recv_loop();
 
-    asio::io_service& io_service_;
-    asio::ip::udp::socket socket_;
+    IoService& io_service_;
+    int fd_{-1};
     std::vector<char> buffer_;
-    asio::ip::udp::endpoint remote_endpoint_;
     UdpMessageCallback message_cb_;
+    std::thread recv_thread_;
+    std::atomic<bool> stopped_{false};
 };
 
 } // namespace net
 } // namespace chwell
-

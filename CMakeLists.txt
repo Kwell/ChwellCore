@@ -12,6 +12,7 @@ add_library(chwell_core
     src/core/logger.cpp
     src/core/config.cpp
     src/core/thread_pool.cpp
+    src/net/posix_io.cpp
     src/net/tcp_server.cpp
     src/net/tcp_connection.cpp
     src/net/udp_server.cpp
@@ -32,7 +33,6 @@ target_include_directories(chwell_core
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/generated/proto
-        ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/asio/include
 )
 
 if (CHWELL_BUILD_EXAMPLES)

@@ -1,55 +1,80 @@
 #include "chwell/net/udp_server.h"
 #include "chwell/core/logger.h"
+#include <cstring>
 
 namespace chwell {
 namespace net {
 
-UdpServer::UdpServer(asio::io_service& io_service, unsigned short port)
-    : io_service_(io_service),
-      socket_(io_service, asio::ip::udp::endpoint(asio::ip::udp::v4(), port)),
-      buffer_(65536) { // 最大 UDP 报文
+UdpServer::UdpServer(IoService& io_service, unsigned short port)
+    : io_service_(io_service), buffer_(65536) {
+    fd_ = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd_ < 0) return;
+
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port = htons(port);
+
+    if (bind(fd_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
+        core::Logger::instance().error("UdpServer bind failed");
+        close(fd_);
+        fd_ = -1;
+    }
 }
 
 void UdpServer::start_receive() {
-    do_receive();
+    if (fd_ < 0) return;
+    stopped_ = false;
+    recv_thread_ = std::thread([this]() { recv_loop(); });
 }
 
-void UdpServer::send_to(const std::vector<char>& data,
-                        const asio::ip::udp::endpoint& remote) {
-    socket_.async_send_to(asio::buffer(data), remote,
-        [](const asio::error_code& ec, std::size_t /*bytes_transferred*/) {
-            if (ec) {
-                core::Logger::instance().warn("UDP send failed: " + ec.message());
-            }
-        });
+void UdpServer::stop() {
+    stopped_ = true;
+    if (fd_ >= 0) {
+        shutdown(fd_, SHUT_RDWR);
+    }
+    if (recv_thread_.joinable()) {
+        recv_thread_.join();
+    }
+    if (fd_ >= 0) {
+        close(fd_);
+        fd_ = -1;
+    }
 }
 
-void UdpServer::do_receive() {
-    socket_.async_receive_from(
-        asio::buffer(buffer_), remote_endpoint_,
-        [this](const asio::error_code& ec, std::size_t bytes_transferred) {
-            on_receive(ec, bytes_transferred);
-        });
-}
+void UdpServer::recv_loop() {
+    sockaddr_in remote_addr{};
+    socklen_t addr_len = sizeof(remote_addr);
 
-void UdpServer::on_receive(const asio::error_code& ec, std::size_t bytes_transferred) {
-    if (ec) {
-        if (ec != asio::error::operation_aborted) {
-            core::Logger::instance().warn("UDP receive failed: " + ec.message());
+    while (!stopped_ && fd_ >= 0) {
+        ssize_t n = recvfrom(fd_, buffer_.data(), buffer_.size(), 0,
+                            reinterpret_cast<sockaddr*>(&remote_addr), &addr_len);
+        if (n <= 0) {
+            if (errno == EINTR || errno == EAGAIN) continue;
+            break;
         }
-        return;
+
+        UdpEndpoint remote;
+        remote.addr_ = remote_addr;
+
+        std::vector<char> data(buffer_.begin(), buffer_.begin() + n);
+        if (message_cb_) {
+            io_service_.post([this, data, remote]() {
+                message_cb_(data, remote);
+            });
+        }
     }
+}
 
-    std::vector<char> data(buffer_.begin(),
-                           buffer_.begin() + static_cast<std::ptrdiff_t>(bytes_transferred));
-
-    if (message_cb_) {
-        message_cb_(data, remote_endpoint_);
+void UdpServer::send_to(const std::vector<char>& data, const UdpEndpoint& remote) {
+    if (fd_ < 0 || data.empty()) return;
+    ssize_t n = ::sendto(fd_, data.data(), data.size(), 0,
+                         reinterpret_cast<const sockaddr*>(&remote.addr_),
+                         sizeof(remote.addr_));
+    if (n < 0) {
+        core::Logger::instance().warn("UDP send failed: " + std::string(strerror(errno)));
     }
-
-    do_receive();
 }
 
 } // namespace net
 } // namespace chwell
-

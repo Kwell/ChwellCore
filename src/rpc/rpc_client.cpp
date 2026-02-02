@@ -1,32 +1,45 @@
 #include "chwell/rpc/rpc_client.h"
 #include "chwell/core/logger.h"
 #include "chwell/protocol/message.h"
-#include <asio.hpp>
+#include <cstring>
 
 namespace chwell {
 namespace rpc {
 
 bool RpcClient::connect(const std::string& host, unsigned short port) {
-    try {
-        asio::ip::tcp::resolver resolver(io_service_);
-        asio::ip::tcp::resolver::query query(host, std::to_string(port));
-        asio::ip::tcp::resolver::iterator endpoint_iterator = resolver.resolve(query);
-
-        asio::ip::tcp::socket socket(io_service_);
-        asio::connect(socket, endpoint_iterator);
-
-        connection_ = std::make_shared<net::TcpConnection>(std::move(socket));
-        connection_->set_message_callback([this](const net::TcpConnectionPtr& conn,
-                                                   const std::vector<char>& data) {
-            on_message(conn, data);
-        });
-        connection_->start();
-
-        return true;
-    } catch (const std::exception& e) {
-        core::Logger::instance().error("RPC connect failed: " + std::string(e.what()));
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) {
+        core::Logger::instance().error("RPC connect: socket failed");
         return false;
     }
+
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    if (inet_pton(AF_INET, host.c_str(), &addr.sin_addr) <= 0) {
+        core::Logger::instance().error("RPC connect: invalid address");
+        close(fd);
+        return false;
+    }
+
+    if (::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
+        core::Logger::instance().error("RPC connect failed: " + std::string(strerror(errno)));
+        close(fd);
+        return false;
+    }
+
+    net::TcpSocket socket(fd);
+    connection_ = std::make_shared<net::TcpConnection>(std::move(socket));
+    connection_->set_message_callback([this](const net::TcpConnectionPtr& conn,
+                                             const std::vector<char>& data) {
+        on_message(conn, data);
+    });
+    net::TcpConnectionPtr conn = connection_;
+    io_service_.post([conn]() {
+        conn->start();
+    });
+
+    return true;
 }
 
 void RpcClient::call(std::uint16_t cmd, const std::vector<char>& request_data, RpcCallback callback) {
@@ -38,18 +51,15 @@ void RpcClient::call(std::uint16_t cmd, const std::vector<char>& request_data, R
     std::uint32_t request_id = next_request_id_++;
     pending_requests_[request_id] = callback;
 
-    // 简化实现：将request_id编码到body前4字节
     protocol::Message msg(cmd, request_data);
     std::vector<char> data = protocol::serialize(msg);
     connection_->send(data);
 }
 
 void RpcClient::on_message(const net::TcpConnectionPtr& conn, const std::vector<char>& data) {
+    (void)conn;
     protocol::Message msg;
     if (protocol::deserialize(data, msg)) {
-        // 简化实现：假设响应包含request_id
-        // 实际应该从消息中解析request_id并查找对应的callback
-        // 这里先简化处理
         if (!pending_requests_.empty()) {
             auto it = pending_requests_.begin();
             it->second(msg);
@@ -60,8 +70,10 @@ void RpcClient::on_message(const net::TcpConnectionPtr& conn, const std::vector<
 
 bool RpcClient::call_sync(std::uint16_t cmd, const std::vector<char>& request_data,
                           protocol::Message& response, int timeout_seconds) {
-    // 简化实现：同步调用需要更复杂的实现（等待响应）
-    // 这里先返回false表示未实现
+    (void)cmd;
+    (void)request_data;
+    (void)response;
+    (void)timeout_seconds;
     core::Logger::instance().warn("RPC sync call not fully implemented");
     return false;
 }
