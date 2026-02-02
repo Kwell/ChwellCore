@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+package chwell.game;
+
+// 登录请求/响应
+message C2S_Login {
+  string player_id = 1;
+  string token     = 2;
+}
+
+message S2C_Login {
+  bool   ok       = 1;
+  string message  = 2;
+}
+
+// 聊天请求/响应
+message C2S_Chat {
+  string room_id  = 1;
+  string content  = 2;
+}
+
+message S2C_Chat {
+  string from_player_id = 1;
+  string content        = 2;
+}
+
+// 心跳
+message C2S_Heartbeat {
+  int64 timestamp_ms = 1;
+}
+
+message S2C_Heartbeat {
+  int64 timestamp_ms = 1;
+}
+
