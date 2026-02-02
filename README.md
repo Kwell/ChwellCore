@@ -94,7 +94,16 @@
 - **example_gateway_server**：完整网关示例，本地处理 LOGIN/LOGOUT/HEARTBEAT，转发 ECHO/CHAT 到后端
 - 支持环境变量：`GATEWAY_PORT`（监听端口）、`BACKEND_HOST`、`BACKEND_PORT`（后端地址）
 
-#### 5. 可靠性保障 (`chwell/reliability`)
+#### 5. 存储抽象层 (`chwell/storage`)
+- **StorageInterface**：统一存储接口，上层逻辑不关心底层介质
+- **StorageFactory**：根据配置或 YAML 创建 memory/mysql/mongodb 实现
+- **StorageConfigLoader**：从 `config/storage.yaml` 加载配置（介质类型 + 连接参数）
+- **MemoryStorage**：内存实现（无外部依赖）
+- **MysqlStorage**：MySQL 实现（`-DCHWELL_USE_MYSQL=ON`，需 libmysqlclient）
+- **MongodbStorage**：MongoDB 实现（`-DCHWELL_USE_MONGODB=ON`，需 libmongoc）
+- **StorageComponent**：可挂载到 Service 的存储组件
+
+#### 6. 可靠性保障 (`chwell/reliability`)
 - **`HeartbeatManager`**：心跳管理器，定期检测超时连接
 - **`RateLimiter`**：令牌桶限流器，支持全局和按连接限流
 - **`Metrics`**：监控指标收集器（QPS、在线数、延迟统计）
@@ -124,6 +133,39 @@ rpc_client.call(100, request_data, [](const protocol::Message& resp) {
     // 处理响应
 });
 ```
+
+#### 使用存储组件（上层逻辑不关心介质）
+```cpp
+// 推荐：从 YAML 配置创建，介质和连接参数均在 config/storage.yaml 中
+auto store = storage::StorageFactory::create_from_yaml("config/storage.yaml");
+
+store->put("player:123", R"({"name":"alice","level":10})");
+auto r = store->get("player:123");
+if (r.ok) { /* 使用 r.value */ }
+
+// 或挂载到 Service
+svc.add_component<storage::StorageComponent>("config/storage.yaml");
+auto* storage = svc.get_component<storage::StorageComponent>();
+storage->put("room:456", room_data);
+```
+
+**YAML 配置示例** (`config/storage.yaml`)：
+```yaml
+storage:
+  type: memory  # memory | mysql | mongodb
+  mysql:
+    host: 127.0.0.1
+    port: 3306
+    database: chwell
+    user: root
+    password: ""
+  mongodb:
+    uri: mongodb://127.0.0.1:27017
+    database: chwell
+    collection: kv
+```
+
+**构建选项**：`-DCHWELL_USE_YAML=ON`（默认）、`-DCHWELL_USE_MYSQL=ON`、`-DCHWELL_USE_MONGODB=ON`
 
 #### 使用监控指标
 ```cpp

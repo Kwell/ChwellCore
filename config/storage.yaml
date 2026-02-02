@@ -1,0 +1,25 @@
+# 存储配置：统一 YAML 控制使用何种介质及连接参数
+# 通过 storage.type 选择介质，对应区块填写连接配置
+
+storage:
+  # 介质类型: memory | mysql | mongodb
+  type: memory
+
+  # memory 无需连接配置
+  memory: {}
+
+  # MySQL 连接配置（当 type=mysql 时使用）
+  mysql:
+    host: 127.0.0.1
+    port: 3306
+    database: chwell
+    user: root
+    password: ""
+    charset: utf8mb4
+    table: kv  # 存储 key-value 的表名
+
+  # MongoDB 连接配置（当 type=mongodb 时使用）
+  mongodb:
+    uri: mongodb://127.0.0.1:27017
+    database: chwell
+    collection: kv  # 存储文档的集合名
