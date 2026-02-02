@@ -1,10 +1,11 @@
-FROM ubuntu:22.04 AS build
+ARG BASE_IMAGE=ubuntu:22.04
+FROM ${BASE_IMAGE} AS build
 
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        build-essential cmake git ca-certificates && \
+        apt-utils build-essential cmake git ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -18,7 +19,8 @@ RUN mkdir -p build && cd build && \
     cmake --build . --config Release
 
 
-FROM ubuntu:22.04
+ARG BASE_IMAGE=ubuntu:22.04
+FROM ${BASE_IMAGE}
 
 ENV DEBIAN_FRONTEND=noninteractive
 

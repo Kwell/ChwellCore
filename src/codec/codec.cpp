@@ -6,15 +6,14 @@ namespace chwell {
 namespace codec {
 
 std::vector<char> LengthHeaderCodec::encode(const std::string& message) {
-    std::vector<char> result;
     std::uint32_t len = static_cast<std::uint32_t>(message.size());
     std::uint32_t len_net = core::host_to_net32(len);
 
-    result.reserve(4 + message.size());
-    result.insert(result.end(), reinterpret_cast<const char*>(&len_net),
-                  reinterpret_cast<const char*>(&len_net) + 4);
-    result.insert(result.end(), message.begin(), message.end());
-
+    std::vector<char> result(4 + message.size());
+    std::memcpy(&result[0], &len_net, 4);
+    if (!message.empty()) {
+        std::memcpy(&result[4], message.data(), message.size());
+    }
     return result;
 }
 

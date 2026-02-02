@@ -1,6 +1,8 @@
 #include "chwell/net/tcp_server.h"
 #include "chwell/core/logger.h"
+#include <cerrno>
 #include <cstring>
+#include <unistd.h>
 
 namespace chwell {
 namespace net {
@@ -28,7 +30,8 @@ void TcpServer::stop() {
     stopped_ = true;
     if (wake_pipe_[1] >= 0) {
         char c = 1;
-        write(wake_pipe_[1], &c, 1);
+        ssize_t n = write(wake_pipe_[1], &c, 1);
+        (void)n;  // best-effort wake during shutdown
     }
     if (accept_thread_.joinable()) {
         accept_thread_.join();
@@ -55,7 +58,8 @@ void TcpServer::accept_loop() {
 
         if (fds[1].revents & POLLIN) {
             char buf[64];
-            read(wake_pipe_[0], buf, sizeof(buf));
+            ssize_t n = read(wake_pipe_[0], buf, sizeof(buf));
+            (void)n;  // drain wake pipe
             break;
         }
 

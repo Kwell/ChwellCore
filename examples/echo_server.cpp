@@ -1,4 +1,6 @@
+#include <csignal>
 #include <iostream>
+#include <unistd.h>
 
 #include "chwell/core/logger.h"
 #include "chwell/core/config.h"
@@ -38,10 +40,20 @@ int main() {
 
     core::Logger::instance().info("Echo Service running on port " + std::to_string(cfg.listen_port()));
 
-    // 阻塞主线程，简单实现：等待用户输入退出
-    std::cout << "Press ENTER to exit..." << std::endl;
-    std::string line;
-    std::getline(std::cin, line);
+    // 阻塞主线程：交互模式等待回车，Docker/后台模式等待 SIGTERM/SIGINT
+    static volatile sig_atomic_t g_stop = 0;
+    std::signal(SIGTERM, [](int) { g_stop = 1; });
+    std::signal(SIGINT, [](int) { g_stop = 1; });
+
+    if (isatty(STDIN_FILENO)) {
+        std::cout << "Press ENTER to exit..." << std::endl;
+        std::string line;
+        std::getline(std::cin, line);
+    } else {
+        while (!g_stop) {
+            sleep(1);
+        }
+    }
 
     svc.stop();
     return 0;

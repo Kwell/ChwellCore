@@ -1,27 +1,16 @@
-# CMake 构建输出
+# Build
 build/
-cmake-build-*/
-out/
-
-# 编译产物
 *.o
 *.a
 *.so
-*.dylib
-*.exe
 
 # IDE
 .idea/
 .vscode/
 *.swp
 *.swo
-*~
 
-# 系统文件
-.DS_Store
-Thumbs.db
-
-# 日志和临时文件
-*.log
-*.tmp
-*.temp
+# Misc
+dummy
+*.pyc
+__pycache__/
