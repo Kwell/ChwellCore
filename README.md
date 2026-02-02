@@ -32,6 +32,8 @@
 - `example_protocol_server`（组件 + 协议路由示例）
 - `example_http_server`（简单 HTTP Server 示例）
 - `example_gateway_server`（网关服务，转发客户端请求到后端逻辑服）
+- `example_storage`（存储示例，key-value 访问）
+- `example_orm`（ORM 示例，类型安全的 Repository 访问）
 
 ### 运行示例服务器
 
@@ -102,6 +104,10 @@
 - **MysqlStorage**：MySQL 实现（`-DCHWELL_USE_MYSQL=ON`，需 libmysqlclient）
 - **MongodbStorage**：MongoDB 实现（`-DCHWELL_USE_MONGODB=ON`，需 libmongoc）
 - **StorageComponent**：可挂载到 Service 的存储组件
+- **ORM 层** (`chwell/storage/orm`)：类型安全的 CRUD，无需手写 key-value
+  - **Entity**：实体基类，派生类实现 to_document/from_document
+  - **Document**：类型安全的字段容器（get_string/set_int 等）
+  - **Repository<T>**：仓储，提供 save/find/remove/find_all
 
 #### 6. 可靠性保障 (`chwell/reliability`)
 - **`HeartbeatManager`**：心跳管理器，定期检测超时连接
@@ -166,6 +172,27 @@ storage:
 ```
 
 **构建选项**：`-DCHWELL_USE_YAML=ON`（默认）、`-DCHWELL_USE_MYSQL=ON`、`-DCHWELL_USE_MONGODB=ON`
+
+#### 使用 ORM（类型安全，无需手写 key-value）
+```cpp
+// 定义实体
+struct Player : public storage::orm::Entity {
+    std::string id_, name_;
+    int level_;
+    std::string table_name() const override { return "players"; }
+    std::string id() const override { return id_; }
+    storage::orm::Document to_document() const override;
+    void from_document(const storage::orm::Document& doc) override;
+};
+
+// 通过 Repository 访问
+auto repo = component.repository<Player>("players");
+repo.save(player);
+Player found;
+if (repo.find("p001", found)) { /* 使用 found */ }
+repo.remove("p001");
+auto all = repo.find_all();
+```
 
 #### 使用监控指标
 ```cpp

@@ -5,6 +5,7 @@
 
 #include "chwell/storage/storage_interface.h"
 #include "chwell/storage/storage_types.h"
+#include "chwell/storage/orm/repository.h"
 #include "chwell/service/component.h"
 
 namespace chwell {
@@ -48,6 +49,12 @@ public:
     }
     bool exists(const std::string& key) {
         return storage_ ? storage_->exists(key) : false;
+    }
+
+    // ORM 仓储：类型安全的 CRUD，无需手写 key-value
+    template <typename T>
+    orm::Repository<T> repository(const std::string& table_name) {
+        return orm::Repository<T>(storage_.get(), table_name);
     }
 
 private:

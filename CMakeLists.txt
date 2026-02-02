@@ -87,6 +87,7 @@ add_library(chwell_core
     src/storage/storage_factory.cpp
     src/storage/storage_component.cpp
     src/storage/storage_config_loader.cpp
+    src/storage/orm/document.cpp
 )
 
 target_include_directories(chwell_core
@@ -159,5 +160,10 @@ if (CHWELL_BUILD_EXAMPLES)
         examples/storage_example.cpp
     )
     target_link_libraries(example_storage PRIVATE chwell_core)
+
+    add_executable(example_orm
+        examples/orm_example.cpp
+    )
+    target_link_libraries(example_orm PRIVATE chwell_core)
 endif()
 
