@@ -26,6 +26,7 @@ private:
     void accept_loop();
 
     IoService& io_service_;
+    unsigned short port_;
     TcpAcceptor acceptor_;
     int wake_pipe_[2]{-1, -1};
     std::set<TcpConnectionPtr> connections_;

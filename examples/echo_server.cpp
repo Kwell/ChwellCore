@@ -18,13 +18,13 @@ public:
     virtual void on_message(const net::TcpConnectionPtr& conn,
                             const std::vector<char>& data) override {
         std::string msg(data.begin(), data.end());
-        core::Logger::instance().info("EchoComponent received: " + msg);
+        CHWELL_LOG_INFO("EchoComponent received: " + msg);
         conn->send(data);
     }
 };
 
 int main() {
-    core::Logger::instance().info("Starting Echo Service with components...");
+    CHWELL_LOG_INFO("Starting Echo Service with components...");
 
     core::Config cfg;
     cfg.load_from_file("server.conf");
@@ -38,7 +38,7 @@ int main() {
 
     svc.start();
 
-    core::Logger::instance().info("Echo Service running on port " + std::to_string(cfg.listen_port()));
+    CHWELL_LOG_INFO("Echo Service running on port " + std::to_string(cfg.listen_port()));
 
     // 阻塞主线程：交互模式等待回车，Docker/后台模式等待 SIGTERM/SIGINT
     static volatile sig_atomic_t g_stop = 0;

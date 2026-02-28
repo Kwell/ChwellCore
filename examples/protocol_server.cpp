@@ -36,7 +36,7 @@ public:
 
     void handle_echo(const net::TcpConnectionPtr& conn, const protocol::Message& msg) {
         std::string text(msg.body.begin(), msg.body.end());
-        core::Logger::instance().info("EchoHandler received: " + text);
+        CHWELL_LOG_INFO("EchoHandler received: " + text);
 
         // 回显消息
         protocol::Message reply(Cmd::ECHO, "Echo: " + text);
@@ -53,7 +53,7 @@ public:
 
     void handle_chat(const net::TcpConnectionPtr& conn, const protocol::Message& msg) {
         std::string text(msg.body.begin(), msg.body.end());
-        core::Logger::instance().info("ChatHandler received: " + text);
+        CHWELL_LOG_INFO("ChatHandler received: " + text);
 
         // 广播聊天消息（这里简化处理，只回复发送者）
         protocol::Message reply(Cmd::CHAT, "[Server] " + text);
@@ -62,7 +62,7 @@ public:
 };
 
 int main() {
-    core::Logger::instance().info("Starting Protocol Router Server...");
+    CHWELL_LOG_INFO("Starting Protocol Router Server...");
 
     core::Config cfg;
     cfg.load_from_file("server.conf");
@@ -138,14 +138,14 @@ int main() {
            const protocol::Message& /*msg*/) {
             protocol::Message reply(Cmd::HEARTBEAT, "pong");
             service::ProtocolRouterComponent::send_message(conn, reply);
-            core::Logger::instance().debug("Heartbeat received");
+            CHWELL_LOG_DEBUG("Heartbeat received");
         });
 
     svc.start();
 
-    core::Logger::instance().info("Protocol Router Server running on port " +
+    CHWELL_LOG_INFO("Protocol Router Server running on port " +
                                   std::to_string(cfg.listen_port()));
-    core::Logger::instance().info(
+    CHWELL_LOG_INFO(
         "Supported commands: ECHO(1), CHAT(2), HEARTBEAT(3), LOGIN(10), LOGOUT(11)");
 
     // 阻塞主线程：交互模式等待回车，Docker/后台模式等待 SIGTERM/SIGINT

@@ -16,26 +16,29 @@ std::unique_ptr<StorageInterface> StorageFactory::create(
     if (type.empty()) type = "memory";
 
     if (type == "memory") {
+        CHWELL_LOG_INFO("StorageFactory: created type=memory");
         return std::unique_ptr<StorageInterface>(new MemoryStorage());
     }
     if (type == "mysql") {
         std::unique_ptr<MysqlStorage> storage(new MysqlStorage(config));
         if (storage->connect()) {
+            CHWELL_LOG_INFO("StorageFactory: created type=mysql");
             return std::unique_ptr<StorageInterface>(storage.release());
         }
-        core::Logger::instance().error("StorageFactory: MySQL connect failed");
+        CHWELL_LOG_ERROR("StorageFactory: MySQL connect failed");
         return nullptr;
     }
     if (type == "mongodb" || type == "mongo") {
         std::unique_ptr<MongodbStorage> storage(new MongodbStorage(config));
         if (storage->connect()) {
+            CHWELL_LOG_INFO("StorageFactory: created type=mongodb");
             return std::unique_ptr<StorageInterface>(storage.release());
         }
-        core::Logger::instance().error("StorageFactory: MongoDB connect failed");
+        CHWELL_LOG_ERROR("StorageFactory: MongoDB connect failed");
         return nullptr;
     }
 
-    core::Logger::instance().error("StorageFactory: unknown type '" + type + "'");
+    CHWELL_LOG_ERROR("StorageFactory: unknown type '" + type + "'");
     return nullptr;
 }
 
@@ -58,10 +61,14 @@ std::unique_ptr<StorageInterface> StorageFactory::create_from_yaml(
     }
     StorageConfig config;
     if (!StorageConfigLoader::load(path, config)) {
-        core::Logger::instance().error("StorageFactory: failed to load config from " + path);
+        CHWELL_LOG_ERROR("StorageFactory: failed to load config from " + path);
         return nullptr;
     }
-    return create(config);
+    auto store = create(config);
+    if (store) {
+        CHWELL_LOG_INFO("StorageFactory: created from " << path << ", type=" << config.type);
+    }
+    return store;
 }
 
 }  // namespace storage

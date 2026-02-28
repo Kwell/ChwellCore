@@ -33,7 +33,7 @@ public:
     virtual void on_disconnect(const net::TcpConnectionPtr& conn) override {
         auto it = sessions_.find(conn.get());
         if (it != sessions_.end()) {
-            core::Logger::instance().info(
+            CHWELL_LOG_INFO(
                 "Session removed, player_id=" + it->second.player_id +
                 ", room_id=" + it->second.room_id);
             sessions_.erase(it);
@@ -46,14 +46,14 @@ public:
         s.player_id = player_id;
         s.authed = true;
         update_active_time(conn);
-        core::Logger::instance().info("Player login, id=" + player_id);
+        CHWELL_LOG_INFO("Player login, id=" + player_id);
     }
 
     // 登出
     void logout(const net::TcpConnectionPtr& conn) {
         auto it = sessions_.find(conn.get());
         if (it != sessions_.end()) {
-            core::Logger::instance().info("Player logout, id=" + it->second.player_id);
+            CHWELL_LOG_INFO("Player logout, id=" + it->second.player_id);
             sessions_.erase(it);
         }
     }
@@ -64,7 +64,7 @@ public:
         if (it != sessions_.end()) {
             it->second.room_id = room_id;
             update_active_time(conn);
-            core::Logger::instance().info(
+            CHWELL_LOG_INFO(
                 "Player " + it->second.player_id + " join room " + room_id);
         }
     }
@@ -76,7 +76,7 @@ public:
             std::string room_id = it->second.room_id;
             it->second.room_id.clear();
             update_active_time(conn);
-            core::Logger::instance().info(
+            CHWELL_LOG_INFO(
                 "Player " + it->second.player_id + " leave room " + room_id);
         }
     }

@@ -20,15 +20,13 @@ public:
         : server_(io_service_, listen_port),
           thread_pool_(worker_threads),
           worker_threads_(worker_threads) {
-        using core::Logger;
-
         server_.set_connection_callback([](const net::TcpConnectionPtr& conn) {
             (void)conn;
-            Logger::instance().info("New connection");
+            CHWELL_LOG_INFO("New connection");
         });
 
         server_.set_disconnect_callback([this](const net::TcpConnectionPtr& conn) {
-            Logger::instance().info("Connection closed");
+            CHWELL_LOG_INFO("Connection closed");
             dispatch_disconnect(conn);
         });
 
@@ -56,7 +54,7 @@ public:
 
         raw->on_register(*this);
 
-        core::Logger::instance().info("Component registered: " + raw->name());
+        CHWELL_LOG_INFO("Component registered: " + raw->name());
         return raw;
     }
 
@@ -82,10 +80,11 @@ public:
             });
         }
 
-        core::Logger::instance().info("Service started");
+        CHWELL_LOG_INFO("Service started");
     }
 
     void stop() {
+        CHWELL_LOG_INFO("Service stopping");
         server_.stop();
         io_service_.stop();
     }

@@ -24,7 +24,7 @@ namespace Cmd {
 }
 
 int main() {
-    core::Logger::instance().info("Starting Gateway Server...");
+    CHWELL_LOG_INFO("Starting Gateway Server...");
 
     core::Config cfg;
     cfg.load_from_file("gateway.conf");
@@ -115,11 +115,11 @@ int main() {
 
     svc.start();
 
-    core::Logger::instance().info("Gateway Server running on port " +
+    CHWELL_LOG_INFO("Gateway Server running on port " +
                                   std::to_string(gateway_port));
-    core::Logger::instance().info("Backend: " + backend_host + ":" +
+    CHWELL_LOG_INFO("Backend: " + backend_host + ":" +
                                   std::to_string(backend_port));
-    core::Logger::instance().info(
+    CHWELL_LOG_INFO(
         "Local: LOGIN(10), LOGOUT(11), HEARTBEAT(3) | Forward: ECHO(1), CHAT(2)");
 
     // 阻塞主线程

@@ -9,7 +9,7 @@ namespace rpc {
 bool RpcClient::connect(const std::string& host, unsigned short port) {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {
-        core::Logger::instance().error("RPC connect: socket failed");
+        CHWELL_LOG_ERROR("RPC connect: socket failed");
         return false;
     }
 
@@ -17,13 +17,13 @@ bool RpcClient::connect(const std::string& host, unsigned short port) {
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port);
     if (inet_pton(AF_INET, host.c_str(), &addr.sin_addr) <= 0) {
-        core::Logger::instance().error("RPC connect: invalid address");
+        CHWELL_LOG_ERROR("RPC connect: invalid address");
         close(fd);
         return false;
     }
 
     if (::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
-        core::Logger::instance().error("RPC connect failed: " + std::string(strerror(errno)));
+        CHWELL_LOG_ERROR("RPC connect failed: " + std::string(strerror(errno)));
         close(fd);
         return false;
     }
@@ -39,12 +39,13 @@ bool RpcClient::connect(const std::string& host, unsigned short port) {
         conn->start();
     });
 
+    CHWELL_LOG_INFO("RPC connected to " << host << ":" << port);
     return true;
 }
 
 void RpcClient::call(std::uint16_t cmd, const std::vector<char>& request_data, RpcCallback callback) {
     if (!connection_) {
-        core::Logger::instance().error("RPC call failed: not connected");
+        CHWELL_LOG_ERROR("RPC call failed: not connected");
         return;
     }
 
@@ -74,7 +75,7 @@ bool RpcClient::call_sync(std::uint16_t cmd, const std::vector<char>& request_da
     (void)request_data;
     (void)response;
     (void)timeout_seconds;
-    core::Logger::instance().warn("RPC sync call not fully implemented");
+    CHWELL_LOG_WARN("RPC sync call not fully implemented");
     return false;
 }
 

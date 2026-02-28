@@ -7,20 +7,21 @@ namespace chwell {
 namespace net {
 
 WsServer::WsServer(IoService& io_service, unsigned short port)
-    : io_service_(io_service), acceptor_(port) {
+    : io_service_(io_service), port_(port), acceptor_(port) {
 }
 
 void WsServer::start_accept() {
     if (acceptor_.listen_fd() < 0) {
-        core::Logger::instance().error("WsServer: failed to create acceptor");
+        CHWELL_LOG_ERROR("WsServer: failed to create acceptor");
         return;
     }
 
     if (pipe(wake_pipe_) != 0) {
-        core::Logger::instance().error("WsServer: failed to create wake pipe");
+        CHWELL_LOG_ERROR("WsServer: failed to create wake pipe");
         return;
     }
 
+    CHWELL_LOG_INFO("WsServer listening on 0.0.0.0:" << port_);
     stopped_ = false;
     accept_thread_ = std::thread([this]() { accept_loop(); });
 }
@@ -50,7 +51,7 @@ void WsServer::accept_loop() {
         int ret = poll(fds, 2, 1000);
         if (ret < 0) {
             if (errno == EINTR) continue;
-            core::Logger::instance().error("WsServer poll error: " + std::string(strerror(errno)));
+            CHWELL_LOG_ERROR("WsServer poll error: " + std::string(strerror(errno)));
             break;
         }
         if (ret == 0) continue;
@@ -66,7 +67,7 @@ void WsServer::accept_loop() {
             ErrorCode ec;
             TcpSocket socket = acceptor_.accept(ec);
             if (ec) {
-                core::Logger::instance().error("WsServer accept failed: " + ec.message());
+                CHWELL_LOG_ERROR("WsServer accept failed: " + ec.message());
                 continue;
             }
 

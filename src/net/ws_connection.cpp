@@ -18,7 +18,7 @@ void WsConnection::run_read_loop() {
         ssize_t n = socket_.read(read_buffer_.data(), read_buffer_.size());
         if (n <= 0) {
             if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
-                core::Logger::instance().warn("WsConnection read error: " + std::string(strerror(errno)));
+                CHWELL_LOG_WARN("WsConnection read error: " + std::string(strerror(errno)));
             }
             break;
         }
@@ -43,7 +43,7 @@ void WsConnection::send_text(const std::string& text) {
     while (len > 0) {
         ssize_t n = socket_.write(ptr, len);
         if (n <= 0) {
-            core::Logger::instance().warn("WsConnection send failed: " + std::string(strerror(errno)));
+            CHWELL_LOG_WARN("WsConnection send failed: " + std::string(strerror(errno)));
             return;
         }
         ptr += n;

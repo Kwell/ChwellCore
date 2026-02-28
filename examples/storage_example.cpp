@@ -43,7 +43,7 @@ void demo_storage(storage::StorageInterface* store) {
 }
 
 int main() {
-    core::Logger::instance().info("Storage Example: upper logic independent of backend");
+    CHWELL_LOG_INFO("Storage Example: upper logic independent of backend");
 
     // 方式 1：从 YAML 配置创建（推荐，介质和连接参数均在 storage.yaml 中）
     auto store = storage::StorageFactory::create_from_yaml("config/storage.yaml");
@@ -63,6 +63,6 @@ int main() {
         demo_storage(component.storage());
     }
 
-    core::Logger::instance().info("Storage example done");
+    CHWELL_LOG_INFO("Storage example done");
     return 0;
 }

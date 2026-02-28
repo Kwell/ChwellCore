@@ -31,7 +31,7 @@ void GatewayForwarderComponent::on_disconnect(const net::TcpConnectionPtr& conn)
         backend_to_client_.erase(backend.get());
         client_to_backend_.erase(it);
         backend->close();
-        core::Logger::instance().info("Gateway: closed backend connection for client disconnect");
+        CHWELL_LOG_INFO("Gateway: closed backend connection for client disconnect");
     }
 }
 
@@ -44,7 +44,7 @@ net::TcpConnectionPtr GatewayForwarderComponent::connect_backend(
     const net::TcpConnectionPtr& client_conn) {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {
-        core::Logger::instance().error("Gateway: socket failed");
+        CHWELL_LOG_ERROR("Gateway: socket failed");
         return nullptr;
     }
 
@@ -52,13 +52,13 @@ net::TcpConnectionPtr GatewayForwarderComponent::connect_backend(
     addr.sin_family = AF_INET;
     addr.sin_port = htons(backend_port_);
     if (inet_pton(AF_INET, backend_host_.c_str(), &addr.sin_addr) <= 0) {
-        core::Logger::instance().error("Gateway: invalid backend address " + backend_host_);
+        CHWELL_LOG_ERROR("Gateway: invalid backend address " + backend_host_);
         close(fd);
         return nullptr;
     }
 
     if (::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
-        core::Logger::instance().error("Gateway: connect to backend failed: " +
+        CHWELL_LOG_ERROR("Gateway: connect to backend failed: " +
                                        std::string(strerror(errno)));
         close(fd);
         return nullptr;
@@ -83,7 +83,7 @@ net::TcpConnectionPtr GatewayForwarderComponent::connect_backend(
 
     service_->io_service().post([backend]() { backend->start(); });
 
-    core::Logger::instance().info("Gateway: connected to backend " + backend_host_ + ":" +
+    CHWELL_LOG_INFO("Gateway: connected to backend " + backend_host_ + ":" +
                                   std::to_string(backend_port_));
     return backend;
 }
@@ -102,7 +102,7 @@ void GatewayForwarderComponent::forward(const net::TcpConnectionPtr& client_conn
     if (!backend) {
         backend = connect_backend(client_conn);
         if (!backend) {
-            core::Logger::instance().error("Gateway: failed to connect backend");
+            CHWELL_LOG_ERROR("Gateway: failed to connect backend");
             protocol::Message err_reply(msg.cmd, "gateway: backend unavailable");
             service::ProtocolRouterComponent::send_message(client_conn, err_reply);
             return;
@@ -135,7 +135,7 @@ void GatewayForwarderComponent::on_backend_close(const net::TcpConnectionPtr& ba
     if (it != backend_to_client_.end()) {
         client_to_backend_.erase(it->second.get());
         backend_to_client_.erase(it);
-        core::Logger::instance().info("Gateway: backend connection closed");
+        CHWELL_LOG_INFO("Gateway: backend connection closed");
     }
 }
 

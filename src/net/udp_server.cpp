@@ -16,9 +16,11 @@ UdpServer::UdpServer(IoService& io_service, unsigned short port)
     addr.sin_port = htons(port);
 
     if (bind(fd_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
-        core::Logger::instance().error("UdpServer bind failed");
+        CHWELL_LOG_ERROR("UdpServer bind failed");
         close(fd_);
         fd_ = -1;
+    } else {
+        CHWELL_LOG_INFO("UdpServer bound to 0.0.0.0:" << port);
     }
 }
 
@@ -72,7 +74,7 @@ void UdpServer::send_to(const std::vector<char>& data, const UdpEndpoint& remote
                          reinterpret_cast<const sockaddr*>(&remote.addr_),
                          sizeof(remote.addr_));
     if (n < 0) {
-        core::Logger::instance().warn("UDP send failed: " + std::string(strerror(errno)));
+        CHWELL_LOG_WARN("UDP send failed: " + std::string(strerror(errno)));
     }
 }
 

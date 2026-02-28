@@ -33,7 +33,7 @@ bool MongodbStorage::connect() {
     bson_error_t error;
     mongoc_client_t* client = mongoc_client_new_with_error(uri_str.c_str(), &error);
     if (!client) {
-        core::Logger::instance().error("MongodbStorage: connect failed: " +
+        CHWELL_LOG_ERROR("MongodbStorage: connect failed: " +
                                        std::string(error.message));
         mongoc_cleanup();
         return false;
@@ -50,12 +50,12 @@ bool MongodbStorage::connect() {
     client_ = client;
     collection_ = coll;
 
-    core::Logger::instance().info("MongodbStorage: connected to " + uri_str +
+    CHWELL_LOG_INFO("MongodbStorage: connected to " + uri_str +
                                   "/" + db_name + "." + coll_name);
     return true;
 #else
     (void)config_;
-    core::Logger::instance().warn(
+    CHWELL_LOG_WARN(
         "MongodbStorage: not built with MongoDB support, use -DCHWELL_USE_MONGODB=ON");
     return false;
 #endif

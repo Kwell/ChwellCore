@@ -10,7 +10,7 @@
 using namespace chwell;
 
 int main() {
-    core::Logger::instance().info("Starting HTTP Server...");
+    CHWELL_LOG_INFO("Starting HTTP Server...");
 
     core::Config cfg;
     cfg.load_from_file("http.conf");
@@ -20,7 +20,7 @@ int main() {
     http::HttpServer server(io_service, 8080);
 
     server.set_handler([](const http::HttpRequest& req, http::HttpResponse& resp) {
-        core::Logger::instance().info("HTTP " + req.method + " " + req.path);
+        CHWELL_LOG_INFO("HTTP " + req.method + " " + req.path);
 
         if (req.path == "/") {
             resp.status_code = 200;
@@ -49,7 +49,7 @@ int main() {
         });
     }
 
-    core::Logger::instance().info("HTTP Server listening on port 8080");
+    CHWELL_LOG_INFO("HTTP Server listening on port 8080");
     // 交互模式等待回车，Docker/后台模式等待 SIGTERM/SIGINT
     static volatile sig_atomic_t g_stop = 0;
     std::signal(SIGTERM, [](int) { g_stop = 1; });

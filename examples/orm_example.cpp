@@ -40,7 +40,7 @@ struct Player : public storage::orm::Entity {
 };
 
 int main() {
-    core::Logger::instance().info("ORM Example: type-safe storage access");
+    CHWELL_LOG_INFO("ORM Example: type-safe storage access");
 
     // 从 YAML 创建存储，失败则回退到 memory
     auto store = storage::StorageFactory::create_from_yaml("config/storage.yaml");
@@ -98,6 +98,6 @@ int main() {
     repo.save(p2);
     std::cout << "saved p002" << std::endl;
 
-    core::Logger::instance().info("ORM example done");
+    CHWELL_LOG_INFO("ORM example done");
     return 0;
 }

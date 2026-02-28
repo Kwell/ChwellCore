@@ -28,7 +28,7 @@ public:
     virtual void on_disconnect(const net::TcpConnectionPtr& conn) override {
         auto it = sessions_.find(conn.get());
         if (it != sessions_.end()) {
-            core::Logger::instance().info(
+            CHWELL_LOG_INFO(
                 "Session removed on disconnect, player_id=" + it->second.player_id);
             sessions_.erase(it);
         }
@@ -39,14 +39,14 @@ public:
         SessionInfo& s = sessions_[conn.get()];
         s.player_id = player_id;
         s.authed = true;
-        core::Logger::instance().info("Player login, id=" + player_id);
+        CHWELL_LOG_INFO("Player login, id=" + player_id);
     }
 
     // 登出一个玩家
     void logout(const net::TcpConnectionPtr& conn) {
         auto it = sessions_.find(conn.get());
         if (it != sessions_.end()) {
-            core::Logger::instance().info(
+            CHWELL_LOG_INFO(
                 "Player logout, id=" + it->second.player_id);
             sessions_.erase(it);
         }

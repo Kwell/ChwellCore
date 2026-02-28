@@ -19,7 +19,7 @@ bool MysqlStorage::connect() {
 #if defined(CHWELL_USE_MYSQL)
     MYSQL* mysql = mysql_init(nullptr);
     if (!mysql) {
-        core::Logger::instance().error("MysqlStorage: mysql_init failed");
+        CHWELL_LOG_ERROR("MysqlStorage: mysql_init failed");
         return false;
     }
 
@@ -30,7 +30,7 @@ bool MysqlStorage::connect() {
     unsigned int port = config_.port > 0 ? static_cast<unsigned int>(config_.port) : 3306;
 
     if (!mysql_real_connect(mysql, host, user, pass, db, port, nullptr, 0)) {
-        core::Logger::instance().error("MysqlStorage: connect failed: " +
+        CHWELL_LOG_ERROR("MysqlStorage: connect failed: " +
                                        std::string(mysql_error(mysql)));
         mysql_close(mysql);
         return false;
@@ -55,18 +55,18 @@ bool MysqlStorage::connect() {
         ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
 
     if (mysql_query(mysql, create_sql.c_str()) != 0) {
-        core::Logger::instance().error("MysqlStorage: create table failed: " +
+        CHWELL_LOG_ERROR("MysqlStorage: create table failed: " +
                                        std::string(mysql_error(mysql)));
         disconnect();
         return false;
     }
 
-    core::Logger::instance().info("MysqlStorage: connected to " + config_.host + ":" +
+    CHWELL_LOG_INFO("MysqlStorage: connected to " + config_.host + ":" +
                                   std::to_string(port) + "/" + config_.database);
     return true;
 #else
     (void)config_;
-    core::Logger::instance().warn(
+    CHWELL_LOG_WARN(
         "MysqlStorage: not built with MySQL support, use -DCHWELL_USE_MYSQL=ON");
     return false;
 #endif

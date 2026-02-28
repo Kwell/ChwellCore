@@ -14,7 +14,7 @@ namespace storage {
 #if defined(CHWELL_USE_YAML)
 static bool parse_yaml(const YAML::Node& root, StorageConfig& out_config) {
     if (!root["storage"]) {
-        core::Logger::instance().error("StorageConfigLoader: missing 'storage' key");
+        CHWELL_LOG_ERROR("StorageConfigLoader: missing 'storage' key");
         return false;
     }
 
@@ -51,13 +51,13 @@ bool StorageConfigLoader::load(const std::string& yaml_path,
         YAML::Node root = YAML::LoadFile(yaml_path);
         return parse_yaml(root, out_config);
     } catch (const std::exception& e) {
-        core::Logger::instance().error("StorageConfigLoader: " + std::string(e.what()));
+        CHWELL_LOG_ERROR("StorageConfigLoader: " + std::string(e.what()));
         return false;
     }
 #else
     (void)yaml_path;
     (void)out_config;
-    core::Logger::instance().error(
+    CHWELL_LOG_ERROR(
         "StorageConfigLoader: YAML support not enabled, rebuild with -DCHWELL_USE_YAML=ON");
     return false;
 #endif
@@ -70,13 +70,13 @@ bool StorageConfigLoader::load_from_string(const std::string& yaml_content,
         YAML::Node root = YAML::Load(yaml_content);
         return parse_yaml(root, out_config);
     } catch (const std::exception& e) {
-        core::Logger::instance().error("StorageConfigLoader: " + std::string(e.what()));
+        CHWELL_LOG_ERROR("StorageConfigLoader: " + std::string(e.what()));
         return false;
     }
 #else
     (void)yaml_content;
     (void)out_config;
-    core::Logger::instance().error(
+    CHWELL_LOG_ERROR(
         "StorageConfigLoader: YAML support not enabled");
     return false;
 #endif

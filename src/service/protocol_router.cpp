@@ -21,7 +21,7 @@ void ProtocolRouterComponent::on_message(const net::TcpConnectionPtr& conn,
             it->second(conn, msg);
         } else {
             // 没有注册的处理器，记录警告
-            core::Logger::instance().warn("No handler registered for cmd: " + std::to_string(msg.cmd));
+            CHWELL_LOG_WARN("No handler registered for cmd: " + std::to_string(msg.cmd));
         }
     }
 }

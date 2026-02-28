@@ -34,7 +34,7 @@ public:
 
             HttpRequest req;
             if (!parse_request(request_data, req)) {
-                core::Logger::instance().warn("HttpSession parse request failed");
+                CHWELL_LOG_WARN("HttpSession parse request failed");
                 break;
             }
 
@@ -124,20 +124,21 @@ private:
 } // anonymous namespace
 
 HttpServer::HttpServer(chwell::net::IoService& io_service, unsigned short port)
-    : io_service_(io_service), acceptor_(port) {
+    : io_service_(io_service), port_(port), acceptor_(port) {
 }
 
 void HttpServer::start() {
     if (acceptor_.listen_fd() < 0) {
-        core::Logger::instance().error("HttpServer: failed to create acceptor");
+        CHWELL_LOG_ERROR("HttpServer: failed to create acceptor");
         return;
     }
 
     if (pipe(wake_pipe_) != 0) {
-        core::Logger::instance().error("HttpServer: failed to create wake pipe");
+        CHWELL_LOG_ERROR("HttpServer: failed to create wake pipe");
         return;
     }
 
+    CHWELL_LOG_INFO("HttpServer listening on 0.0.0.0:" << port_);
     stopped_ = false;
     accept_thread_ = std::thread([this]() { accept_loop(); });
 }
@@ -167,7 +168,7 @@ void HttpServer::accept_loop() {
         int ret = poll(fds, 2, 1000);
         if (ret < 0) {
             if (errno == EINTR) continue;
-            core::Logger::instance().error("HttpServer poll error: " + std::string(strerror(errno)));
+            CHWELL_LOG_ERROR("HttpServer poll error: " + std::string(strerror(errno)));
             break;
         }
         if (ret == 0) continue;
@@ -183,7 +184,7 @@ void HttpServer::accept_loop() {
             net::ErrorCode ec;
             net::TcpSocket socket = acceptor_.accept(ec);
             if (ec) {
-                core::Logger::instance().error("HttpServer accept failed: " + ec.message());
+                CHWELL_LOG_ERROR("HttpServer accept failed: " + ec.message());
                 continue;
             }
 

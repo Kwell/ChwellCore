@@ -28,6 +28,7 @@ private:
     void accept_loop();
 
     net::IoService& io_service_;
+    unsigned short port_;
     net::TcpAcceptor acceptor_;
     int wake_pipe_[2]{-1, -1};
     std::thread accept_thread_;

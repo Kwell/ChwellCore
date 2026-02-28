@@ -52,6 +52,7 @@ public:
 
 private:
     void timer_loop() {
+        CHWELL_LOG_DEBUG("HeartbeatManager started, interval=" << heartbeat_interval_ << "s");
         while (!stopped_) {
             std::this_thread::sleep_for(std::chrono::seconds(heartbeat_interval_));
             if (stopped_) break;
@@ -67,7 +68,7 @@ private:
         for (auto it = connections_.begin(); it != connections_.end();) {
             auto elapsed = now - it->second;
             if (elapsed > timeout) {
-                core::Logger::instance().warn("Connection timeout detected");
+                CHWELL_LOG_WARN("Connection timeout detected");
                 it = connections_.erase(it);
             } else {
                 ++it;
