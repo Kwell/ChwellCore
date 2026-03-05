@@ -11,6 +11,7 @@ option(CHWELL_USE_YAML "Enable YAML config for storage (yaml-cpp)" ON)
 option(CHWELL_USE_MYSQL "Enable MySQL storage backend" OFF)
 option(CHWELL_USE_MONGODB "Enable MongoDB storage backend" OFF)
 option(CHWELL_USE_OPENSSL "Enable OpenSSL for TLS support" OFF)
+option(CHWELL_BUILD_TESTS "Build unit tests (GoogleTest)" ON)
 
 # yaml-cpp（优先 find_package，未找到则 FetchContent，需 CMake 3.14+）
 if(CHWELL_USE_YAML)
@@ -141,6 +142,46 @@ if(CHWELL_USE_OPENSSL)
         target_link_libraries(chwell_core PRIVATE OpenSSL::SSL)
     else()
         message(WARNING "CHWELL_USE_OPENSSL=ON but OpenSSL not found, TLS wrapper will be stub")
+    endif()
+endif()
+
+if (CHWELL_BUILD_TESTS)
+    enable_testing()
+
+    # 优先使用系统安装的 GTest，其次使用 FetchContent 拉取
+    find_package(GTest QUIET)
+
+    if (NOT GTest_FOUND AND CMAKE_VERSION VERSION_GREATER_EQUAL 3.14)
+        include(FetchContent)
+        FetchContent_Declare(
+            googletest
+            GIT_REPOSITORY https://github.com/google/googletest.git
+            GIT_TAG v1.14.0
+        )
+        set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+        FetchContent_MakeAvailable(googletest)
+    endif()
+
+    set(CHWELL_GTEST_LIB)
+    if (TARGET GTest::gtest AND TARGET GTest::gtest_main)
+        set(CHWELL_GTEST_LIB GTest::gtest GTest::gtest_main)
+    elseif (TARGET gtest AND TARGET gtest_main)
+        set(CHWELL_GTEST_LIB gtest gtest_main)
+    elseif (GTest_FOUND)
+        set(CHWELL_GTEST_LIB GTest::GTest GTest::Main)
+    endif()
+
+    if (CHWELL_GTEST_LIB)
+        add_executable(chwell_core_tests
+            tests/test_protocol_parser.cpp
+            tests/test_protocol_router.cpp
+            tests/test_orm_repository.cpp
+            tests/test_session_manager.cpp
+        )
+        target_link_libraries(chwell_core_tests PRIVATE chwell_core ${CHWELL_GTEST_LIB})
+        add_test(NAME chwell_core_tests COMMAND chwell_core_tests)
+    else()
+        message(WARNING "GoogleTest not found, CHWELL_BUILD_TESTS is ON but tests will not be built")
     endif()
 endif()
 

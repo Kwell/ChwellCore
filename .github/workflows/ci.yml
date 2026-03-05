@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install CMake
+        uses: lukka/get-cmake@v3
+
+      - name: Configure
+        run: |
+          cmake -S . -B build \
+            -DCHWELL_BUILD_EXAMPLES=OFF \
+            -DCHWELL_BUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build -j 4
+
+      - name: Run tests
+        run: ctest --test-dir build --output-on-failure
