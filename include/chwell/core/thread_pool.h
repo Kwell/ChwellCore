@@ -14,7 +14,7 @@ namespace core {
 class ThreadPool {
 public:
     explicit ThreadPool(std::size_t thread_count);
-    ~ThreadPool();
+    ~ThreadPool() noexcept;
 
     ThreadPool(const ThreadPool&) = delete;
     ThreadPool& operator=(const ThreadPool&) = delete;

@@ -10,7 +10,7 @@ ThreadPool::ThreadPool(std::size_t thread_count)
     }
 }
 
-ThreadPool::~ThreadPool() {
+ThreadPool::~ThreadPool() noexcept {
     {
         std::lock_guard<std::mutex> lock(mutex_);
         stopped_ = true;

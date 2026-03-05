@@ -5,6 +5,7 @@ project(ChwellFrameCore LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(CHWELL_BUILD_EXAMPLES "Build example servers" ON)
 option(CHWELL_USE_YAML "Enable YAML config for storage (yaml-cpp)" ON)

@@ -14,6 +14,24 @@ void TcpConnection::start() {
 }
 
 void TcpConnection::run_read_loop() {
+    struct CloseGuard {
+        TcpConnection& conn;
+        bool active{true};
+
+        explicit CloseGuard(TcpConnection& c) noexcept
+            : conn(c) {}
+
+        ~CloseGuard() noexcept {
+            if (!active) {
+                return;
+            }
+            conn.closed_ = true;
+            if (conn.close_cb_) {
+                conn.close_cb_(conn.shared_from_this());
+            }
+        }
+    } guard(*this);
+
     while (!closed_ && socket_.is_open()) {
         ssize_t n = socket_.read(read_buffer_.data(), read_buffer_.size());
         if (n <= 0) {
@@ -29,6 +47,7 @@ void TcpConnection::run_read_loop() {
         }
     }
 
+    guard.active = false;
     closed_ = true;
     if (close_cb_) {
         close_cb_(shared_from_this());

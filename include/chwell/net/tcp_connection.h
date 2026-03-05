@@ -28,7 +28,7 @@ public:
     void set_message_callback(const MessageCallback& cb) { message_cb_ = cb; }
     void set_close_callback(const ConnectionCallback& cb) { close_cb_ = cb; }
 
-    int native_handle() const { return socket_.native_handle(); }
+    int native_handle() const noexcept { return socket_.native_handle(); }
 
 private:
     void run_read_loop();
