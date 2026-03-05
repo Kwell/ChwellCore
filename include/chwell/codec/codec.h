@@ -51,19 +51,23 @@ public:
     }
 };
 
-// Protobuf编解码器（占位实现，实际需要protobuf库）
+// Protobuf编解码器：
+// 使用 varint32 长度前缀的流式格式：
+// [len(varint32)][protobuf bytes][len(varint32)][protobuf bytes]...
 class ProtobufCodec : public Codec {
 public:
-    virtual std::vector<char> encode(const std::string& message) override {
-        // TODO: 实际实现需要protobuf库
-        return std::vector<char>(message.begin(), message.end());
-    }
+    ProtobufCodec() : buffer_() {}
 
-    virtual std::vector<std::string> decode(const std::vector<char>& data) override {
-        // TODO: 实际实现需要protobuf库
-        std::string msg(data.begin(), data.end());
-        return {msg};
-    }
+    // message 必须是单条 protobuf 消息的二进制序列化结果
+    virtual std::vector<char> encode(const std::string& message) override;
+
+    // 解析一段字节流，可能拆出多条 protobuf 消息（二进制形式，以字符串返回）
+    virtual std::vector<std::string> decode(const std::vector<char>& data) override;
+
+    virtual void reset() override { buffer_.clear(); }
+
+private:
+    std::vector<char> buffer_;
 };
 
 } // namespace codec

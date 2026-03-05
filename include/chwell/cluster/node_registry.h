@@ -4,6 +4,7 @@
 #include <unordered_map>
 #include <vector>
 #include <mutex>
+#include <functional>
 #include "chwell/cluster/node.h"
 
 namespace chwell {
@@ -73,6 +74,44 @@ public:
     // 获取所有在线节点
     std::vector<NodeInfo> get_all_nodes() const {
         return find_nodes_by_type("");
+    }
+
+    // 一致性哈希选择节点：根据 key 在指定类型的在线节点中选择一个节点
+    // 若 node_type 为空，则在所有在线节点中选择
+    bool select_node_by_hash(const std::string& key,
+                             NodeInfo& out,
+                             const std::string& node_type = std::string()) const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        std::vector<const NodeInfo*> candidates;
+        candidates.reserve(nodes_.size());
+        for (const auto& pair : nodes_) {
+            const NodeInfo& info = pair.second;
+            if (!info.online) continue;
+            if (!node_type.empty() && info.node_type != node_type) continue;
+            candidates.push_back(&info);
+        }
+        if (candidates.empty()) {
+            return false;
+        }
+
+        // 简单一致性哈希：对 key+node_id 计算 hash，选择 hash 最大的节点
+        std::hash<std::string> hasher;
+        std::size_t best_hash = 0;
+        const NodeInfo* best = nullptr;
+        for (const NodeInfo* info : candidates) {
+            std::string combined = key;
+            combined.append("#").append(info->node_id);
+            std::size_t h = hasher(combined);
+            if (!best || h > best_hash) {
+                best_hash = h;
+                best = info;
+            }
+        }
+        if (!best) {
+            return false;
+        }
+        out = *best;
+        return true;
     }
 
 private:

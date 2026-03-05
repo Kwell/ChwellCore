@@ -10,6 +10,7 @@ option(CHWELL_BUILD_EXAMPLES "Build example servers" ON)
 option(CHWELL_USE_YAML "Enable YAML config for storage (yaml-cpp)" ON)
 option(CHWELL_USE_MYSQL "Enable MySQL storage backend" OFF)
 option(CHWELL_USE_MONGODB "Enable MongoDB storage backend" OFF)
+option(CHWELL_USE_OPENSSL "Enable OpenSSL for TLS support" OFF)
 
 # yaml-cpp（优先 find_package，未找到则 FetchContent，需 CMake 3.14+）
 if(CHWELL_USE_YAML)
@@ -71,6 +72,7 @@ add_library(chwell_core
     src/net/udp_server.cpp
     src/net/ws_connection.cpp
     src/net/ws_server.cpp
+    src/net/tls.cpp
     src/cluster/node.cpp
     src/service/service.cpp
     src/protocol/message.cpp
@@ -100,6 +102,7 @@ target_compile_definitions(chwell_core PRIVATE
     $<$<BOOL:${CHWELL_USE_YAML}>:CHWELL_USE_YAML>
     $<$<BOOL:${CHWELL_USE_MYSQL}>:CHWELL_USE_MYSQL>
     $<$<BOOL:${CHWELL_USE_MONGODB}>:CHWELL_USE_MONGODB>
+    $<$<BOOL:${CHWELL_USE_OPENSSL}>:CHWELL_USE_OPENSSL>
 )
 
 if(CHWELL_USE_YAML)
@@ -129,6 +132,15 @@ if(CHWELL_USE_MONGODB)
         target_link_libraries(chwell_core PRIVATE ${MONGOC_LIBRARY} ${BSON_LIBRARY})
     else()
         message(WARNING "CHWELL_USE_MONGODB=ON but mongoc not found, MongoDB storage will be stub")
+    endif()
+endif()
+
+if(CHWELL_USE_OPENSSL)
+    find_package(OpenSSL QUIET)
+    if(OPENSSL_FOUND)
+        target_link_libraries(chwell_core PRIVATE OpenSSL::SSL)
+    else()
+        message(WARNING "CHWELL_USE_OPENSSL=ON but OpenSSL not found, TLS wrapper will be stub")
     endif()
 endif()
 
@@ -165,5 +177,42 @@ if (CHWELL_BUILD_EXAMPLES)
         examples/orm_example.cpp
     )
     target_link_libraries(example_orm PRIVATE chwell_core)
+
+    # 纯 Protobuf 帧服务示例（方式 B）：不使用 protocol::Message/cmd 头，
+    # 顶层协议直接为 ProtobufCodec 定义的 varint32 长度前缀帧。
+    add_executable(example_proto_frame_server
+        examples/proto_frame_server.cpp
+    )
+    target_link_libraries(example_proto_frame_server PRIVATE chwell_core)
+
+    add_executable(example_proto_frame_client
+        examples/proto_frame_client.cpp
+    )
+    target_link_libraries(example_proto_frame_client PRIVATE chwell_core)
+
+    # H5 小游戏 demo：游戏服 + 游戏网关
+    add_executable(example_game_server
+        examples/game_server.cpp
+    )
+    target_include_directories(example_game_server PRIVATE ${CMAKE_SOURCE_DIR}/examples)
+    target_link_libraries(example_game_server PRIVATE chwell_core)
+
+    add_executable(example_game_gateway_server
+        examples/game_gateway_server.cpp
+    )
+    target_include_directories(example_game_gateway_server PRIVATE ${CMAKE_SOURCE_DIR}/examples)
+    target_link_libraries(example_game_gateway_server PRIVATE chwell_core)
+
+    # WebSocket-TCP 桥接（H5 浏览器连 WS，转发到网关 TCP）
+    find_package(OpenSSL QUIET)
+    if(OPENSSL_FOUND)
+        add_executable(ws_tcp_bridge
+            examples/ws_tcp_bridge.cpp
+        )
+        target_include_directories(ws_tcp_bridge PRIVATE ${OPENSSL_INCLUDE_DIR})
+        target_link_libraries(ws_tcp_bridge PRIVATE OpenSSL::SSL)
+    else()
+        message(WARNING "OpenSSL not found, ws_tcp_bridge will not be built (required for H5 game demo)")
+    endif()
 endif()
 

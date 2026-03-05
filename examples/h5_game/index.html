@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Chwell 对战小游戏</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: "Segoe UI", "PingFang SC", sans-serif;
+      margin: 0;
+      padding: 16px;
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+      min-height: 100vh;
+      color: #e8e8e8;
+    }
+    .screen { display: none; max-width: 420px; margin: 0 auto; }
+    .screen.active { display: block; }
+    h1 { font-size: 1.5rem; margin-bottom: 1rem; color: #00d9ff; text-align: center; }
+    .card {
+      background: rgba(255,255,255,0.06);
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 16px;
+      border: 1px solid rgba(255,255,255,0.1);
+    }
+    input, button {
+      width: 100%;
+      padding: 12px;
+      margin-bottom: 10px;
+      border-radius: 8px;
+      border: 1px solid rgba(255,255,255,0.2);
+      font-size: 1rem;
+    }
+    input { background: rgba(0,0,0,0.3); color: #fff; }
+    button {
+      background: linear-gradient(90deg, #00d9ff, #0099cc);
+      color: #fff;
+      border: none;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    button.secondary { background: rgba(255,255,255,0.15); }
+    button.danger { background: linear-gradient(90deg, #ff6b6b, #c92a2a); }
+    .status { font-size: 0.85rem; color: #888; margin-bottom: 8px; }
+    .room-list { list-style: none; padding: 0; margin: 0; }
+    .room-list li {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 12px; margin-bottom: 8px;
+      background: rgba(0,0,0,0.2); border-radius: 8px;
+    }
+    .room-list li .join { width: auto; padding: 8px 16px; margin: 0; }
+    .game-hp { display: flex; justify-content: space-around; margin: 16px 0; }
+    .game-hp .hp-bar {
+      width: 45%; text-align: center;
+    }
+    .game-hp .hp-bar .label { font-size: 0.9rem; margin-bottom: 4px; }
+    .game-hp .hp-bar .bar {
+      height: 24px; background: rgba(0,0,0,0.4); border-radius: 4px; overflow: hidden;
+    }
+    .game-hp .hp-bar .fill {
+      height: 100%; background: linear-gradient(90deg, #00d9ff, #00a8cc); transition: width 0.3s;
+    }
+    .game-hp .hp-bar .fill.p2 { background: linear-gradient(90deg, #ff6b6b, #c92a2a); }
+    .result { font-size: 1.2rem; text-align: center; margin: 16px 0; color: #00d9ff; }
+    .actions { display: flex; gap: 10px; margin-top: 16px; }
+    .actions button { flex: 1; }
+    .tip { font-size: 0.8rem; color: #666; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <div id="loginScreen" class="screen active">
+    <h1>Chwell 对战</h1>
+    <div class="card">
+      <div class="status" id="loginStatus">请输入昵称并连接</div>
+      <input type="text" id="playerId" placeholder="昵称" maxlength="32" />
+      <input type="text" id="wsUrl" placeholder="服务端 WebSocket 地址（可与页面不同域）" />
+      <button id="btnConnect">连接并登录</button>
+    </div>
+  </div>
+
+  <div id="lobbyScreen" class="screen">
+    <h1>游戏大厅</h1>
+    <div class="card">
+      <div class="status">已登录: <span id="lobbyPlayerId"></span></div>
+      <input type="text" id="roomName" placeholder="房间名（可选）" />
+      <div class="actions">
+        <button id="btnCreateRoom">创建房间</button>
+        <button id="btnRefreshRooms" class="secondary">刷新列表</button>
+      </div>
+      <p class="tip">可加入下方房间，或自己创建房间等人加入</p>
+    </div>
+    <div class="card">
+      <div class="status">房间列表</div>
+      <ul class="room-list" id="roomList"></ul>
+    </div>
+    <button id="btnLogout" class="secondary">退出登录</button>
+  </div>
+
+  <div id="roomScreen" class="screen">
+    <h1>房间</h1>
+    <div class="card">
+      <div class="status" id="roomStatus">等待玩家加入…</div>
+      <div id="roomInfo"></div>
+      <div class="actions">
+        <button id="btnStartGame">开始游戏</button>
+        <button id="btnLeaveRoom" class="danger">离开房间</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="battleScreen" class="screen">
+    <h1>对战</h1>
+    <div class="card">
+      <div class="status" id="battleStatus">第 0 回合</div>
+      <div class="game-hp">
+        <div class="hp-bar">
+          <div class="label">你</div>
+          <div class="bar"><div class="fill" id="hp1Bar" style="width:100%"></div></div>
+          <div id="hp1Val">100</div>
+        </div>
+        <div class="hp-bar">
+          <div class="label">对手</div>
+          <div class="bar"><div class="fill p2" id="hp2Bar" style="width:100%"></div></div>
+          <div id="hp2Val">100</div>
+        </div>
+      </div>
+      <div class="result" id="battleResult"></div>
+      <div class="actions" id="battleActions">
+        <button id="btnAttack">攻击</button>
+        <button id="btnDefend">防御</button>
+      </div>
+      <button id="btnBackFromBattle" class="secondary" style="display:none">返回房间</button>
+    </div>
+  </div>
+
+  <script>
+(function() {
+  const WS_URL_KEY = 'chwell_game_ws_url';
+  const DEFAULT_WS = 'ws://localhost:9080';
+
+  function getDefaultWsUrl() {
+    try {
+      var params = new URLSearchParams(window.location.search);
+      var q = params.get('ws') || params.get('server') || params.get('wss');
+      if (q) return q;
+      return localStorage.getItem(WS_URL_KEY) || DEFAULT_WS;
+    } catch (_) { return DEFAULT_WS; }
+  }
+  function setWsUrl(url) {
+    try { if (url && url !== DEFAULT_WS) localStorage.setItem(WS_URL_KEY, url); } catch (_) {}
+  }
+
+  document.addEventListener('DOMContentLoaded', function() {
+    var el = document.getElementById('wsUrl');
+    if (el && !el.value) el.value = getDefaultWsUrl();
+  });
+
+  const Cmd = {
+    HEARTBEAT: 3, LOGIN: 10, LOGOUT: 11,
+    LIST_ROOMS: 20, CREATE_ROOM: 21, JOIN_ROOM: 22, LEAVE_ROOM: 23,
+    ROOM_INFO: 24, START_GAME: 25, GAME_STATE: 26, GAME_ACTION: 27
+  };
+
+  function writeMsg(cmd, body) {
+    const bodyBytes = typeof body === 'string' ? new TextEncoder().encode(body) : body;
+    const buf = new ArrayBuffer(4 + bodyBytes.length);
+    const view = new DataView(buf);
+    view.setUint16(0, cmd, false);
+    view.setUint16(2, bodyBytes.length, false);
+    new Uint8Array(buf).set(bodyBytes, 4);
+    return buf;
+  }
+
+  let ws = null;
+  let recvBuf = [];
+  let playerId = '';
+  let roomId = '';
+  let roomInfo = null;
+  let gameState = null;
+  let mySeat = 0;
+  let isOwner = false;
+  let heartbeatTimer = null;
+
+  function showScreen(id) {
+    document.querySelectorAll('.screen').forEach(el => el.classList.remove('active'));
+    const el = document.getElementById(id);
+    if (el) el.classList.add('active');
+  }
+
+  function log(elId, msg) {
+    const el = document.getElementById(elId);
+    if (el) el.textContent = msg;
+  }
+
+  function connect() {
+    const url = document.getElementById('wsUrl').value.trim() || getDefaultWsUrl();
+    setWsUrl(url);
+    if (ws) { ws.close(); ws = null; }
+    log('loginStatus', '连接中…');
+    ws = new WebSocket(url);
+    ws.binaryType = 'arraybuffer';
+    ws.onopen = () => {
+      log('loginStatus', '已连接，请点击登录');
+    };
+    ws.onclose = () => {
+      log('loginStatus', '连接已断开');
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
+      heartbeatTimer = null;
+    };
+    ws.onerror = () => log('loginStatus', '连接错误');
+    ws.onmessage = (ev) => {
+      if (typeof ev.data === 'string') return;
+      recvBuf.push(...new Uint8Array(ev.data));
+      while (recvBuf.length >= 4) {
+        const view = new DataView(new Uint8Array(recvBuf).buffer);
+        const cmd = view.getUint16(0, false);
+        const len = view.getUint16(2, false);
+        if (recvBuf.length < 4 + len) break;
+        const body = new TextDecoder().decode(new Uint8Array(recvBuf.slice(4, 4 + len)));
+        recvBuf = recvBuf.slice(4 + len);
+        onPacket(cmd, body);
+      }
+    };
+  }
+
+  function onPacket(cmd, body) {
+    if (cmd === Cmd.LOGIN) {
+      if (body.indexOf('ok') >= 0) {
+        playerId = document.getElementById('playerId').value.trim();
+        showScreen('lobbyScreen');
+        log('lobbyPlayerId', playerId);
+        sendListRooms();
+        if (!heartbeatTimer) heartbeatTimer = setInterval(() => {
+          if (ws && ws.readyState === WebSocket.OPEN)
+            ws.send(writeMsg(Cmd.HEARTBEAT, 'ping'));
+        }, 15000);
+      } else log('loginStatus', body || '登录失败');
+      return;
+    }
+    if (cmd === Cmd.LOGOUT) {
+      showScreen('loginScreen');
+      log('loginStatus', body || '已退出');
+      return;
+    }
+    if (cmd === Cmd.LIST_ROOMS) {
+      let list = [];
+      try { list = JSON.parse(body || '[]'); } catch (_) {}
+      const ul = document.getElementById('roomList');
+      ul.innerHTML = '';
+      list.forEach(r => {
+        const li = document.createElement('li');
+        li.innerHTML = `<span>${r.name || r.id} (${r.players}/2)</span><button class="join" data-id="${r.id}">加入</button>`;
+        li.querySelector('.join').onclick = () => sendJoinRoom(r.id);
+        ul.appendChild(li);
+      });
+      return;
+    }
+    if (cmd === Cmd.CREATE_ROOM) {
+      if (body && body.indexOf('err') < 0) {
+        roomId = body.trim();
+        isOwner = true;
+        roomInfo = { roomId, players: 1, state: 0 };
+        showScreen('roomScreen');
+        updateRoomUI();
+      } else log('loginStatus', body || '创建失败');
+      return;
+    }
+    if (cmd === Cmd.JOIN_ROOM) {
+      if (body === 'ok') {
+        isOwner = false;
+        showScreen('roomScreen');
+        log('roomStatus', '已加入房间，等待房主开始');
+      } else log('loginStatus', body || '加入失败');
+      return;
+    }
+    if (cmd === Cmd.LEAVE_ROOM) {
+      roomId = '';
+      roomInfo = null;
+      showScreen('lobbyScreen');
+      sendListRooms();
+      return;
+    }
+    if (cmd === Cmd.ROOM_INFO) {
+      try { roomInfo = JSON.parse(body); } catch (_) {}
+      if (roomInfo) updateRoomUI();
+      return;
+    }
+    if (cmd === Cmd.START_GAME) {
+      if (body === 'ok' || body.indexOf('ok') >= 0) {
+        log('roomStatus', '游戏开始！');
+      } else log('roomStatus', body || '开始失败');
+      return;
+    }
+    if (cmd === Cmd.GAME_STATE) {
+      const first = !gameState;
+      try { gameState = JSON.parse(body); } catch (_) {}
+      if (first && gameState) mySeat = isOwner ? 0 : 1;
+      if (gameState) {
+        showScreen('battleScreen');
+        updateBattleUI();
+      }
+      return;
+    }
+    if (cmd === Cmd.GAME_ACTION) {
+      if (body !== 'ok') log('battleStatus', body || '操作失败');
+      return;
+    }
+  }
+
+  function updateRoomUI() {
+    if (!roomInfo) return;
+    const el = document.getElementById('roomInfo');
+    el.innerHTML = `房间: ${roomInfo.roomId || roomId}，玩家数: ${roomInfo.players || 0}/2`;
+    document.getElementById('btnStartGame').style.display = isOwner ? 'block' : 'none';
+    document.getElementById('btnStartGame').disabled = (roomInfo.players || 0) < 2;
+  }
+
+  function updateBattleUI() {
+    const hp = gameState.hp || [100, 100];
+    const turn = gameState.turn ?? 0;
+    const round = gameState.round ?? 0;
+    const result = (gameState.result || '').trim();
+    const myTurn = (mySeat === turn);
+    document.getElementById('hp1Bar').style.width = Math.max(0, hp[0]) + '%';
+    document.getElementById('hp2Bar').style.width = Math.max(0, hp[1]) + '%';
+    document.getElementById('hp1Val').textContent = hp[0];
+    document.getElementById('hp2Val').textContent = hp[1];
+    log('battleStatus', result ? `对局结束` : `第 ${round} 回合，${myTurn ? '你的回合' : '对方回合'}`);
+    const actions = document.getElementById('battleActions');
+    actions.style.display = result ? 'none' : 'flex';
+    actions.querySelector('#btnAttack').disabled = !myTurn;
+    actions.querySelector('#btnDefend').disabled = !myTurn;
+    const backBtn = document.getElementById('btnBackFromBattle');
+    if (result) {
+      const win = result === 'p1_win' ? (mySeat === 0 ? '你赢' : '对方赢') : (mySeat === 1 ? '你赢' : '对方赢');
+      if (result === 'opponent_left') document.getElementById('battleResult').textContent = '对方离开';
+      else document.getElementById('battleResult').textContent = win;
+      backBtn.style.display = 'block';
+    } else {
+      document.getElementById('battleResult').textContent = '';
+      backBtn.style.display = 'none';
+    }
+  }
+
+  function send(cmd, body) {
+    if (ws && ws.readyState === WebSocket.OPEN)
+      ws.send(writeMsg(cmd, body || ''));
+  }
+
+  function sendListRooms() { send(Cmd.LIST_ROOMS); }
+  function sendJoinRoom(id) { send(Cmd.JOIN_ROOM, id); roomId = id; }
+
+  document.getElementById('btnConnect').onclick = () => {
+    connect();
+    setTimeout(() => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        const pid = document.getElementById('playerId').value.trim();
+        if (!pid) { log('loginStatus', '请输入昵称'); return; }
+        send(Cmd.LOGIN, pid);
+      }
+    }, 300);
+  };
+
+  document.getElementById('btnCreateRoom').onclick = () => {
+    const name = document.getElementById('roomName').value.trim() || 'room';
+    send(Cmd.CREATE_ROOM, name);
+  };
+  document.getElementById('btnRefreshRooms').onclick = () => sendListRooms();
+  document.getElementById('btnLogout').onclick = () => send(Cmd.LOGOUT);
+
+  document.getElementById('btnStartGame').onclick = () => send(Cmd.START_GAME);
+  document.getElementById('btnLeaveRoom').onclick = () => send(Cmd.LEAVE_ROOM);
+
+  document.getElementById('btnAttack').onclick = () => send(Cmd.GAME_ACTION, 'attack');
+  document.getElementById('btnDefend').onclick = () => send(Cmd.GAME_ACTION, 'defend');
+  document.getElementById('btnBackFromBattle').onclick = () => {
+    showScreen('roomScreen');
+    if (roomInfo) updateRoomUI();
+  };
+})();
+  </script>
+</body>
+</html>
