@@ -14,8 +14,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install CMake
-        uses: lukka/get-cmake@v3
+      # 这里不再单独安装 CMake，使用 ubuntu-latest 自带的 cmake
 
       - name: Configure
         run: |
