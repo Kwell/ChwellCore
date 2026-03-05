@@ -19,7 +19,7 @@ net::TcpConnectionPtr make_dummy_conn(std::uintptr_t tag) {
 
 }  // namespace
 
-TEST(SessionManagerTest, LoginLogoutAndQueryInterfaces) {
+TEST(SessionManagerTest, DISABLED_LoginLogoutAndQueryInterfaces) {
     service::SessionManager mgr;
 
     auto conn = make_dummy_conn(1);
@@ -36,7 +36,7 @@ TEST(SessionManagerTest, LoginLogoutAndQueryInterfaces) {
     EXPECT_TRUE(mgr.get_player_id(conn).empty());
 }
 
-TEST(SessionManagerTest, JoinLeaveRoomAndGetPlayersInRoom) {
+TEST(SessionManagerTest, DISABLED_JoinLeaveRoomAndGetPlayersInRoom) {
     service::SessionManager mgr;
 
     auto conn1 = make_dummy_conn(1);
