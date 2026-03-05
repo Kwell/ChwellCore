@@ -1,0 +1,16 @@
+# 静态集群配置（示例）
+#
+# 按 node_type 分组管理不同角色节点，例如：
+# - game  : 游戏逻辑服
+# - room  : 房间/战斗服
+# - login : 登录服
+#
+# Gateway 示例会从 type=game 的节点中选择一个后端进行转发。
+
+nodes:
+  # 示例：单个 game 节点（和 example_game_server 监听一致）
+  - id: game-1
+    type: game
+    host: 127.0.0.1
+    port: 9000
+

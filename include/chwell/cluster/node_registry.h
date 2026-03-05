@@ -5,7 +5,10 @@
 #include <vector>
 #include <mutex>
 #include <functional>
-#include "chwell/cluster/node.h"
+
+#if defined(CHWELL_USE_YAML)
+#include <yaml-cpp/yaml.h>
+#endif
 
 namespace chwell {
 namespace cluster {
@@ -24,6 +27,39 @@ struct NodeInfo {
 // 节点注册表：管理集群中所有节点的注册与发现
 class NodeRegistry {
 public:
+    // 从 YAML 配置加载节点列表（静态发现）
+    // 示例文件见 config/cluster.yaml
+    bool load_from_yaml_file(const std::string& yaml_path) {
+#if defined(CHWELL_USE_YAML)
+        try {
+            YAML::Node root = YAML::LoadFile(yaml_path);
+            return load_from_yaml_node(root);
+        } catch (const std::exception& e) {
+            (void)e;
+            return false;
+        }
+#else
+        (void)yaml_path;
+        return false;
+#endif
+    }
+
+    // 从 YAML 字符串加载（便于测试）
+    bool load_from_yaml_string(const std::string& yaml_content) {
+#if defined(CHWELL_USE_YAML)
+        try {
+            YAML::Node root = YAML::Load(yaml_content);
+            return load_from_yaml_node(root);
+        } catch (const std::exception& e) {
+            (void)e;
+            return false;
+        }
+#else
+        (void)yaml_content;
+        return false;
+#endif
+    }
+
     // 注册节点
     void register_node(const std::string& node_id,
                       const std::string& listen_addr,
@@ -115,6 +151,30 @@ public:
     }
 
 private:
+#if defined(CHWELL_USE_YAML)
+    bool load_from_yaml_node(const YAML::Node& root) {
+        if (!root["nodes"]) {
+            return false;
+        }
+        std::lock_guard<std::mutex> lock(mutex_);
+        nodes_.clear();
+
+        const YAML::Node& nodes = root["nodes"];
+        for (const auto& n : nodes) {
+            NodeInfo info;
+            if (n["id"]) info.node_id = n["id"].as<std::string>();
+            if (n["host"]) info.listen_addr = n["host"].as<std::string>();
+            if (n["port"]) info.listen_port = n["port"].as<unsigned short>(0);
+            if (n["type"]) info.node_type = n["type"].as<std::string>();
+            info.online = true;
+            if (!info.node_id.empty() && info.listen_port != 0) {
+                nodes_[info.node_id] = info;
+            }
+        }
+        return !nodes_.empty();
+    }
+#endif
+
     mutable std::mutex mutex_;
     std::unordered_map<std::string, NodeInfo> nodes_;
 };

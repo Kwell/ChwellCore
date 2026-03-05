@@ -20,8 +20,12 @@ namespace gateway {
 // 负责维护客户端与后端逻辑服的连接映射，将需要转发的消息发送到后端并回传响应
 class GatewayForwarderComponent : public service::Component {
 public:
+    // 静态单节点后端
     GatewayForwarderComponent(const std::string& backend_host,
                               unsigned short backend_port);
+
+    // 使用 NodeRegistry + node_type 的构造函数
+    explicit GatewayForwarderComponent(const std::string& node_type);
 
     virtual std::string name() const override {
         return "GatewayForwarderComponent";
@@ -44,7 +48,8 @@ private:
     void on_backend_close(const net::TcpConnectionPtr& backend_conn);
 
     std::string backend_host_;
-    unsigned short backend_port_;
+    unsigned short backend_port_{0};
+    std::string backend_node_type_;
     service::Service* service_{nullptr};
 
     mutable std::mutex mutex_;
