@@ -17,7 +17,7 @@ using namespace chwell;
 // - 一条 TCP 连接上直接收发 ProtobufCodec 定义的帧：
 //   [len(varint32)][protobuf bytes]...
 // 为了简化演示，这里直接把 payload 当作 UTF-8 字符串回显；
-// 实际业务中你可以在 handler 里用 google::protobuf::Message 解析 bin。
+// 实际业务中可用 game.pb.h 的 C2S_Login 等 ParseFromArray/SerializeAsString 做真实 Protobuf 编解码。
 
 class ProtoFrameComponent : public service::Component {
 public:

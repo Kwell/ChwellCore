@@ -35,35 +35,29 @@ private:
     std::vector<char> buffer_;
 };
 
-// JSON编解码器（占位实现，实际需要JSON库）
+// JSON 编解码器：使用 4 字节长度前缀（网络字节序）成帧，与 LengthHeaderCodec 一致。
+// message 为 UTF-8 JSON 字符串，便于游戏逻辑中直接使用 JSON 文本。
 class JsonCodec : public Codec {
 public:
-    virtual std::vector<char> encode(const std::string& message) override {
-        // TODO: 实际实现需要JSON库（如rapidjson）
-        // 这里先返回原始字符串
-        return std::vector<char>(message.begin(), message.end());
-    }
+    JsonCodec() : buffer_() {}
 
-    virtual std::vector<std::string> decode(const std::vector<char>& data) override {
-        // TODO: 实际实现需要JSON库
-        std::string msg(data.begin(), data.end());
-        return {msg};
-    }
+    virtual std::vector<char> encode(const std::string& message) override;
+    virtual std::vector<std::string> decode(const std::vector<char>& data) override;
+    virtual void reset() override { buffer_.clear(); }
+
+private:
+    std::vector<char> buffer_;
 };
 
-// Protobuf编解码器：
-// 使用 varint32 长度前缀的流式格式：
+// Protobuf 编解码器：varint32 长度前缀流式格式
 // [len(varint32)][protobuf bytes][len(varint32)][protobuf bytes]...
+// message 为单条 protobuf 消息的二进制序列化结果（如 msg.SerializeAsString()）。
 class ProtobufCodec : public Codec {
 public:
     ProtobufCodec() : buffer_() {}
 
-    // message 必须是单条 protobuf 消息的二进制序列化结果
     virtual std::vector<char> encode(const std::string& message) override;
-
-    // 解析一段字节流，可能拆出多条 protobuf 消息（二进制形式，以字符串返回）
     virtual std::vector<std::string> decode(const std::vector<char>& data) override;
-
     virtual void reset() override { buffer_.clear(); }
 
 private:
