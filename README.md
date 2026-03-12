@@ -32,6 +32,8 @@
 - `example_protocol_server`（组件 + 协议路由示例）
 - `example_http_server`（简单 HTTP Server 示例）
 - `example_gateway_server`（网关服务，转发客户端请求到后端逻辑服）
+- `example_proto_frame_server` / `example_proto_frame_client`（Protobuf 帧示例，见 **Protobuf 示例详细教程**）
+- `example_json_frame_server` / `example_json_frame_client`（JSON 帧示例，使用 JsonCodec）
 - `example_storage`（存储示例，key-value 访问）
 - `example_orm`（ORM 示例，类型安全的 Repository 访问）
 
@@ -49,7 +51,9 @@
 - 在 `example_echo_server` 下，发什么就回什么。
 - 在 `example_protocol_server` 下，按照简单协议 `cmd + len + body` 与服务交互。
  - 在 `example_http_server` 下，通过浏览器或 curl 访问 `http://127.0.0.1:8080/`、`/health`。
-- 在 `example_gateway_server` 下，客户端连接网关（默认 9001），网关将 ECHO/CHAT 转发到后端逻辑服（默认 127.0.0.1:9000），LOGIN/LOGOUT/HEARTBEAT 在网关本地处理。
+ - 在 `example_gateway_server` 下，客户端连接网关（默认 9001），网关将 ECHO/CHAT 转发到后端逻辑服（默认 127.0.0.1:9000），LOGIN/LOGOUT/HEARTBEAT 在网关本地处理。
+- 在 `example_proto_frame_server` 下，使用 ProtobufCodec（varint 长度前缀）；客户端用 `example_proto_frame_client` 连接，发文本即回显。若要使用强类型 game.proto，见 **Protobuf 示例详细教程**。
+- 在 `example_json_frame_server` 下，使用 JsonCodec（4 字节长度前缀 + JSON 字符串）；客户端用 `example_json_frame_client` 连接。
 
 ### 组件与协议路由使用说明
 
@@ -79,8 +83,103 @@
 
 #### 1. 协议编解码层 (`chwell/codec`)
 - **`Codec` 接口**：统一的编解码抽象
-- **`LengthHeaderCodec`**：长度头编解码器（4字节长度 + body）
-- **`JsonCodec` / `ProtobufCodec`**：占位实现，可扩展为真实JSON/Protobuf编解码
+- **`LengthHeaderCodec`**：长度头编解码器（4 字节长度 + body）
+- **`JsonCodec`**：4 字节长度前缀成帧，message 为 UTF-8 JSON 字符串
+- **`ProtobufCodec`**：varint32 长度前缀流式格式，message 为单条 protobuf 二进制（如 `SerializeAsString()`）
+
+详见下文 **Protobuf 示例详细教程**。
+
+**Protobuf 示例详细教程**
+
+游戏服常用 Protobuf 做请求/响应序列化。本框架提供 `ProtobufCodec`（varint 长度前缀 + 二进制 body），并内置 `proto/game.proto` 示例。按下面三步即可从定义协议到在 handler 里收发强类型消息。
+
+**1. 定义 .proto**
+
+在 `proto/` 目录下编写或修改 `.proto` 文件，使用 `proto3` 和 `package` 以生成 C++ 命名空间。示例 `proto/game.proto`：
+
+```protobuf
+syntax = "proto3";
+
+package chwell.game;
+
+// 登录请求/响应
+message C2S_Login {
+  string player_id = 1;
+  string token     = 2;
+}
+
+message S2C_Login {
+  bool   ok      = 1;
+  string message = 2;
+}
+
+// 聊天、心跳等可继续追加 message 定义…
+```
+
+- `package chwell.game` 会生成 C++ 命名空间 `chwell::game`，类型名为 `C2S_Login`、`S2C_Login` 等。
+- 建议命名约定：`C2S_*` 客户端→服务端，`S2C_*` 服务端→客户端。
+
+**2. 生成 C++ 代码**
+
+两种方式任选其一。
+
+- **方式 A：构建时自动生成（推荐）**  
+  CMake 选项 `CHWELL_USE_PROTOBUF=ON`（默认）且已安装 Protobuf 时，配置阶段会查找 `protoc`，构建时自动将 `proto/game.proto` 生成到 `build/generated/proto/`（生成 `game.pb.cc`、`game.pb.h`），并生成静态库 `chwell_game_proto`。需要用到 game 协议的可执行程序链接该库即可。
+
+- **方式 B：手动生成**  
+  安装 `protoc` 与对应 Protobuf 运行时后，在仓库根目录执行：
+
+  ```bash
+  cd ChwellCore && ./scripts/gen_proto.sh
+  ```
+
+  会在 `ChwellCore/generated/proto/` 下生成 `game.pb.cc`、`game.pb.h`。若使用此方式，需自行在 CMake 中加入该目录的源文件与 include，并链接 `libprotobuf`。
+
+**3. 在 handler 中集成**
+
+服务端在 `on_message` 里收到的是 TCP 字节流，先用 `ProtobufCodec::decode` 按帧拆出每条消息的**二进制字符串**，再按消息类型用生成的类做解析与构造回复，最后用 `ProtobufCodec::encode` 发回。示例流程如下（仅展示思路，类型名以 `game.proto` 为准）：
+
+```cpp
+#include "chwell/codec/codec.h"
+#include "game.pb.h"   // 生成目录需在 include 路径中
+
+// 在 Component::on_message 中：
+codec::ProtobufCodec& codec = codecs_[conn.get()];
+std::vector<std::string> messages = codec.decode(data);
+
+for (const std::string& bin : messages) {
+    chwell::game::C2S_Login req;
+    if (!req.ParseFromString(bin)) {
+        // 解析失败，可关闭连接或回复错误
+        continue;
+    }
+    std::string player_id = req.player_id();
+    std::string token     = req.token();
+
+    // 业务逻辑：校验 token、写 session 等
+    chwell::game::S2C_Login resp;
+    resp.set_ok(true);
+    resp.set_message("login ok: " + player_id);
+
+    std::string resp_bin;
+    if (!resp.SerializeToString(&resp_bin)) { /* 处理错误 */ }
+    std::vector<char> frame = codec.encode(resp_bin);
+    conn->send(frame);
+}
+```
+
+要点小结：
+
+- **解码**：`codec.decode(data)` 得到多条 `std::string`（每条为一条 protobuf 的二进制），再用 `ParseFromString(bin)` 或 `ParseFromArray(bin.data(), bin.size())` 反序列化。
+- **编码**：业务逻辑构造好 `S2C_*` 等消息后，`SerializeToString(&resp_bin)`，再 `codec.encode(resp_bin)` 得到带 varint 长度前缀的帧，`conn->send(frame)` 发送。
+- 每个连接需单独持有一个 `ProtobufCodec` 实例（或等价地维护解码缓冲），以正确处理粘包；连接断开时调用 `codec.reset()`。
+
+**运行示例**
+
+- 若已启用 Protobuf 并链接了 game 协议库，可运行：
+  - `./example_proto_frame_server`（需先配置 `server.conf` 等）
+  - `./example_proto_frame_client [host] [port]`
+- 当前示例默认做“字符串回显”；要使用强类型 `C2S_Login`/`S2C_Login`，在 `ProtoFrameComponent::on_message` 中按上面方式替换为 `ParseFromString` + 业务逻辑 + `SerializeToString` + `codec.encode` 即可。
 
 #### 2. 增强会话管理 (`chwell/service/session_manager.h`)
 - **`SessionManager`**：支持玩家ID、房间ID、网关ID绑定
