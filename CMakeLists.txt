@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.11)
 
 project(ChwellFrameCore LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -93,6 +93,7 @@ add_library(chwell_core
     src/core/logger.cpp
     src/core/config.cpp
     src/core/thread_pool.cpp
+    src/core/timer_wheel.cpp
     src/net/posix_io.cpp
     src/net/tcp_server.cpp
     src/net/tcp_connection.cpp
@@ -100,6 +101,7 @@ add_library(chwell_core
     src/net/ws_connection.cpp
     src/net/ws_server.cpp
     src/net/tls.cpp
+    src/net/connection_pool.cpp
     src/cluster/node.cpp
     src/service/service.cpp
     src/protocol/message.cpp
@@ -109,6 +111,7 @@ add_library(chwell_core
     src/http/http_server.cpp
     src/codec/codec.cpp
     src/rpc/rpc_client.cpp
+    src/rpc/rpc_server.cpp
     src/gateway/gateway_forwarder.cpp
     src/storage/memory_storage.cpp
     src/storage/mysql_storage.cpp
@@ -117,6 +120,11 @@ add_library(chwell_core
     src/storage/storage_component.cpp
     src/storage/storage_config_loader.cpp
     src/storage/orm/document.cpp
+    src/aoi/aoi.cpp
+    src/task/task_queue.cpp
+    src/redis/redis_client.cpp
+    src/slg/map.cpp
+    src/slg/battle.cpp
 )
 
 target_include_directories(chwell_core
@@ -281,5 +289,12 @@ if (CHWELL_BUILD_EXAMPLES)
     else()
         message(WARNING "OpenSSL not found, ws_tcp_bridge will not be built (required for H5 game demo)")
     endif()
+
+    # 新增模块示例
+    add_executable(example_new_modules
+        examples/new_modules_demo.cpp
+    )
+    target_link_libraries(example_new_modules PRIVATE chwell_core)
+    target_compile_features(example_new_modules PRIVATE cxx_std_11)
 endif()
 
