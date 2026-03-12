@@ -8,6 +8,7 @@
 #include <mutex>
 #include <any>
 #include <typeindex>
+#include <algorithm>
 
 #include "chwell/core/logger.h"
 

@@ -38,6 +38,17 @@ void signal_handler(int) {
     g_stop = 1;
 }
 
+// Forward declarations
+void demo_timer();
+void demo_connection_pool();
+void demo_aoi();
+void demo_event_bus();
+void demo_object_pool();
+void demo_task_queue();
+void demo_redis();
+void demo_slg_map();
+void demo_battle();
+
 //=============================================================================
 // 1. 定时器示例
 //=============================================================================
