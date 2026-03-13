@@ -2,6 +2,54 @@
 
 一个模块化、高性能的 C++ 游戏服务器框架，专为 SLG/MMO 等中大型游戏设计。
 
+## 技术选型
+
+### 后端（本框架）
+
+| 模块 | 技术方案 | 选择理由 |
+|------|----------|----------|
+| **网络层** | ASIO (Standalone) | 业界标准异步 I/O 库，性能优异，跨平台，被广泛使用（如 MongoDB 驱动） |
+| **序列化** | Protobuf | Google 出品，高效二进制序列化，跨语言支持，游戏行业首选 |
+| **JSON** | nlohmann/json | 现代 C++ JSON 库，API 友好，Header-only，GitHub 40k+ stars |
+| **数据库** | MySQL | 最成熟的关系型数据库，游戏行业标配 |
+| **缓存** | Redis | 高性能内存数据库，排行榜/会话/缓存首选 |
+| **文档库** | MongoDB | 灵活文档存储，适合玩家数据/日志/配置 |
+| **日志** | 自实现 (可换 spdlog) | 简单线程安全日志，生产环境可替换为 spdlog |
+| **配置** | YAML-cpp | 人类可读配置格式，比 JSON/INI 更灵活 |
+| **构建** | CMake | 跨平台构建系统，C++ 项目标配 |
+| **测试** | Google Test | 业界标准单元测试框架 |
+
+### 前端（H5 客户端推荐）
+
+| 模块 | 技术方案 | 选择理由 |
+|------|----------|----------|
+| **游戏引擎** | Cocos Creator | 国产引擎，H5 游戏首选，可视化编辑器，TypeScript 支持，社区活跃 |
+| **备选** | Phaser 3 | 轻量级 2D 框架，适合中小型项目，GitHub 36k+ stars |
+| **备选** | PixiJS | 高性能 2D 渲染引擎，灵活但需要自己搭建游戏框架 |
+| **通信** | WebSocket | 浏览器原生支持，实时双向通信 |
+| **状态管理** | Redux / Zustand | 前端状态管理标准方案 |
+| **UI 框架** | React / Vue 3 | 现代前端框架，组件化开发 |
+
+### 为什么这样选？
+
+1. **ASIO vs libuv vs 自写**
+   - ASIO 是 C++ 标准库网络提案的基础，未来可能进入标准
+   - 性能足够支撑万人在线，代码质量高
+
+2. **Protobuf vs FlatBuffers vs JSON**
+   - Protobuf 生态最成熟，工具链完善
+   - FlatBuffers 更快但开发体验差
+   - JSON 仅用于调试和简单协议
+
+3. **MySQL vs PostgreSQL**
+   - MySQL 在游戏行业应用更广
+   - 运维经验丰富的人才更多
+
+4. **Cocos Creator vs Phaser vs Unity**
+   - Cocos: 国产引擎，中文文档全，H5 性能优化好
+   - Phaser: 轻量但功能有限，适合小项目
+   - Unity: 功能最强但 H5 包体大，加载慢
+
 ## 特性
 
 - 🚀 **高性能网络层** - 基于 ASIO 的非阻塞 TCP/HTTP 服务
