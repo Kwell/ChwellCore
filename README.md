@@ -1,260 +1,164 @@
-## ChwellFrameCore - 分布式游戏后端基础框架（C++11）
+# ChwellCore - 游戏后端核心框架
 
-### 特性概览
-- 核心目标：为分布式游戏服务器提供一个**可扩展、可定制的基础骨架**，专注连接管理、线程模型和节点抽象。
-- 基于 **C++11** 与 **POSIX 套接字**（标准库 + 自实现，无第三方网络库依赖）。
-- 提供：
-  - **日志模块**：简单线程安全控制台日志。
-  - **配置模块**：当前为内建默认值（可扩展为 JSON/INI）。
-  - **线程池模块**：用于驱动 `io_service` 或业务任务。
-  - **网络层**：异步 TCP 服务器、会话封装、消息回调。
-  - **集群层骨架**：节点抽象，便于后续扩展心跳/注册/RPC。
-  - **示例 Echo 服务器**：最小可跑示例，方便你继续迭代。
+一个模块化、高性能的 C++ 游戏服务器框架，专为 SLG/MMO 等中大型游戏设计。
 
-### 目录结构
-- `include/chwell/core`：核心模块（`logger`, `config`, `thread_pool`）
-- `include/chwell/net`：网络层（`tcp_server`, `tcp_connection`）
-- `include/chwell/cluster`：集群节点抽象（`node`）
-- `src/core`：核心模块实现
-- `src/net`：网络层实现
-- `src/cluster`：集群层实现
-- `examples`：示例服务（`echo_server`）
+## 特性
 
-### 构建步骤（使用 CMake）
+- 🚀 **高性能网络层** - 基于 ASIO 的非阻塞 TCP/HTTP 服务
+- 📦 **协议编解码** - 长度前缀帧、Protobuf、JSON 支持
+- 🎮 **游戏模块** - AOI、寻路、战斗系统、SLG 地图
+- 💾 **存储抽象** - 内存/MySQL/MongoDB 可切换
+- 🔧 **集群支持** - 节点注册、RPC 调用
+- 📊 **可靠性** - 心跳、限流、监控指标
 
-#### 配置与编译
-- `cd build`
-- `cmake ..`
-- `cmake --build . --config Release`
+## 快速开始
 
-生成的示例可执行文件为：
-- `example_echo_server`（基础组件示例）
-- `example_protocol_server`（组件 + 协议路由示例）
-- `example_http_server`（简单 HTTP Server 示例）
-- `example_gateway_server`（网关服务，转发客户端请求到后端逻辑服）
-- `example_proto_frame_server` / `example_proto_frame_client`（Protobuf 帧示例，见 **Protobuf 示例详细教程**）
-- `example_json_frame_server` / `example_json_frame_client`（JSON 帧示例，使用 JsonCodec）
-- `example_storage`（存储示例，key-value 访问）
-- `example_orm`（ORM 示例，类型安全的 Repository 访问）
+### 依赖
 
-### 运行示例服务器
+- CMake 3.14+
+- C++17 编译器
+- 可选: MySQL, MongoDB, OpenSSL
 
-在 `build` 目录（或相应输出目录）执行：
+### 构建
 
-- `./example_echo_server` （Windows 下为 `example_echo_server.exe`）  
-  - 纯粹的 Echo 示例，展示最基础的组件化 Service 用法。
-- `./example_protocol_server` （Windows 下为 `example_protocol_server.exe`）  
-  - 使用 **协议路由组件 + 多业务组件**，展示真实项目更接近的写法。
-
-默认监听端口：`9000`，工作线程数：`4`。  
-你可以使用任意 TCP 客户端连接该端口：
-- 在 `example_echo_server` 下，发什么就回什么。
-- 在 `example_protocol_server` 下，按照简单协议 `cmd + len + body` 与服务交互。
- - 在 `example_http_server` 下，通过浏览器或 curl 访问 `http://127.0.0.1:8080/`、`/health`。
- - 在 `example_gateway_server` 下，客户端连接网关（默认 9001），网关将 ECHO/CHAT 转发到后端逻辑服（默认 127.0.0.1:9000），LOGIN/LOGOUT/HEARTBEAT 在网关本地处理。
-- 在 `example_proto_frame_server` 下，使用 ProtobufCodec（varint 长度前缀）；客户端用 `example_proto_frame_client` 连接，发文本即回显。若要使用强类型 game.proto，见 **Protobuf 示例详细教程**。
-- 在 `example_json_frame_server` 下，使用 JsonCodec（4 字节长度前缀 + JSON 字符串）；客户端用 `example_json_frame_client` 连接。
-
-### 组件与协议路由使用说明
-
-- **组件基类 `Component`**
-  - 必须实现：`std::string name() const`
-  - 可选实现：`on_register(Service&)`、`on_message(conn, data)`、`on_disconnect(conn)`
-  - 下游只需要继承 `Component` 并实现这些接口，即可作为“功能插件”挂在某个 `Service` 上。
-
-- **服务类 `Service`**
-  - 构造：`Service(unsigned short listen_port, std::size_t worker_threads)`
-  - 注册组件：`add_component<T>(args...)`，返回组件指针。
-  - 获取组件：`get_component<T>()`，按类型查找已注册的组件。
-  - 生命周期：`start()` / `stop()`
-
-- **协议层**
-  - 消息格式：`| cmd(uint16) | len(uint16) | body(len bytes) |`（均为网络字节序）
-  - `protocol::Message`： `{ cmd, body }`
-  - `protocol::serialize / deserialize`：负责编解码。
-  - `protocol::Parser`：负责粘包/拆包。
-
-- **协议路由组件 `ProtocolRouterComponent`**
-  - 注册路由：`register_handler(cmd, handler)`，其中 `handler(conn, Message)`。
-  - 发送消息：`ProtocolRouterComponent::send_message(conn, Message)`。
-  - 内部自动为每个连接维护 `Parser`，在 `on_message` 中解析并根据 `cmd` 分发。
-
-### 已实现的高级功能
-
-#### 1. 协议编解码层 (`chwell/codec`)
-- **`Codec` 接口**：统一的编解码抽象
-- **`LengthHeaderCodec`**：长度头编解码器（4 字节长度 + body）
-- **`JsonCodec`**：4 字节长度前缀成帧，message 为 UTF-8 JSON 字符串
-- **`ProtobufCodec`**：varint32 长度前缀流式格式，message 为单条 protobuf 二进制（如 `SerializeAsString()`）
-
-详见下文 **Protobuf 示例详细教程**。
-
-**Protobuf 示例详细教程**
-
-游戏服常用 Protobuf 做请求/响应序列化。本框架提供 `ProtobufCodec`（varint 长度前缀 + 二进制 body），并内置 `proto/game.proto` 示例。按下面三步即可从定义协议到在 handler 里收发强类型消息。
-
-**1. 定义 .proto**
-
-在 `proto/` 目录下编写或修改 `.proto` 文件，使用 `proto3` 和 `package` 以生成 C++ 命名空间。示例 `proto/game.proto`：
-
-```protobuf
-syntax = "proto3";
-
-package chwell.game;
-
-// 登录请求/响应
-message C2S_Login {
-  string player_id = 1;
-  string token     = 2;
-}
-
-message S2C_Login {
-  bool   ok      = 1;
-  string message = 2;
-}
-
-// 聊天、心跳等可继续追加 message 定义…
+```bash
+mkdir build && cd build
+cmake .. -DCHWELL_BUILD_TESTS=ON
+make -j$(nproc)
 ```
 
-- `package chwell.game` 会生成 C++ 命名空间 `chwell::game`，类型名为 `C2S_Login`、`S2C_Login` 等。
-- 建议命名约定：`C2S_*` 客户端→服务端，`S2C_*` 服务端→客户端。
+### 运行示例
 
-**2. 生成 C++ 代码**
+```bash
+# Echo 服务器
+./example_echo_server
 
-两种方式任选其一。
+# 网关服务器
+./example_gateway_server
 
-- **方式 A：构建时自动生成（推荐）**  
-  CMake 选项 `CHWELL_USE_PROTOBUF=ON`（默认）且已安装 Protobuf 时，配置阶段会查找 `protoc`，构建时自动将 `proto/game.proto` 生成到 `build/generated/proto/`（生成 `game.pb.cc`、`game.pb.h`），并生成静态库 `chwell_game_proto`。需要用到 game 协议的可执行程序链接该库即可。
-
-- **方式 B：手动生成**  
-  安装 `protoc` 与对应 Protobuf 运行时后，在仓库根目录执行：
-
-  ```bash
-  cd ChwellCore && ./scripts/gen_proto.sh
-  ```
-
-  会在 `ChwellCore/generated/proto/` 下生成 `game.pb.cc`、`game.pb.h`。若使用此方式，需自行在 CMake 中加入该目录的源文件与 include，并链接 `libprotobuf`。
-
-**3. 在 handler 中集成**
-
-服务端在 `on_message` 里收到的是 TCP 字节流，先用 `ProtobufCodec::decode` 按帧拆出每条消息的**二进制字符串**，再按消息类型用生成的类做解析与构造回复，最后用 `ProtobufCodec::encode` 发回。示例流程如下（仅展示思路，类型名以 `game.proto` 为准）：
-
-```cpp
-#include "chwell/codec/codec.h"
-#include "game.pb.h"   // 生成目录需在 include 路径中
-
-// 在 Component::on_message 中：
-codec::ProtobufCodec& codec = codecs_[conn.get()];
-std::vector<std::string> messages = codec.decode(data);
-
-for (const std::string& bin : messages) {
-    chwell::game::C2S_Login req;
-    if (!req.ParseFromString(bin)) {
-        // 解析失败，可关闭连接或回复错误
-        continue;
-    }
-    std::string player_id = req.player_id();
-    std::string token     = req.token();
-
-    // 业务逻辑：校验 token、写 session 等
-    chwell::game::S2C_Login resp;
-    resp.set_ok(true);
-    resp.set_message("login ok: " + player_id);
-
-    std::string resp_bin;
-    if (!resp.SerializeToString(&resp_bin)) { /* 处理错误 */ }
-    std::vector<char> frame = codec.encode(resp_bin);
-    conn->send(frame);
-}
+# 游戏服务器
+./example_game_server
 ```
 
-要点小结：
+## 核心模块
 
-- **解码**：`codec.decode(data)` 得到多条 `std::string`（每条为一条 protobuf 的二进制），再用 `ParseFromString(bin)` 或 `ParseFromArray(bin.data(), bin.size())` 反序列化。
-- **编码**：业务逻辑构造好 `S2C_*` 等消息后，`SerializeToString(&resp_bin)`，再 `codec.encode(resp_bin)` 得到带 varint 长度前缀的帧，`conn->send(frame)` 发送。
-- 每个连接需单独持有一个 `ProtobufCodec` 实例（或等价地维护解码缓冲），以正确处理粘包；连接断开时调用 `codec.reset()`。
+### 网络层 (`chwell/net`)
+- `TcpServer` / `TcpConnection` - TCP 服务
+- `HttpServer` - HTTP 服务
+- `ConnectionPool` - 连接池
 
-**运行示例**
+### 编解码 (`chwell/codec`)
+- `LengthHeaderCodec` - 长度前缀帧（推荐）
+- `ProtobufCodec` - Protobuf 序列化
+- `JsonCodec` - JSON 序列化
 
-- 若已启用 Protobuf 并链接了 game 协议库，可运行：
-  - `./example_proto_frame_server`（需先配置 `server.conf` 等）
-  - `./example_proto_frame_client [host] [port]`
-- 当前示例默认做“字符串回显”；要使用强类型 `C2S_Login`/`S2C_Login`，在 `ProtoFrameComponent::on_message` 中按上面方式替换为 `ParseFromString` + 业务逻辑 + `SerializeToString` + `codec.encode` 即可。
+### 协议路由 (`chwell/protocol`)
+- `ProtocolRouter` - 消息类型路由
+- `ProtocolParser` - 协议解析
 
-#### 2. 增强会话管理 (`chwell/service/session_manager.h`)
-- **`SessionManager`**：支持玩家ID、房间ID、网关ID绑定
-- 提供 `login()`, `logout()`, `join_room()`, `leave_room()` 等接口
-- 支持按房间查询玩家列表、更新活跃时间等
+### 任务调度 (`chwell/task`)
+- `TaskQueue` - 线程池任务队列
+- `DelayedTaskQueue` - 延时任务
+- `TimerWheel` - 高效定时器
 
-#### 3. 集群与RPC (`chwell/cluster`, `chwell/rpc`)
-- **`NodeRegistry`**：节点注册表，支持节点注册、注销、按类型查找
-- **`RpcClient`**：基于 `TcpConnection` 的RPC客户端封装，支持异步/同步调用
+### 对象池 (`chwell/pool`)
+- `ObjectPool<T>` - 通用对象池
+- `BufferPool` - 缓冲区池
+- `GlobalBufferPool` - 全局缓冲区管理
 
-#### 4. 网关服务 (`chwell/gateway`)
-- **GatewayForwarderComponent**：网关转发组件，维护客户端与后端逻辑服的连接映射
-- **example_gateway_server**：完整网关示例，本地处理 LOGIN/LOGOUT/HEARTBEAT，转发 ECHO/CHAT 到后端
-- 支持环境变量：`GATEWAY_PORT`（监听端口）、`BACKEND_HOST`、`BACKEND_PORT`（后端地址）
+### AOI 系统 (`chwell/aoi`)
+- `GridAoi` - 格子 AOI
+- `CrossListAoi` - 十字链表 AOI
 
-#### 5. 存储抽象层 (`chwell/storage`)
-- **StorageInterface**：统一存储接口，上层逻辑不关心底层介质
-- **StorageFactory**：根据配置或 YAML 创建 memory/mysql/mongodb 实现
-- **StorageConfigLoader**：从 `config/storage.yaml` 加载配置（介质类型 + 连接参数）
-- **MemoryStorage**：内存实现（无外部依赖）
-- **MysqlStorage**：MySQL 实现（`-DCHWELL_USE_MYSQL=ON`，需 libmysqlclient）
-- **MongodbStorage**：MongoDB 实现（`-DCHWELL_USE_MONGODB=ON`，需 libmongoc）
-- **StorageComponent**：可挂载到 Service 的存储组件
-- **ORM 层** (`chwell/storage/orm`)：类型安全的 CRUD，无需手写 key-value
-  - **Entity**：实体基类，派生类实现 to_document/from_document
-  - **Document**：类型安全的字段容器（get_string/set_int 等）
-  - **Repository<T>**：仓储，提供 save/find/remove/find_all
+### SLG 模块 (`chwell/slg`)
+- `SlgMapManager` - 地图管理
+- `BattleSystem` - 战斗系统
+- 支持地形生成、资源点、城池、部队
 
-#### 6. 可靠性保障 (`chwell/reliability`)
-- **`HeartbeatManager`**：心跳管理器，定期检测超时连接
-- **`RateLimiter`**：令牌桶限流器，支持全局和按连接限流
-- **`Metrics`**：监控指标收集器（QPS、在线数、延迟统计）
+### 存储层 (`chwell/storage`)
+- `StorageInterface` - 统一存储接口
+- `MemoryStorage` - 内存存储
+- `MysqlStorage` - MySQL 存储
+- `MongodbStorage` - MongoDB 存储
+- `Repository<T>` - ORM 仓储
 
-### 使用示例
+### 集群与 RPC (`chwell/cluster`, `chwell/rpc`)
+- `NodeRegistry` - 节点注册表
+- `RpcServer` / `RpcClient` - RPC 调用
 
-#### 使用编解码器
+### 网关 (`chwell/gateway`)
+- `GatewayForwarderComponent` - 消息转发
+- 支持客户端与后端服务映射
+
+### Redis 客户端 (`chwell/redis`)
+- `RedisClient` - Redis 操作封装
+- 内存 Mock 实现（测试用）
+
+### 事件总线 (`chwell/event`)
+- `EventBus` - 发布/订阅事件系统
+
+### 可靠性 (`chwell/reliability`)
+- `HeartbeatManager` - 心跳管理
+- `RateLimiter` - 令牌桶限流
+- `Metrics` - 监控指标
+
+## 使用示例
+
+### 创建 TCP 服务
+
 ```cpp
-codec::LengthHeaderCodec codec;
-std::vector<char> encoded = codec.encode("Hello World");
-std::vector<std::string> decoded = codec.decode(encoded);
-```
+#include "chwell/net/tcp_server.h"
+#include "chwell/codec/length_header_codec.h"
 
-#### 使用SessionManager
-```cpp
-auto* session_mgr = svc.add_component<service::SessionManager>();
-session_mgr->login(conn, "player123");
-session_mgr->join_room(conn, "room456");
-std::vector<std::string> players = session_mgr->get_players_in_room("room456");
-```
-
-#### 使用RPC客户端
-```cpp
-rpc::RpcClient rpc_client(io_service);
-rpc_client.connect("127.0.0.1", 9001);
-rpc_client.call(100, request_data, [](const protocol::Message& resp) {
-    // 处理响应
+net::TcpServer server(io_context, 9000);
+server.set_on_message([](const std::vector<char>& data) {
+    // 处理消息
 });
+server.start();
 ```
 
-#### 使用存储组件（上层逻辑不关心介质）
+### 使用对象池
+
 ```cpp
-// 推荐：从 YAML 配置创建，介质和连接参数均在 config/storage.yaml 中
-auto store = storage::StorageFactory::create_from_yaml("config/storage.yaml");
-
-store->put("player:123", R"({"name":"alice","level":10})");
-auto r = store->get("player:123");
-if (r.ok) { /* 使用 r.value */ }
-
-// 或挂载到 Service
-svc.add_component<storage::StorageComponent>("config/storage.yaml");
-auto* storage = svc.get_component<storage::StorageComponent>();
-storage->put("room:456", room_data);
+pool::ObjectPool<Bullet> bullet_pool;
+auto bullet = bullet_pool.acquire();
+// 使用后自动归还
 ```
 
-**YAML 配置示例** (`config/storage.yaml`)：
+### 使用任务队列
+
+```cpp
+task::TaskQueue queue(4);  // 4 个工作线程
+queue.start();
+
+queue.submit_void([]() {
+    // 异步任务
+});
+
+queue.stop();
+```
+
+### 使用 AOI
+
+```cpp
+aoi::GridAoi aoi(1000, 1000, 50);  // 1000x1000 地图，50 格子大小
+aoi.add_entity(entity);
+auto nearby = aoi.get_entities_in_view(x, y);
+```
+
+### 使用存储
+
+```cpp
+// 从配置创建
+auto store = storage::StorageFactory::create_from_yaml("config/storage.yaml");
+store->put("player:123", player_data);
+auto result = store->get("player:123");
+```
+
+## 配置文件
+
+### storage.yaml
+
 ```yaml
 storage:
   type: memory  # memory | mysql | mongodb
@@ -267,38 +171,52 @@ storage:
   mongodb:
     uri: mongodb://127.0.0.1:27017
     database: chwell
-    collection: kv
 ```
 
-**构建选项**：`-DCHWELL_USE_YAML=ON`（默认）、`-DCHWELL_USE_MYSQL=ON`、`-DCHWELL_USE_MONGODB=ON`
+## 构建选项
 
-#### 使用 ORM（类型安全，无需手写 key-value）
-```cpp
-// 定义实体
-struct Player : public storage::orm::Entity {
-    std::string id_, name_;
-    int level_;
-    std::string table_name() const override { return "players"; }
-    std::string id() const override { return id_; }
-    storage::orm::Document to_document() const override;
-    void from_document(const storage::orm::Document& doc) override;
-};
+| 选项 | 说明 |
+|------|------|
+| `CHWELL_BUILD_TESTS` | 构建单元测试 |
+| `CHWELL_USE_MYSQL` | 启用 MySQL 支持 |
+| `CHWELL_USE_MONGODB` | 启用 MongoDB 支持 |
+| `CHWELL_USE_YAML` | 启用 YAML 配置支持 |
+| `CHWELL_USE_PROTOBUF` | 启用 Protobuf 支持 |
 
-// 通过 Repository 访问
-auto repo = component.repository<Player>("players");
-repo.save(player);
-Player found;
-if (repo.find("p001", found)) { /* 使用 found */ }
-repo.remove("p001");
-auto all = repo.find_all();
+## 测试
+
+```bash
+cd build
+./chwell_core_tests
 ```
 
-#### 使用监控指标
-```cpp
-reliability::Metrics::instance().increment_qps();
-reliability::Metrics::instance().increment_online();
-reliability::Metrics::instance().record_latency("rpc_call", 50);
+## 目录结构
+
+```
+ChwellCore/
+├── include/chwell/     # 头文件
+│   ├── core/           # 核心组件（日志、定时器）
+│   ├── net/            # 网络层
+│   ├── codec/          # 编解码
+│   ├── protocol/       # 协议路由
+│   ├── task/           # 任务调度
+│   ├── pool/           # 对象池
+│   ├── aoi/            # AOI
+│   ├── slg/            # SLG 模块
+│   ├── storage/        # 存储层
+│   ├── cluster/        # 集群
+│   ├── rpc/            # RPC
+│   ├── gateway/        # 网关
+│   ├── redis/          # Redis
+│   ├── event/          # 事件总线
+│   └── reliability/    # 可靠性
+├── src/                # 实现文件
+├── tests/              # 单元测试
+├── examples/           # 示例程序
+├── proto/              # Protobuf 定义
+└── config/             # 配置文件
 ```
 
-你可以把这里作为一个**功能完整的基础框架**，按你游戏的实际需求逐步补强业务逻辑、房间服等模块。
+## 许可证
 
+MIT License
