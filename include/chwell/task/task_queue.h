@@ -49,6 +49,20 @@ struct TaskResult {
                                 status == TaskStatus::CANCELLED; }
 };
 
+// void 特化
+template<>
+struct TaskResult<void> {
+    TaskStatus status;
+    std::string error;
+    
+    TaskResult() : status(TaskStatus::PENDING) {}
+    
+    bool ok() const { return status == TaskStatus::COMPLETED; }
+    bool failed() const { return status == TaskStatus::FAILED || 
+                                status == TaskStatus::TIMEOUT ||
+                                status == TaskStatus::CANCELLED; }
+};
+
 // 任务基类
 class TaskBase {
 public:
@@ -113,6 +127,44 @@ private:
     TaskFunc func_;
     Callback callback_;
     TaskResult<T> result_;
+};
+
+// void 任务特化
+template<>
+class Task<void> : public TaskBase {
+public:
+    using Callback = std::function<void(const TaskResult<void>&)>;
+    using TaskFunc = std::function<void()>;
+    
+    Task(TaskFunc func, Callback callback = nullptr)
+        : func_(std::move(func))
+        , callback_(std::move(callback)) {}
+    
+    void execute() override {
+        result_.status = TaskStatus::RUNNING;
+        
+        try {
+            func_();
+            result_.status = TaskStatus::COMPLETED;
+        } catch (const std::exception& e) {
+            result_.status = TaskStatus::FAILED;
+            result_.error = e.what();
+        } catch (...) {
+            result_.status = TaskStatus::FAILED;
+            result_.error = "Unknown error";
+        }
+        
+        if (callback_) {
+            callback_(result_);
+        }
+    }
+    
+    const TaskResult<void>& result() const { return result_; }
+    
+private:
+    TaskFunc func_;
+    Callback callback_;
+    TaskResult<void> result_;
 };
 
 // 无返回值任务

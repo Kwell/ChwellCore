@@ -5,6 +5,7 @@
 #include <mutex>
 #include <functional>
 #include <atomic>
+#include <unordered_map>
 
 #include "chwell/core/logger.h"
 
@@ -303,8 +304,8 @@ public:
     }
     
 private:
-    static std::mutex mutex_;
-    static std::unordered_map<int, BufferPool::Ptr> pools_;
+    inline static std::mutex mutex_;
+    inline static std::unordered_map<int, BufferPool::Ptr> pools_;
 };
 
 // 常用对象池类型定义

@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.11)
 
 project(ChwellFrameCore LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -211,6 +211,13 @@ if (CHWELL_BUILD_TESTS)
             tests/test_protocol_router.cpp
             tests/test_orm_repository.cpp
             tests/test_session_manager.cpp
+            tests/test_timer_wheel.cpp
+            tests/test_aoi.cpp
+            tests/test_event_bus.cpp
+            tests/test_redis_client.cpp
+            tests/test_object_pool.cpp
+            tests/test_task_queue.cpp
+            tests/test_slg.cpp
         )
         target_link_libraries(chwell_core_tests PRIVATE chwell_core ${CHWELL_GTEST_LIB})
         add_test(NAME chwell_core_tests COMMAND chwell_core_tests)

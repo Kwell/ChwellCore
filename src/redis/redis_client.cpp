@@ -179,6 +179,31 @@ RedisReply RedisClient::execute(const std::vector<std::string>& args) {
             }
         }
     }
+    else if (cmd == "HEXISTS" && args.size() >= 3) {
+        auto it = hashes_.find(args[1]);
+        if (it != hashes_.end() && it->second.count(args[2])) {
+            reply.type = ReplyType::INTEGER;
+            reply.integer = 1;
+        } else {
+            reply.type = ReplyType::INTEGER;
+            reply.integer = 0;
+        }
+    }
+    else if (cmd == "HDEL" && args.size() >= 3) {
+        auto it = hashes_.find(args[1]);
+        if (it != hashes_.end() && it->second.erase(args[2])) {
+            reply.type = ReplyType::INTEGER;
+            reply.integer = 1;
+        } else {
+            reply.type = ReplyType::INTEGER;
+            reply.integer = 0;
+        }
+    }
+    else if (cmd == "HLEN" && args.size() >= 2) {
+        auto it = hashes_.find(args[1]);
+        reply.type = ReplyType::INTEGER;
+        reply.integer = it != hashes_.end() ? (int64_t)it->second.size() : 0;
+    }
     else if (cmd == "LPUSH" && args.size() >= 3) {
         lists_[args[1]].push_front(args[2]);
         reply.type = ReplyType::INTEGER;
@@ -253,6 +278,11 @@ RedisReply RedisClient::execute(const std::vector<std::string>& args) {
             }
         }
     }
+    else if (cmd == "SCARD" && args.size() >= 2) {
+        auto it = sets_.find(args[1]);
+        reply.type = ReplyType::INTEGER;
+        reply.integer = it != sets_.end() ? (int64_t)it->second.size() : 0;
+    }
     else if (cmd == "ZADD" && args.size() >= 4) {
         double score = std::stod(args[2]);
         auto& zset = zsets_[args[1]];
@@ -290,6 +320,58 @@ RedisReply RedisClient::execute(const std::vector<std::string>& args) {
                 reply.elements.push_back(item);
             }
         }
+    }
+    else if (cmd == "ZREM" && args.size() >= 3) {
+        auto it = zsets_.find(args[1]);
+        reply.type = ReplyType::INTEGER;
+        reply.integer = 0;
+        if (it != zsets_.end()) {
+            for (auto z_it = it->second.begin(); z_it != it->second.end(); ++z_it) {
+                if (z_it->second == args[2]) {
+                    it->second.erase(z_it);
+                    reply.integer = 1;
+                    break;
+                }
+            }
+        }
+    }
+    else if (cmd == "ZSCORE" && args.size() >= 3) {
+        auto it = zsets_.find(args[1]);
+        if (it != zsets_.end()) {
+            for (const auto& p : it->second) {
+                if (p.second == args[2]) {
+                    reply.type = ReplyType::STRING;
+                    reply.str = std::to_string(p.first);
+                    break;
+                }
+            }
+        }
+        if (reply.type != ReplyType::STRING) {
+            reply.type = ReplyType::NIL;
+        }
+    }
+    else if (cmd == "ZRANK" && args.size() >= 3) {
+        auto it = zsets_.find(args[1]);
+        reply.type = ReplyType::INTEGER;
+        reply.integer = -1;
+        if (it != zsets_.end()) {
+            for (size_t i = 0; i < it->second.size(); ++i) {
+                if (it->second[i].second == args[2]) {
+                    reply.integer = (int64_t)i;
+                    break;
+                }
+            }
+        }
+    }
+    else if (cmd == "ZCARD" && args.size() >= 2) {
+        auto it = zsets_.find(args[1]);
+        reply.type = ReplyType::INTEGER;
+        reply.integer = it != zsets_.end() ? (int64_t)it->second.size() : 0;
+    }
+    else if (cmd == "LLEN" && args.size() >= 2) {
+        auto it = lists_.find(args[1]);
+        reply.type = ReplyType::INTEGER;
+        reply.integer = it != lists_.end() ? (int64_t)it->second.size() : 0;
     }
     else if (cmd == "PING") {
         reply.type = ReplyType::STATUS;

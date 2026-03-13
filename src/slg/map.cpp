@@ -75,13 +75,22 @@ void SlgMapManager::generate_resources(int count) {
 void SlgMapManager::generate_cities(int count) {
     std::lock_guard<std::mutex> lock(mutex_);
     
+    // 边界保护：确保地图足够大
+    int margin = std::min(50, std::min(config_.width, config_.height) / 4);
+    int x_range = config_.width - 2 * margin;
+    int y_range = config_.height - 2 * margin;
+    if (x_range <= 0 || y_range <= 0) {
+        CHWELL_LOG_WARN("Map too small for city generation");
+        return;
+    }
+    
     int created = 0;
     int attempts = 0;
     int max_attempts = count * 100;
     
     while (created < count && attempts < max_attempts) {
-        int x = 50 + rand() % (config_.width - 100);
-        int y = 50 + rand() % (config_.height - 100);
+        int x = margin + rand() % x_range;
+        int y = margin + rand() % y_range;
         
         auto& cell = cells_[cell_index(x, y)];
         
