@@ -125,6 +125,13 @@ add_library(chwell_core
     src/redis/redis_client.cpp
     src/slg/map.cpp
     src/slg/battle.cpp
+    src/game/game_components.cpp
+    src/sync/frame_sync.cpp
+    src/sync/state_sync.cpp
+    src/discovery/service_discovery.cpp
+    src/loadbalance/load_balancer.cpp
+    src/circuitbreaker/circuit_breaker.cpp
+    src/ratelimit/rate_limiter.cpp
 )
 
 target_include_directories(chwell_core
@@ -218,6 +225,11 @@ if (CHWELL_BUILD_TESTS)
             tests/test_object_pool.cpp
             tests/test_task_queue.cpp
             tests/test_slg.cpp
+            tests/test_game_components.cpp
+            tests/test_sync.cpp
+            tests/test_discovery_loadbalance.cpp
+            tests/test_circuitbreaker.cpp
+            tests/test_ratelimit.cpp
         )
         target_link_libraries(chwell_core_tests PRIVATE chwell_core ${CHWELL_GTEST_LIB})
         add_test(NAME chwell_core_tests COMMAND chwell_core_tests)
@@ -316,5 +328,17 @@ if (CHWELL_BUILD_EXAMPLES)
     )
     target_link_libraries(example_new_modules PRIVATE chwell_core)
     target_compile_features(example_new_modules PRIVATE cxx_std_11)
+
+    # 游戏组件示例
+    add_executable(example_game_components_demo
+        examples/game_components_demo.cpp
+    )
+    target_link_libraries(example_game_components_demo PRIVATE chwell_core)
+
+    # 帧同步 + 状态同步示例
+    add_executable(example_sync_demo
+        examples/sync_demo.cpp
+    )
+    target_link_libraries(example_sync_demo PRIVATE chwell_core)
 endif()
 
