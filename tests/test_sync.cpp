@@ -537,7 +537,7 @@ TEST(StateSyncTest, StateSyncRoomCreateSnapshot) {
 //     // 不检查 timestamp，因为空实体的 timestamp 是未初始化的
 // }
 
-TEST(StateSyncTest, DISABLED_StateSyncRoomBasicOperations) {
+TEST(StateSyncTest, StateSyncRoomBasicOperations) {
     sync::StateSyncRoom room("test_room");
 
     sync::StateUpdate update1;
