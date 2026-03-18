@@ -78,6 +78,8 @@ static std::string encode_bool(bool value) {
 // ============================================
 
 void LoginComponent::on_register(service::Service& svc) {
+    service_ = &svc;
+
     auto* router = svc.get_component<service::ProtocolRouterComponent>();
     if (router) {
         router->register_handler(cmd::C2S_LOGIN,
@@ -120,8 +122,13 @@ void LoginComponent::handle_login(const net::TcpConnectionPtr& conn, const std::
     }
 
     // 获取 SessionManager 并登录
-    // 注意：需要在 Service 中添加 SessionManager
-    // 这里暂时跳过，实际使用时需要获取 SessionManager
+    if (service_) {
+        auto* session_mgr = service_->get_component<service::SessionManager>();
+        if (session_mgr) {
+            session_mgr->login(conn, player_id);
+        }
+    }
+
     CHWELL_LOG_INFO("Player logged in: " + player_id);
 
     // 发送登录成功响应
@@ -143,6 +150,8 @@ void LoginComponent::send_login_response(const net::TcpConnectionPtr& conn, bool
 // ============================================
 
 void ChatComponent::on_register(service::Service& svc) {
+    service_ = &svc;
+
     auto* router = svc.get_component<service::ProtocolRouterComponent>();
     if (router) {
         router->register_handler(cmd::C2S_CHAT,
@@ -175,8 +184,16 @@ void ChatComponent::handle_chat(const net::TcpConnectionPtr& conn, const std::ve
     CHWELL_LOG_INFO("Chat message: room_id=" + room_id + ", content=" + content);
 
     // 获取玩家ID（从 SessionManager）
-    // 这里暂时硬编码，实际使用时需要从 SessionManager 获取
     std::string player_id = "unknown";
+    if (service_) {
+        auto* session_mgr = service_->get_component<service::SessionManager>();
+        if (session_mgr) {
+            player_id = session_mgr->get_player_id(conn);
+            if (player_id.empty()) {
+                player_id = "unknown";
+            }
+        }
+    }
 
     // 广播聊天消息
     broadcast_chat(room_id, player_id, content);
@@ -184,8 +201,26 @@ void ChatComponent::handle_chat(const net::TcpConnectionPtr& conn, const std::ve
 
 void ChatComponent::broadcast_chat(const std::string& room_id, const std::string& from_player_id, const std::string& content) {
     // 获取 RoomComponent
-    // 这里暂时跳过，实际使用时需要从 Service 获取 RoomComponent
-    CHWELL_LOG_INFO("Broadcast chat to room " + room_id + ": " + from_player_id + " -> " + content);
+    if (!service_) {
+        CHWELL_LOG_WARN("Service not set, cannot broadcast chat");
+        return;
+    }
+
+    auto* room_comp = service_->get_component<game::RoomComponent>();
+    if (!room_comp) {
+        CHWELL_LOG_WARN("RoomComponent not found, cannot broadcast chat");
+        return;
+    }
+
+    // 获取房间内所有连接
+    auto connections = room_comp->get_connections_in_room(room_id);
+
+    // 广播聊天消息
+    for (const auto& conn : connections) {
+        send_chat_message(conn, from_player_id, content);
+    }
+
+    CHWELL_LOG_INFO("Broadcast chat to room " + room_id + ": " + from_player_id + " -> " + content + " (" + std::to_string(connections.size()) + " players)");
 }
 
 void ChatComponent::send_chat_message(const net::TcpConnectionPtr& conn, const std::string& from_player_id, const std::string& content) {
@@ -203,6 +238,8 @@ void ChatComponent::send_chat_message(const net::TcpConnectionPtr& conn, const s
 // ============================================
 
 void RoomComponent::on_register(service::Service& svc) {
+    service_ = &svc;
+
     auto* router = svc.get_component<service::ProtocolRouterComponent>();
     if (router) {
         router->register_handler(cmd::C2S_JOIN_ROOM,
@@ -231,6 +268,14 @@ void RoomComponent::handle_join_room(const net::TcpConnectionPtr& conn, const st
 
     // 加入房间
     join_room(conn, room_id);
+
+    // 更新 SessionManager
+    if (service_) {
+        auto* session_mgr = service_->get_component<service::SessionManager>();
+        if (session_mgr) {
+            session_mgr->join_room(conn, room_id);
+        }
+    }
 
     // 发送加入房间成功响应
     send_join_room_response(conn, true, "Join room success", room_id);
@@ -261,6 +306,14 @@ void RoomComponent::join_room(const net::TcpConnectionPtr& conn, const std::stri
 }
 
 void RoomComponent::leave_room(const net::TcpConnectionPtr& conn) {
+    // 更新 SessionManager
+    if (service_) {
+        auto* session_mgr = service_->get_component<service::SessionManager>();
+        if (session_mgr) {
+            session_mgr->leave_room(conn);
+        }
+    }
+
     // 从所有房间中移除连接
     for (auto& pair : rooms_) {
         auto& room = pair.second;

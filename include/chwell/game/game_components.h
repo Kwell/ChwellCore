@@ -38,6 +38,9 @@ public:
 
     // 发送登录响应
     void send_login_response(const net::TcpConnectionPtr& conn, bool ok, const std::string& message);
+
+private:
+    service::Service* service_ = nullptr;
 };
 
 // 聊天组件
@@ -56,6 +59,9 @@ public:
 
     // 发送聊天消息
     void send_chat_message(const net::TcpConnectionPtr& conn, const std::string& from_player_id, const std::string& content);
+
+private:
+    service::Service* service_ = nullptr;
 };
 
 // 房间组件
@@ -83,6 +89,9 @@ public:
 
     // 发送加入房间响应
     void send_join_room_response(const net::TcpConnectionPtr& conn, bool ok, const std::string& message, const std::string& room_id);
+
+private:
+    service::Service* service_ = nullptr;
 
 private:
     struct Room {
