@@ -103,21 +103,29 @@ void LoginComponent::handle_login(const net::TcpConnectionPtr& conn, const std::
 
     if (!decode_string(ptr, size, offset, player_id)) {
         CHWELL_LOG_ERROR("Failed to decode player_id");
-        send_login_response(conn, false, "Invalid player_id");
+        send_error_response(conn, error_code::INVALID_REQUEST, "Failed to decode player_id");
         return;
     }
 
     if (!decode_string(ptr, size, offset, token)) {
         CHWELL_LOG_ERROR("Failed to decode token");
-        send_login_response(conn, false, "Invalid token");
+        send_error_response(conn, error_code::INVALID_REQUEST, "Failed to decode token");
         return;
     }
 
     CHWELL_LOG_INFO("Login request: player_id=" + player_id + ", token=" + token);
 
-    // 简单验证
+    // 验证 player_id
     if (player_id.empty()) {
-        send_login_response(conn, false, "Player ID cannot be empty");
+        CHWELL_LOG_ERROR("Player ID cannot be empty");
+        send_error_response(conn, error_code::INVALID_PLAYER_ID, "Player ID cannot be empty");
+        return;
+    }
+
+    // 验证 token
+    if (token.empty()) {
+        CHWELL_LOG_ERROR("Token cannot be empty");
+        send_error_response(conn, error_code::INVALID_TOKEN, "Token cannot be empty");
         return;
     }
 
@@ -264,11 +272,30 @@ void RoomComponent::handle_join_room(const net::TcpConnectionPtr& conn, const st
 
     if (!decode_string(ptr, size, offset, room_id)) {
         CHWELL_LOG_ERROR("Failed to decode room_id");
-        send_join_room_response(conn, false, "Invalid room_id", "");
+        send_error_response(conn, error_code::INVALID_REQUEST, "Failed to decode room_id");
         return;
     }
 
     CHWELL_LOG_INFO("Join room request: room_id=" + room_id);
+
+    // 验证 room_id
+    if (room_id.empty()) {
+        CHWELL_LOG_ERROR("Room ID cannot be empty");
+        send_error_response(conn, error_code::INVALID_REQUEST, "Room ID cannot be empty");
+        return;
+    }
+
+    // 检查是否已登录
+    if (service_) {
+        auto* session_mgr = service_->get_component<service::SessionManager>();
+        if (session_mgr) {
+            if (!session_mgr->is_logged_in(conn)) {
+                CHWELL_LOG_ERROR("Player not logged in");
+                send_error_response(conn, error_code::NOT_LOGGED_IN, "Please login first");
+                return;
+            }
+        }
+    }
 
     // 加入房间
     join_room(conn, room_id);
@@ -280,6 +307,8 @@ void RoomComponent::handle_join_room(const net::TcpConnectionPtr& conn, const st
             session_mgr->join_room(conn, room_id);
         }
     }
+
+    CHWELL_LOG_INFO("Player joined room: " + room_id);
 
     // 发送加入房间成功响应
     send_join_room_response(conn, true, "Join room success", room_id);
