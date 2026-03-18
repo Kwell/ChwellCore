@@ -25,6 +25,18 @@ namespace cmd {
     const uint16_t S2C_ERROR     = 0x00FF;
 }
 
+// 错误码
+namespace error_code {
+    const uint16_t SUCCESS               = 0;
+    const uint16_t INVALID_REQUEST       = 1;
+    const uint16_t INVALID_PLAYER_ID      = 2;
+    const uint16_t INVALID_TOKEN         = 3;
+    const uint16_t NOT_LOGGED_IN         = 4;
+    const uint16_t ROOM_NOT_FOUND        = 5;
+    const uint16_t ALREADY_IN_ROOM       = 6;
+    const uint16_t INTERNAL_ERROR        = 999;
+}
+
 // 登录组件
 class LoginComponent : public service::Component {
 public:
@@ -123,6 +135,9 @@ private:
     // 心跳超时时间（秒）
     static const int HEARTBEAT_TIMEOUT = 60;
 };
+
+// 辅助函数：发送错误响应（声明）
+void send_error_response(const net::TcpConnectionPtr& conn, uint16_t error_code, const std::string& message);
 
 } // namespace game
 } // namespace chwell

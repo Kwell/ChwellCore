@@ -173,11 +173,13 @@ void ChatComponent::handle_chat(const net::TcpConnectionPtr& conn, const std::ve
 
     if (!decode_string(ptr, size, offset, room_id)) {
         CHWELL_LOG_ERROR("Failed to decode room_id");
+        send_error_response(conn, error_code::INVALID_REQUEST, "Failed to decode room_id");
         return;
     }
 
     if (!decode_string(ptr, size, offset, content)) {
         CHWELL_LOG_ERROR("Failed to decode content");
+        send_error_response(conn, error_code::INVALID_REQUEST, "Failed to decode content");
         return;
     }
 
@@ -190,7 +192,9 @@ void ChatComponent::handle_chat(const net::TcpConnectionPtr& conn, const std::ve
         if (session_mgr) {
             player_id = session_mgr->get_player_id(conn);
             if (player_id.empty()) {
-                player_id = "unknown";
+                // 未登录
+                send_error_response(conn, error_code::NOT_LOGGED_IN, "Please login first");
+                return;
             }
         }
     }
@@ -407,6 +411,27 @@ void HeartbeatComponent::send_heartbeat_response(const net::TcpConnectionPtr& co
 
     protocol::Message msg(cmd::S2C_HEARTBEAT, std::vector<char>(body.begin(), body.end()));
     service::ProtocolRouterComponent::send_message(conn, msg);
+}
+
+// ============================================
+// 辅助函数：发送错误响应
+// ============================================
+
+void send_error_response(const net::TcpConnectionPtr& conn, uint16_t error_code, const std::string& message) {
+    // 编码: [error_code(2 bytes)][message_len][message]
+    std::string body;
+
+    // error_code（2字节，网络字节序）
+    uint16_t code_net = core::host_to_net16(error_code);
+    body.append(reinterpret_cast<const char*>(&code_net), 2);
+
+    // message
+    body += encode_string(message);
+
+    protocol::Message msg(cmd::S2C_ERROR, std::vector<char>(body.begin(), body.end()));
+    service::ProtocolRouterComponent::send_message(conn, msg);
+
+    CHWELL_LOG_WARN("Send error response: code=" + std::to_string(error_code) + ", message=" + message);
 }
 
 } // namespace game

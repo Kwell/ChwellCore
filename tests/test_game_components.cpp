@@ -8,6 +8,7 @@
 #include "chwell/core/endian.h"
 
 using namespace chwell;
+using namespace chwell::game;
 
 namespace {
 
@@ -308,6 +309,45 @@ TEST(GameComponentsTest, EncodeDecodeJoinRoomResponse) {
 TEST(GameComponentsTest, DISABLED_RoomComponentBasicOperations) {
     // 此测试需要真实的 TcpConnection 对象，暂时禁用
     // TODO: 集成到集成测试中，使用真实的连接对象
+}
+
+// 测试错误响应编码
+TEST(GameComponentsTest, EncodeDecodeErrorResponse) {
+    uint16_t error_code = game::error_code::INVALID_PLAYER_ID;
+    std::string message = "Player ID cannot be empty";
+
+    // 编码: [error_code(2 bytes)][message_len][message]
+    std::string encoded;
+
+    // error_code（2字节，网络字节序）
+    uint16_t code_net = core::host_to_net16(error_code);
+    encoded.append(reinterpret_cast<const char*>(&code_net), 2);
+
+    // message
+    uint16_t len = core::host_to_net16(static_cast<uint16_t>(message.length()));
+    encoded.append(reinterpret_cast<const char*>(&len), 2);
+    encoded += message;
+
+    // 解码
+    const char* ptr = encoded.data();
+    size_t offset = 0;
+
+    // 读取 error_code
+    uint16_t code_net_read;
+    std::memcpy(&code_net_read, ptr + offset, 2);
+    uint16_t decoded_code = core::net_to_host16(code_net_read);
+    offset += 2;
+
+    // 读取 message
+    uint16_t len_net;
+    std::memcpy(&len_net, ptr + offset, 2);
+    uint16_t message_len = core::net_to_host16(len_net);
+    offset += 2;
+
+    std::string decoded_message(ptr + offset, message_len);
+
+    EXPECT_EQ(error_code, decoded_code);
+    EXPECT_EQ(message, decoded_message);
 }
 
 } // namespace
