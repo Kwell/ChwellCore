@@ -301,7 +301,14 @@ if (CHWELL_BUILD_EXAMPLES)
     add_executable(example_game_ws_server
         examples/game_ws_server.cpp
     )
-    target_link_libraries(example_game_ws_server PRIVATE chwell_core)
+
+    # 查找 OpenSSL（用于 WebSocket 握手的 SHA1）
+    find_package(OpenSSL)
+    if(OPENSSL_FOUND)
+        target_link_libraries(example_game_ws_server PRIVATE chwell_core OpenSSL::Crypto)
+    else()
+        target_link_libraries(example_game_ws_server PRIVATE chwell_core)
+    endif()
 
     # 新增模块示例
     add_executable(example_new_modules
