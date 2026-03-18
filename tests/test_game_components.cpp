@@ -13,9 +13,11 @@ namespace {
 
 // 创建虚拟连接
 net::TcpConnectionPtr make_dummy_conn(std::uintptr_t tag) {
-    return net::TcpConnectionPtr(
-        reinterpret_cast<net::TcpConnection*>(tag),
-        [](net::TcpConnection*) {});
+    // 使用 tag 作为连接对象的指针
+    auto* raw_ptr = reinterpret_cast<net::TcpConnection*>(tag);
+    return net::TcpConnectionPtr(raw_ptr, [](net::TcpConnection*) {
+        // 空删除器，不实际释放内存
+    });
 }
 
 // 测试字符串编码/解码
@@ -304,21 +306,8 @@ TEST(GameComponentsTest, EncodeDecodeJoinRoomResponse) {
 
 // 测试 RoomComponent 基本功能
 TEST(GameComponentsTest, DISABLED_RoomComponentBasicOperations) {
-    game::RoomComponent room_component;
-
-    auto conn1 = make_dummy_conn(1);
-    auto conn2 = make_dummy_conn(2);
-
-    // 加入房间
-    room_component.join_room(conn1, "room1");
-    room_component.join_room(conn2, "room1");
-
-    // 测试连接断开
-    room_component.on_disconnect(conn1);
-
-    // 验证房间是否仍然存在（conn2 还在）
-    auto connections = room_component.get_connections_in_room("room1");
-    // 注意：由于 get_connections_in_room 的实现限制，这里暂时不做断言
+    // 此测试需要真实的 TcpConnection 对象，暂时禁用
+    // TODO: 集成到集成测试中，使用真实的连接对象
 }
 
 } // namespace

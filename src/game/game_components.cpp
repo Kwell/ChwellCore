@@ -254,6 +254,9 @@ void RoomComponent::join_room(const net::TcpConnectionPtr& conn, const std::stri
     // 添加连接到房间
     room->connections.insert(conn.get());
 
+    // 保存连接映射
+    connections_map_[conn.get()] = conn;
+
     CHWELL_LOG_INFO("Connection joined room: " + room_id);
 }
 
@@ -263,6 +266,9 @@ void RoomComponent::leave_room(const net::TcpConnectionPtr& conn) {
         auto& room = pair.second;
         room->connections.erase(conn.get());
     }
+
+    // 清理连接映射
+    connections_map_.erase(conn.get());
 
     // 清理空房间
     auto it = rooms_.begin();
@@ -283,9 +289,11 @@ std::vector<net::TcpConnectionPtr> RoomComponent::get_connections_in_room(const 
     if (it != rooms_.end()) {
         auto& room = it->second;
         for (auto* raw_ptr : room->connections) {
-            // 注意：这里需要从连接对象获取 shared_ptr
-            // 实际实现时需要维护一个从 raw_ptr 到 shared_ptr 的映射
-            // 这里暂时返回空
+            // 从连接映射中获取 shared_ptr
+            auto map_it = connections_map_.find(raw_ptr);
+            if (map_it != connections_map_.end()) {
+                result.push_back(map_it->second);
+            }
         }
     }
 

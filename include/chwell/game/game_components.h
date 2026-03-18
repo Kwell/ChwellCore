@@ -91,6 +91,9 @@ private:
     };
 
     std::unordered_map<std::string, std::shared_ptr<Room>> rooms_;
+
+    // 连接映射：raw_ptr -> shared_ptr
+    std::unordered_map<net::TcpConnection*, net::TcpConnectionPtr> connections_map_;
 };
 
 // 心跳组件
