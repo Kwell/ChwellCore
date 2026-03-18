@@ -297,6 +297,12 @@ if (CHWELL_BUILD_EXAMPLES)
         message(WARNING "OpenSSL not found, ws_tcp_bridge will not be built (required for H5 game demo)")
     endif()
 
+    # WebSocket + Protobuf 游戏服务器
+    add_executable(example_game_ws_server
+        examples/game_ws_server.cpp
+    )
+    target_link_libraries(example_game_ws_server PRIVATE chwell_core)
+
     # 新增模块示例
     add_executable(example_new_modules
         examples/new_modules_demo.cpp
