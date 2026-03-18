@@ -419,13 +419,16 @@ int main() {
     core::Config cfg;
     cfg.load_from_file("server.conf");
 
+    // WebSocket 服务器使用 9080 端口（与 TCP 服务端口 9000 分开）
+    const unsigned short WS_PORT = 9080;
+
     service::Service svc(static_cast<unsigned short>(cfg.listen_port()),
                          static_cast<std::size_t>(cfg.worker_threads()));
 
     auto game_component = svc.add_component<GameWSComponent>();
 
-    // 创建 WebSocket 服务器
-    auto ws_server = std::make_shared<net::WsServer>(svc.io_service(), cfg.listen_port());
+    // 创建 WebSocket 服务器（使用独立端口）
+    auto ws_server = std::make_shared<net::WsServer>(svc.io_service(), WS_PORT);
 
     // 设置回调
     ws_server->set_connection_callback([game_component](const net::WsConnectionPtr& conn) {
@@ -443,7 +446,7 @@ int main() {
     svc.start();
     ws_server->start_accept();
 
-    CHWELL_LOG_INFO("WS Game Server running on port " + std::to_string(cfg.listen_port()));
+    CHWELL_LOG_INFO("WS Game Server running on port " + std::to_string(WS_PORT));
 
     static volatile sig_atomic_t g_stop = 0;
     std::signal(SIGTERM, [](int) { g_stop = 1; });
