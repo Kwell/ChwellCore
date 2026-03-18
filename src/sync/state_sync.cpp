@@ -116,11 +116,26 @@ static std::string encode_bytes(const std::vector<uint8_t>& data) {
     return result;
 }
 
+static std::string encode_state_value(const StateValue& value) {
+    std::string result;
+
+    // value_len（2字节，网络字节序）
+    uint16_t len = core::host_to_net16(static_cast<uint16_t>(value.value.size()));
+    result.append(reinterpret_cast<const char*>(&len), 2);
+
+    // value
+    result += value.value;
+
+    return result;
+}
+
 // ============================================
 // StateSyncComponent
 // ============================================
 
 void StateSyncComponent::on_register(service::Service& svc) {
+    service_ = &svc;
+
     auto* router = svc.get_component<service::ProtocolRouterComponent>();
     if (router) {
         router->register_handler(state_cmd::C2S_STATE_UPDATE,
@@ -318,6 +333,16 @@ void StateSyncComponent::create_room(const std::string& room_id) {
     }
 
     auto room = std::make_shared<StateSyncRoom>(room_id);
+
+    // 设置回调函数
+    room->set_diff_callback([this](const net::TcpConnectionPtr& conn, const StateDiff& diff) {
+        this->send_state_diff(conn, diff);
+    });
+
+    room->set_snapshot_callback([this](const net::TcpConnectionPtr& conn, const StateSnapshot& snapshot) {
+        this->send_state_snapshot(conn, snapshot);
+    });
+
     rooms_[room_id] = room;
 
     CHWELL_LOG_INFO("Created state sync room: " + room_id);
@@ -408,6 +433,72 @@ std::string StateSyncComponent::get_room_id(const net::TcpConnectionPtr& conn) {
     }
 
     return "";
+}
+
+void StateSyncComponent::send_state_diff(const net::TcpConnectionPtr& conn, const StateDiff& diff) {
+    // 编码: [entity_id_len][entity_id][change_count][change1_key_len][change1_key][change1_type][change1_len][change1_value][timestamp(8 bytes)]
+    std::string body;
+
+    // entity_id
+    body += encode_string(diff.entity_id);
+
+    // change_count（2字节，网络字节序）
+    uint16_t count = core::host_to_net16(static_cast<uint16_t>(diff.changes.size()));
+    body.append(reinterpret_cast<const char*>(&count), 2);
+
+    // changes
+    for (const auto& change : diff.changes) {
+        // key
+        body += encode_string(change.first);
+
+        // type（1字节）
+        uint8_t type = static_cast<uint8_t>(change.second.type);
+        body.append(reinterpret_cast<const char*>(&type), 1);
+
+        // value
+        body += encode_state_value(change.second);
+    }
+
+    // timestamp（8字节，小端）
+    body += encode_uint64(diff.timestamp);
+
+    protocol::Message msg(state_cmd::S2C_STATE_DIFF, std::vector<char>(body.begin(), body.end()));
+    service::ProtocolRouterComponent::send_message(conn, msg);
+
+    CHWELL_LOG_INFO("Sent state diff: entity_id=" + diff.entity_id + ", changes=" + std::to_string(diff.changes.size()));
+}
+
+void StateSyncComponent::send_state_snapshot(const net::TcpConnectionPtr& conn, const StateSnapshot& snapshot) {
+    // 编码: [entity_id_len][entity_id][state_count][state1_key_len][state1_key][state1_type][state1_len][state1_value][timestamp(8 bytes)]
+    std::string body;
+
+    // entity_id
+    body += encode_string(snapshot.entity_id);
+
+    // state_count（2字节，网络字节序）
+    uint16_t count = core::host_to_net16(static_cast<uint16_t>(snapshot.states.size()));
+    body.append(reinterpret_cast<const char*>(&count), 2);
+
+    // states
+    for (const auto& pair : snapshot.states) {
+        // key
+        body += encode_string(pair.first);
+
+        // type（1字节）
+        uint8_t type = static_cast<uint8_t>(pair.second.type);
+        body.append(reinterpret_cast<const char*>(&type), 1);
+
+        // value
+        body += encode_state_value(pair.second);
+    }
+
+    // timestamp（8字节，小端）
+    body += encode_uint64(snapshot.timestamp);
+
+    protocol::Message msg(state_cmd::S2C_STATE_SNAPSHOT, std::vector<char>(body.begin(), body.end()));
+    service::ProtocolRouterComponent::send_message(conn, msg);
+
+    CHWELL_LOG_INFO("Sent state snapshot: entity_id=" + snapshot.entity_id + ", states=" + std::to_string(snapshot.states.size()));
 }
 
 } // namespace sync

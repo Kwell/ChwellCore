@@ -137,6 +137,16 @@ class StateSyncRoom {
 public:
     StateSyncRoom(const std::string& room_id) : room_id_(room_id) {}
 
+    // 设置发送差异的回调
+    void set_diff_callback(std::function<void(const net::TcpConnectionPtr&, const StateDiff&)> callback) {
+        diff_callback_ = callback;
+    }
+
+    // 设置发送快照的回调
+    void set_snapshot_callback(std::function<void(const net::TcpConnectionPtr&, const StateSnapshot&)> callback) {
+        snapshot_callback_ = callback;
+    }
+
     // 更新状态
     void update_state(const StateUpdate& update) {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -154,8 +164,20 @@ public:
         diff.changes.push_back({update.state_key, update.value});
         diff.timestamp = update.timestamp;
 
-        // 通知订阅者（暂时不做实现）
-        // TODO: 实现订阅者通知机制
+        // 通知订阅者
+        if (diff_callback_) {
+            auto subs_it = subscribers_.find(update.entity_id);
+            if (subs_it != subscribers_.end()) {
+                for (auto* raw_conn : subs_it->second) {
+                    // 需要将raw_ptr转换为shared_ptr
+                    // 这里简化处理，实际需要维护连接映射
+                    auto conn_it = connection_map_.find(raw_conn);
+                    if (conn_it != connection_map_.end()) {
+                        diff_callback_(conn_it->second, diff);
+                    }
+                }
+            }
+        }
     }
 
     // 查询状态
@@ -215,8 +237,14 @@ public:
 
         subscribers_[entity_id].insert(conn.get());
 
-        // 发送当前状态快照（暂时不做实现）
-        // TODO: 实现快照发送机制
+        // 保存连接映射
+        connection_map_[conn.get()] = conn;
+
+        // 发送当前状态快照
+        if (snapshot_callback_) {
+            StateSnapshot snapshot = create_snapshot(entity_id);
+            snapshot_callback_(conn, snapshot);
+        }
     }
 
     // 取消订阅
@@ -276,6 +304,9 @@ private:
     std::unordered_map<std::string, std::unordered_map<std::string, StateValue>> states_; // entity_id -> state_key -> value
     std::unordered_map<std::string, uint64_t> timestamps_; // entity_id -> timestamp
     std::unordered_map<std::string, std::unordered_set<net::TcpConnection*>> subscribers_; // entity_id -> connections
+    std::unordered_map<net::TcpConnection*, net::TcpConnectionPtr> connection_map_; // raw_ptr -> shared_ptr
+    std::function<void(const net::TcpConnectionPtr&, const StateDiff&)> diff_callback_;
+    std::function<void(const net::TcpConnectionPtr&, const StateSnapshot&)> snapshot_callback_;
 };
 
 // ============================================
@@ -325,12 +356,19 @@ public:
     virtual void on_disconnect(const net::TcpConnectionPtr& conn) override;
 
 private:
+    // 发送状态差异
+    void send_state_diff(const net::TcpConnectionPtr& conn, const StateDiff& diff);
+
+    // 发送状态快照
+    void send_state_snapshot(const net::TcpConnectionPtr& conn, const StateSnapshot& snapshot);
+
     // 获取 SessionManager
     service::SessionManager* get_session_manager();
 
     // 获取房间 ID
     std::string get_room_id(const net::TcpConnectionPtr& conn);
 
+    service::Service* service_ = nullptr;
     std::mutex mutex_;
     std::unordered_map<std::string, std::shared_ptr<StateSyncRoom>> rooms_;
     std::unordered_map<net::TcpConnection*, std::string> connections_; // connection -> room_id
