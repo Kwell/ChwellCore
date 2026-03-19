@@ -5,6 +5,8 @@
 #include <functional>
 #include <chrono>
 #include <cstdint>
+#include <cmath>
+#include <algorithm>
 
 namespace chwell {
 namespace benchmark {
@@ -34,6 +36,13 @@ struct BenchmarkConfig {
 // 基准测试函数
 using BenchmarkFunction = std::function<void()>;
 
+// Benchmark 描述（内部使用）
+struct BenchmarkDescriptor {
+    std::string name;
+    std::string description;
+    BenchmarkFunction func;
+};
+
 // Benchmark Suite
 class BenchmarkSuite {
 public:
@@ -55,7 +64,7 @@ public:
 
     // 运行单个基准测试
     BenchmarkResult run_benchmark(const std::string& name,
-                                   BenchmarkConfig& config = BenchmarkConfig());
+                                   BenchmarkConfig config = BenchmarkConfig());
 
     // 导出结果为 CSV
     std::string export_csv() const;
@@ -69,6 +78,23 @@ public:
 private:
     std::string name_;
     std::vector<BenchmarkResult> results_;
+    std::vector<BenchmarkDescriptor> benchmarks_;
+
+    // 内部工具函数
+    BenchmarkResult run_single_benchmark(const BenchmarkDescriptor& desc,
+                                          const BenchmarkConfig& config);
+
+    void warmup(BenchmarkFunction func, size_t iterations);
+
+    std::vector<double> measure(BenchmarkFunction func, size_t iterations);
+
+    double calculate_avg(const std::vector<double>& values);
+
+    double calculate_min(const std::vector<double>& values);
+
+    double calculate_max(const std::vector<double>& values);
+
+    double calculate_stddev(const std::vector<double>& values, double avg);
 };
 
 // Benchmarks 命名空间 - 放置具体的基准测试
@@ -92,6 +118,16 @@ namespace loadbalance_bench {
     void benchmark_round_robin_select(size_t iterations);
     void benchmark_consistent_hash_select(size_t iterations);
     void benchmark_weighted_round_robin_select(size_t iterations);
+}
+
+// 协议基准
+namespace protocol_bench {
+    void benchmark_message_serialize(size_t iterations, size_t body_size);
+    void benchmark_message_deserialize(size_t iterations, size_t body_size);
+    void benchmark_protocol_parser_parse(size_t iterations, size_t body_size);
+    void benchmark_protocol_router_dispatch(size_t iterations, size_t handlers_count);
+    void benchmark_message_create_destroy(size_t iterations, size_t body_size);
+    void benchmark_message_copy_move(size_t iterations, size_t body_size);
 }
 
 } // namespace benchmark

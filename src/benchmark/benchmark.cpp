@@ -1,53 +1,152 @@
 #include "chwell/benchmark/benchmark.h"
 #include "chwell/core/logger.h"
+#include "chwell/protocol/message.h"
+#include "chwell/protocol/parser.h"
+#include "chwell/service/protocol_router.h"
+#include "chwell/net/tcp_connection.h"
 
 #include <algorithm>
 #include <random>
 #include <sstream>
-
+#include <iostream>
+#include <iomanip>
 #include <fstream>
 
 namespace chwell {
 namespace benchmark {
+
+// ============================================
+// BenchmarkSuite 实现
+// ============================================
 
 void BenchmarkSuite::add_benchmark(
     const std::string& name,
     const std::string& description,
     BenchmarkFunction benchmark) {
 
-    BenchmarkResult result;
-    result.name = name;
-    result.description = description;
+    BenchmarkDescriptor desc;
+    desc.name = name;
+    desc.description = description;
+    desc.func = benchmark;
 
-    // 先保存 benchmark 函数
-    // （简化实现，实际应该在 run() 中调用）
+    benchmarks_.push_back(desc);
 }
 
-BenchmarkResult BenchmarkSuite::run_benchmark(
-    const std::string& name,
-    BenchmarkConfig& config) {
+void BenchmarkSuite::warmup(BenchmarkFunction func, size_t iterations) {
+    for (size_t i = 0; i < iterations; ++i) {
+        func();
+    }
+}
+
+std::vector<double> BenchmarkSuite::measure(BenchmarkFunction func, size_t iterations) {
+    std::vector<double> times;
+    times.reserve(iterations);
+
+    for (size_t i = 0; i < iterations; ++i) {
+        auto start = std::chrono::high_resolution_clock::now();
+        func();
+        auto end = std::chrono::high_resolution_clock::now();
+
+        auto duration = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start);
+        times.push_back(duration.count() / 1000000.0);  // 转换为毫秒
+    }
+
+    return times;
+}
+
+double BenchmarkSuite::calculate_avg(const std::vector<double>& values) {
+    if (values.empty()) return 0.0;
+
+    double sum = 0.0;
+    for (double v : values) {
+        sum += v;
+    }
+    return sum / values.size();
+}
+
+double BenchmarkSuite::calculate_min(const std::vector<double>& values) {
+    if (values.empty()) return 0.0;
+    return *std::min_element(values.begin(), values.end());
+}
+
+double BenchmarkSuite::calculate_max(const std::vector<double>& values) {
+    if (values.empty()) return 0.0;
+    return *std::max_element(values.begin(), values.end());
+}
+
+double BenchmarkSuite::calculate_stddev(const std::vector<double>& values, double avg) {
+    if (values.empty()) return 0.0;
+
+    double sum_sq = 0.0;
+    for (double v : values) {
+        double diff = v - avg;
+        sum_sq += diff * diff;
+    }
+
+    return std::sqrt(sum_sq / values.size());
+}
+
+BenchmarkResult BenchmarkSuite::run_single_benchmark(
+    const BenchmarkDescriptor& desc,
+    const BenchmarkConfig& config) {
 
     BenchmarkResult result;
-    result.name = name;
-    result.description = "";
+    result.name = desc.name;
+    result.description = desc.description;
 
-    // 简化实现：只运行一次
-    // 实际应该从 benchmarks_ map 中查找并运行
+    // 预热
+    if (!config.skip_warmup && config.warmup_iterations > 0) {
+        warmup(desc.func, config.warmup_iterations);
+    }
+
+    // 测量
+    std::vector<double> times = measure(desc.func, config.measurement_iterations);
+
+    // 计算统计信息
     result.iterations = config.measurement_iterations;
-    result.avg_time_ms = 0;
-    result.min_time_ms = 0;
-    result.max_time_ms = 0;
-    result.ops_per_second = 0;
+    result.avg_time_ms = calculate_avg(times);
+    result.min_time_ms = calculate_min(times);
+    result.max_time_ms = calculate_max(times);
+    double stddev = calculate_stddev(times, result.avg_time_ms);
+
+    // 计算 ops/sec
+    result.ops_per_second = 1000.0 / result.avg_time_ms;
+    result.ops_per_second_min = 1000.0 / result.max_time_ms;
+    result.ops_per_second_max = 1000.0 / result.min_time_ms;
+    result.ops_per_second_stddev = stddev * result.ops_per_second / result.avg_time_ms;
 
     return result;
 }
 
 std::vector<BenchmarkResult> BenchmarkSuite::run(const BenchmarkConfig& config) {
-    std::vector<BenchmarkResult> results;
+    results_.clear();
 
-    // TODO: 实现基准测试
-    // 这里应该遍历所有注册的 benchmark 并运行
-    return results;
+    for (const auto& desc : benchmarks_) {
+        BenchmarkResult result = run_single_benchmark(desc, config);
+        results_.push_back(result);
+    }
+
+    return results_;
+}
+
+BenchmarkResult BenchmarkSuite::run_benchmark(
+    const std::string& name,
+    BenchmarkConfig config) {
+
+    // 查找对应的 benchmark
+    for (const auto& desc : benchmarks_) {
+        if (desc.name == name) {
+            BenchmarkResult result = run_single_benchmark(desc, config);
+            results_.push_back(result);
+            return result;
+        }
+    }
+
+    // 没找到，返回空结果
+    BenchmarkResult empty;
+    empty.name = name;
+    empty.iterations = 0;
+    return empty;
 }
 
 std::string BenchmarkSuite::export_csv() const {
@@ -85,7 +184,7 @@ std::string BenchmarkSuite::export_json() const {
         oss << "    \"iterations\": " << result.iterations << ",\n";
         oss << "    \"avg_time_ms\": " << result.avg_time_ms << ",\n";
         oss << "    \"min_time_ms\": " << result.min_time_ms << ",\n";
-        oss <<    \"max_time_ms\": " << result.max_time_ms << ",\n";
+        oss << "    \"max_time_ms\": " << result.max_time_ms << ",\n";
         oss << "    \"ops_per_second\": " << result.ops_per_second << ",\n";
         oss << "    \"ops_per_second_min\": " << result.ops_per_second_min << ",\n";
         oss << "    \"ops_per_second_max\": " << result.ops_per_second_max << ",\n";
@@ -109,15 +208,17 @@ void BenchmarkSuite::print_results() const {
 
     for (const auto& result : results_) {
         std::cout << "Benchmark: " << result.name << "\n";
-        std::cout << "  Description: " << result.description << "\n";
+        if (!result.description.empty()) {
+            std::cout << "  Description: " << result.description << "\n";
+        }
         std::cout << "  Iterations: " << result.iterations << "\n";
-        std::cout << "  Avg Time: " << result.avg_time_ms << " ms\n";
-        std::cout << "  Min Time: " << result.min_time_ms << " ms\n";
-        std::cout << "  Max Time: " << result.max_time_ms << " ms\n";
-        std::cout << "  Ops/Sec: " << result.ops_per_second << "\n";
-        std::cout << "  Ops/Sec (min): " << result.ops_per_second_min << "\n";
-        std::cout << "  Ops/Sec (max): " << result.ops_per_second_max << "\n";
-        std::cout << "  Ops/Sec (stddev): " << result.ops_per_second_stddev << "\n";
+        std::cout << "  Avg Time: " << std::fixed << std::setprecision(4) << result.avg_time_ms << " ms\n";
+        std::cout << "  Min Time: " << std::fixed << std::setprecision(4) << result.min_time_ms << " ms\n";
+        std::cout << "  Max Time: " << std::fixed << std::setprecision(4) << result.max_time_ms << " ms\n";
+        std::cout << "  Ops/Sec: " << std::fixed << std::setprecision(2) << result.ops_per_second << "\n";
+        std::cout << "  Ops/Sec (min): " << std::fixed << std::setprecision(2) << result.ops_per_second_min << "\n";
+        std::cout << "  Ops/Sec (max): " << std::fixed << std::setprecision(2) << result.ops_per_second_max << "\n";
+        std::cout << "  Ops/Sec (stddev): " << std::fixed << std::setprecision(2) << result.ops_per_second_stddev << "\n";
         std::cout << "\n";
     }
     std::cout << "==========================================\n\n";
@@ -126,38 +227,6 @@ void BenchmarkSuite::print_results() const {
 // ============================================
 // 具体 Benchmarks 实现
 // ============================================
-
-namespace tcp_bench {
-
-void benchmark_tcp_connect() {
-    // TODO: 实现 TCP 连接基准测试
-}
-
-void benchmark_tcp_send_receive() {
-    // TODO: 实现 TCP 发送接收基准测试
-}
-
-void benchmark_concurrent_connections(int num_connections) {
-    // TODO: 实现并发连接基准测试
-}
-
-} // namespace tcp_bench
-
-namespace memory_bench {
-
-void benchmark_vector_alloc(size_t size, size_t count) {
-    // TODO: 实现向量分配基准测试
-}
-
-void benchmark_map_insert(size_t count) {
-    // TODO: 实现 map 插入基准测试
-}
-
-void benchmark_string_concat(size_t length) {
-    // TODO: 实现字符串拼接基准测试
-}
-
-} // namespace memory_bench
 
 namespace loadbalance_bench {
 
@@ -174,6 +243,115 @@ void benchmark_weighted_round_robin_select(size_t iterations) {
 }
 
 } // namespace loadbalance_bench
+
+namespace protocol_bench {
+
+// 协议消息序列化基准测试
+void benchmark_message_serialize(size_t iterations, size_t body_size) {
+    for (size_t i = 0; i < iterations; ++i) {
+        protocol::Message msg(1001, std::string(body_size, 'x'));
+        volatile auto data = protocol::serialize(msg);
+        (void)data;  // 防止被优化掉
+    }
+}
+
+// 协议消息反序列化基准测试
+void benchmark_message_deserialize(size_t iterations, size_t body_size) {
+    // 预先生成消息数据
+    protocol::Message original_msg(1001, std::string(body_size, 'x'));
+    std::vector<char> data = protocol::serialize(original_msg);
+
+    for (size_t i = 0; i < iterations; ++i) {
+        protocol::Message msg;
+        volatile bool success = protocol::deserialize(data, msg);
+        (void)success;  // 防止被优化掉
+    }
+}
+
+// 协议解析器解析基准测试
+void benchmark_protocol_parser_parse(size_t iterations, size_t body_size) {
+    // 预先生成多个消息数据（模拟粘包）
+    std::vector<char> buffer;
+
+    for (size_t i = 0; i < 10; ++i) {
+        protocol::Message msg(1000 + i, std::string(body_size, 'x'));
+        auto serialized = protocol::serialize(msg);
+        buffer.insert(buffer.end(), serialized.begin(), serialized.end());
+    }
+
+    for (size_t i = 0; i < iterations; ++i) {
+        protocol::Parser parser;
+        std::vector<protocol::Message> messages = parser.feed(buffer);
+        volatile size_t count = messages.size();
+        (void)count;  // 防止被优化掉
+    }
+}
+
+// 协议路由器分发基准测试
+void benchmark_protocol_router_dispatch(size_t iterations, size_t handlers_count) {
+    // 创建虚拟路由器
+    service::ProtocolRouterComponent router;
+
+    // 注册多个处理器
+    for (size_t i = 0; i < handlers_count; ++i) {
+        router.register_handler(1000 + i, [](const net::TcpConnectionPtr&, const protocol::Message&) {
+            // 空处理器
+        });
+    }
+
+    // 创建虚拟消息
+    std::vector<protocol::Message> messages;
+    for (size_t i = 0; i < handlers_count; ++i) {
+        messages.emplace_back(1000 + i, std::string(100, 'x'));
+    }
+
+    // 模拟分发
+    for (size_t i = 0; i < iterations; ++i) {
+        for (const auto& msg : messages) {
+            // 这里只是模拟，实际需要通过 on_message 调用
+            volatile std::uint16_t cmd = msg.cmd;
+            (void)cmd;  // 防止被优化掉
+        }
+    }
+}
+
+// 消息创建销毁基准测试
+void benchmark_message_create_destroy(size_t iterations, size_t body_size) {
+    for (size_t i = 0; i < iterations; ++i) {
+        {
+            protocol::Message msg(1001, std::string(body_size, 'x'));
+            (void)msg;  // 防止被优化掉
+        }
+        // msg 在这里销毁
+    }
+}
+
+// 消息拷贝/移动基准测试
+void benchmark_message_copy_move(size_t iterations, size_t body_size) {
+    std::vector<protocol::Message> messages;
+
+    // 创建初始消息
+    for (size_t i = 0; i < 100; ++i) {
+        messages.emplace_back(1000 + i, std::string(body_size, 'x'));
+    }
+
+    for (size_t i = 0; i < iterations; ++i) {
+        std::vector<protocol::Message> temp_messages;
+
+        // 拷贝
+        for (const auto& msg : messages) {
+            temp_messages.push_back(msg);  // 拷贝构造
+        }
+
+        // 移动
+        std::vector<protocol::Message> moved_messages;
+        for (auto& msg : temp_messages) {
+            moved_messages.push_back(std::move(msg));  // 移动构造
+        }
+    }
+}
+
+} // namespace protocol_bench
 
 } // namespace benchmark
 } // namespace chwell

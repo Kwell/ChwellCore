@@ -107,6 +107,7 @@ add_library(chwell_core
     src/protocol/message.cpp
     src/protocol/parser.cpp
     src/service/protocol_router.cpp
+    src/benchmark/benchmark.cpp
     src/http/http_response.cpp
     src/http/http_server.cpp
     src/codec/codec.cpp
@@ -236,6 +237,7 @@ if (CHWELL_BUILD_TESTS)
             tests/test_ratelimit.cpp
             tests/test_consistent_hash.cpp
             tests/test_prometheus_metrics.cpp
+            tests/test_benchmark.cpp
         )
         target_link_libraries(chwell_core_tests PRIVATE chwell_core ${CHWELL_GTEST_LIB})
         add_test(NAME chwell_core_tests COMMAND chwell_core_tests)

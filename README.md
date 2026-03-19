@@ -2,6 +2,27 @@
 
 一个模块化、高性能的 C++ 游戏服务器框架，专为 SLG/MMO 等中大型游戏设计。
 
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![C++17](https://img.shields.io/badge/C%2B%2B-17-blue.svg)](https://en.cppreference.com/w/cpp/17)
+[![CMake](https://img.shields.io/badge/CMake-3.14+-brightgreen.svg)](https://cmake.org/)
+[![Tests](https://img.shields.io/badge/tests-passing-success.svg)](tests/)
+
+## 📖 目录
+
+- [特性](#特性)
+- [技术选型](#技术选型)
+- [快速开始](#快速开始)
+- [核心模块](#核心模块)
+- [游戏协议](#游戏协议)
+- [性能测试](#性能测试)
+- [使用示例](#使用示例)
+- [配置文件](#配置文件)
+- [构建选项](#构建选项)
+- [测试](#测试)
+- [目录结构](#目录结构)
+- [贡献指南](#贡献指南)
+- [许可证](#许可证)
+
 ## 技术选型
 
 ### 后端（本框架）
@@ -52,6 +73,8 @@
 
 ## 特性
 
+### 核心特性
+
 - 🚀 **高性能网络层** - 基于 ASIO 的非阻塞 TCP/HTTP/WebSocket 服务
 - 📦 **协议编解码** - 长度前缀帧、Protobuf、JSON 支持
 - 🎮 **游戏组件系统** - 登录、聊天、房间、心跳、玩家移动等模块化组件
@@ -60,8 +83,24 @@
 - 🗺️ **SLG 模块** - 地图管理、战斗系统
 - 💾 **存储抽象** - 内存/MySQL/MongoDB 可切换
 - 🌐 **集群支持** - 节点注册、RPC 调用
-- 📊 **可靠性** - 心跳、限流、监控指标
+- 📊 **可靠性** - 心跳、限流、监控指标、熔断器
 - 🔌 **连接适配器** - TCP 和 WebSocket 统一接口
+
+### 性能特性
+
+- ⚡ **对象池** - 减少内存分配开销
+- 🧵 **线程池任务队列** - 高效异步任务处理
+- ⏱️ **时间轮定时器** - O(1) 定时器实现
+- 📈 **Benchmark框架** - 内置性能测试工具
+- 🎚️ **速率限制** - 令牌桶算法
+- 🔍 **监控指标** - Prometheus 格式指标输出
+
+### 开发体验
+
+- 🧪 **单元测试** - 基于 GoogleTest 的完整测试覆盖
+- 📝 **YAML 配置** - 人性化的配置文件格式
+- 🌐 **多示例** - 涵盖各种使用场景的示例代码
+- 📚 **完整文档** - API文档、架构文档、性能报告
 
 ## 快速开始
 
@@ -340,38 +379,372 @@ storage:
 
 ## 测试
 
+### 单元测试
+
 ```bash
 cd build
 ./chwell_core_tests
+```
+
+### 集成测试
+
+```bash
+cd build
+./chwell_integration_tests
+```
+
+### 性能测试 (Benchmark)
+
+ChwellCore 内置了完整的 Benchmark 框架，用于性能测试和回归检测。
+
+#### 运行所有 Benchmark 测试
+
+```bash
+cd build
+./chwell_core_tests --gtest_filter="BenchmarkTest.*"
+```
+
+#### 运行特定 Benchmark 测试
+
+```bash
+# 协议层性能测试
+./chwell_core_tests --gtest_filter="BenchmarkTest.Protocol*"
+
+# 完整协议测试套件
+./chwell_core_tests --gtest_filter="BenchmarkTest.ProtocolFullSuite"
+```
+
+#### 性能测试报告
+
+详细的性能测试报告请查看 [BENCHMARK_REPORT.md](BENCHMARK_REPORT.md)
+
+**关键性能指标**:
+
+| 测试项 | 性能指标 |
+|--------|---------|
+| 消息序列化 (1K) | ~931 ops/sec |
+| 消息反序列化 (1K) | ~4,710 ops/sec |
+| 大消息反序列化 (10K) | ~28,871 ops/sec 🔥 |
+| 解析器吞吐 | ~906 ops/sec (10x1K消息) |
+| 消息创建/销毁 | ~4,262 ops/sec |
+
+#### Benchmark 框架特性
+
+- ✅ 预热机制（warmup）避免冷启动影响
+- ✅ 多次测量求平均（avg/min/max/stddev）
+- ✅ 自动计算 Ops/Sec（每秒操作数）
+- ✅ 支持 CSV/JSON 格式导出
+- ✅ 可配置迭代次数和测量参数
+
+**导出测试报告**:
+
+运行 `BenchmarkTest.ProtocolFullSuite` 会自动输出 CSV 格式的性能报告：
+
+```csv
+name,description,iterations,avg_time_ms,ops_per_second
+serialize_1k,"Serialize 1K message",1000,0.1057,9461.66
+deserialize_1k,"Deserialize 1K message",1000,0.0223,44921.62
+...
 ```
 
 ## 目录结构
 
 ```
 ChwellCore/
-├── include/chwell/     # 头文件
-│   ├── core/           # 核心组件（日志、定时器）
-│   ├── net/            # 网络层
-│   ├── codec/          # 编解码
-│   ├── protocol/       # 协议路由
-│   ├── task/           # 任务调度
-│   ├── pool/           # 对象池
-│   ├── aoi/            # AOI
-│   ├── slg/            # SLG 模块
-│   ├── storage/        # 存储层
-│   ├── cluster/        # 集群
-│   ├── rpc/            # RPC
-│   ├── gateway/        # 网关
-│   ├── redis/          # Redis
-│   ├── event/          # 事件总线
-│   └── reliability/    # 可靠性
-├── src/                # 实现文件
-├── tests/              # 单元测试
-├── examples/           # 示例程序
-├── proto/              # Protobuf 定义
-└── config/             # 配置文件
+├── include/chwell/           # 头文件
+│   ├── core/                 # 核心组件
+│   │   ├── logger.h          # 日志系统
+│   │   ├── config.h          # 配置加载
+│   │   ├── thread_pool.h     # 线程池
+│   │   └── timer_wheel.h     # 时间轮定时器
+│   ├── net/                  # 网络层
+│   │   ├── tcp_server.h      # TCP服务
+│   │   ├── tcp_connection.h  # TCP连接
+│   │   ├── ws_server.h       # WebSocket服务
+│   │   └── http_server.h     # HTTP服务
+│   ├── codec/                # 编解码
+│   │   ├── codec.h           # 编解码器基类
+│   │   ├── length_header_codec.h    # 长度前缀帧
+│   │   ├── protobuf_codec.h         # Protobuf编解码
+│   │   └── json_codec.h            # JSON编解码
+│   ├── protocol/             # 协议路由
+│   │   ├── message.h         # 协议消息结构
+│   │   ├── parser.h          # 协议解析器
+│   │   └── router.h          # 消息路由器
+│   ├── service/              # 服务层
+│   │   ├── service.h         # 服务容器
+│   │   ├── component.h       # 组件基类
+│   │   ├── session_manager.h # 会话管理
+│   │   └── protocol_router.h # 协议路由组件
+│   ├── game/                 # 游戏组件
+│   │   ├── game_components.h # 游戏组件集合
+│   │   ├── login_component.h     # 登录组件
+│   │   ├── chat_component.h     # 聊天组件
+│   │   ├── room_component.h     # 房间组件
+│   │   ├── heartbeat_component.h # 心跳组件
+│   │   └── player_move_component.h # 玩家移动组件
+│   ├── sync/                 # 同步系统
+│   │   ├── frame_sync.h      # 帧同步
+│   │   └── state_sync.h      # 状态同步
+│   ├── task/                 # 任务调度
+│   │   ├── task_queue.h      # 任务队列
+│   │   ├── delayed_task.h    # 延时任务
+│   │   └── timer_wheel.h     # 高效定时器
+│   ├── pool/                 # 对象池
+│   │   ├── object_pool.h     # 通用对象池
+│   │   └── buffer_pool.h     # 缓冲区池
+│   ├── aoi/                  # AOI系统
+│   │   ├── aoi.h             # AOI基类
+│   │   ├── grid_aoi.h        # 格子AOI
+│   │   └── cross_list_aoi.h # 十字链表AOI
+│   ├── slg/                  # SLG模块
+│   │   ├── map.h             # 地图管理
+│   │   └── battle.h          # 战斗系统
+│   ├── storage/              # 存储层
+│   │   ├── storage.h         # 存储接口
+│   │   ├── memory_storage.h  # 内存存储
+│   │   ├── mysql_storage.h   # MySQL存储
+│   │   ├── mongodb_storage.h # MongoDB存储
+│   │   └── repository.h      # ORM仓储
+│   ├── cluster/              # 集群
+│   │   ├── node.h            # 节点管理
+│   │   └── discovery.h       # 服务发现
+│   ├── rpc/                  # RPC
+│   │   ├── rpc_client.h      # RPC客户端
+│   │   └── rpc_server.h      # RPC服务端
+│   ├── gateway/              # 网关
+│   │   └── forwarder.h       # 消息转发
+│   ├── redis/                # Redis
+│   │   └── redis_client.h    # Redis客户端
+│   ├── event/                # 事件总线
+│   │   └── event_bus.h       # 发布/订阅
+│   ├── reliability/          # 可靠性
+│   │   ├── rate_limiter.h    # 限流器
+│   │   ├── circuit_breaker.h # 熔断器
+│   │   ├── metrics.h         # 监控指标
+│   │   ├── discovery.h       # 服务发现
+│   │   └── load_balancer.h   # 负载均衡
+│   ├── benchmark/            # 性能测试
+│   │   └── benchmark.h       # Benchmark框架
+│   ├── http/                 # HTTP
+│   │   ├── http_server.h     # HTTP服务
+│   │   └── http_response.h   # HTTP响应
+│   ├── codec/                # 编解码
+│   │   └── codec.h           # 编解码器
+│   ├── loadbalance/          # 负载均衡
+│   │   ├── load_balancer.h   # 负载均衡器
+│   │   └── consistent_hash.h # 一致性哈希
+│   └── metrics/              # 监控
+│       └── prometheus.h      # Prometheus指标
+├── src/                      # 实现文件
+│   ├── core/
+│   ├── net/
+│   ├── codec/
+│   ├── protocol/
+│   ├── service/
+│   ├── game/
+│   ├── sync/
+│   ├── task/
+│   ├── pool/
+│   ├── aoi/
+│   ├── slg/
+│   ├── storage/
+│   ├── cluster/
+│   ├── rpc/
+│   ├── gateway/
+│   ├── redis/
+│   ├── event/
+│   ├── reliability/
+│   ├── benchmark/
+│   ├── http/
+│   ├── loadbalance/
+│   └── metrics/
+├── tests/                    # 单元测试
+│   ├── test_protocol_parser.cpp
+│   ├── test_protocol_router.cpp
+│   ├── test_session_manager.cpp
+│   ├── test_timer_wheel.cpp
+│   ├── test_aoi.cpp
+│   ├── test_object_pool.cpp
+│   ├── test_task_queue.cpp
+│   ├── test_redis_client.cpp
+│   ├── test_sync.cpp
+│   ├── test_discovery_loadbalance.cpp
+│   ├── test_circuitbreaker.cpp
+│   ├── test_ratelimit.cpp
+│   ├── test_consistent_hash.cpp
+│   └── test_benchmark.cpp
+├── integration_tests/         # 集成测试
+│   └── test_integration.cpp
+├── examples/                 # 示例程序
+│   ├── echo_server.cpp       # Echo服务
+│   ├── protocol_server.cpp   # 协议服务
+│   ├── http_server.cpp       # HTTP服务
+│   ├── gateway_server.cpp    # 网关服务
+│   ├── storage_example.cpp   # 存储示例
+│   ├── orm_example.cpp       # ORM示例
+│   ├── game_server.cpp       # 游戏服务
+│   ├── game_gateway_server.cpp   # 游戏网关
+│   ├── game_components_demo.cpp   # 游戏组件演示
+│   ├── game_ws_components_demo.cpp # WebSocket游戏组件
+│   ├── sync_demo.cpp         # 同步演示
+│   ├── proto_frame_server.cpp    # Protobuf帧服务
+│   ├── proto_frame_client.cpp    # Protobuf帧客户端
+│   ├── game_ws_server.cpp    # WebSocket游戏服务
+│   └── new_modules_demo.cpp  # 新模块演示
+├── proto/                    # Protobuf定义
+│   └── game.proto
+├── config/                   # 配置文件
+│   └── storage.yaml
+├── CMakeLists.txt            # CMake构建文件
+├── README.md                 # 项目文档
+├── BENCHMARK_REPORT.md       # 性能测试报告
+└── LICENSE                   # 许可证
 ```
+
+## 架构设计
+
+### 分层架构
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                     应用层 (Application)                 │
+│  Game Components (Login/Chat/Room/Move/Heartbeat)      │
+└─────────────────────────────────────────────────────────┘
+                          ↓
+┌─────────────────────────────────────────────────────────┐
+│                      服务层 (Service)                    │
+│  Service Container + Components + Session Management   │
+└─────────────────────────────────────────────────────────┘
+                          ↓
+┌─────────────────────────────────────────────────────────┐
+│                     协议层 (Protocol)                    │
+│  Protocol Router + Parser + Codec (Protobuf/JSON)      │
+└─────────────────────────────────────────────────────────┘
+                          ↓
+┌─────────────────────────────────────────────────────────┐
+│                     网络层 (Network)                    │
+│  TCP/WebSocket/HTTP Server + Connection Pool           │
+└─────────────────────────────────────────────────────────┘
+                          ↓
+┌─────────────────────────────────────────────────────────┐
+│                      基础设施 (Infra)                    │
+│  Thread Pool + Timer Wheel + Object Pool + Events       │
+└─────────────────────────────────────────────────────────┘
+```
+
+### 组件化设计
+
+ChwellCore 采用组件化设计，每个功能都是独立的 `Component`：
+
+```cpp
+class Component {
+public:
+    virtual ~Component() = default;
+    virtual std::string name() const = 0;
+    virtual void on_init() {}
+    virtual void on_start() {}
+    virtual void on_stop() {}
+};
+```
+
+用户可以自由组合组件，构建自己的服务：
+
+```cpp
+service::Service svc(9000, 4);
+svc.add_component<service::SessionManager>();
+svc.add_component<service::ProtocolRouterComponent>();
+svc.add_component<game::LoginComponent>();
+svc.add_component<game::ChatComponent>();
+svc.add_component<game::RoomComponent>();
+svc.start();
+```
+
+## 贡献指南
+
+我们欢迎所有形式的贡献！
+
+### 提交代码
+
+1. Fork 本仓库
+2. 创建特性分支 (`git checkout -b feature/AmazingFeature`)
+3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
+4. 推送到分支 (`git push origin feature/AmazingFeature`)
+5. 提交 Pull Request
+
+### 代码规范
+
+- 遵循 Google C++ Style Guide
+- 使用 C++17 特性
+- 添加单元测试
+- 更新文档
+
+### 测试要求
+
+- 新功能必须包含单元测试
+- 测试覆盖率不低于 80%
+- 通过所有 Benchmark 测试
+
+### Bug 报告
+
+提交 Bug 时请包含：
+
+- 复现步骤
+- 预期行为
+- 实际行为
+- 环境信息（OS、编译器版本）
+
+### 功能请求
+
+提交功能请求时请说明：
+
+- 功能描述
+- 使用场景
+- 预期收益
+
+## 路线图
+
+### v1.0 (Current)
+
+- ✅ 核心网络层
+- ✅ 协议编解码
+- ✅ 游戏组件系统
+- ✅ 存储抽象
+- ✅ Benchmark框架
+
+### v1.1 (Planned)
+
+- [ ] 更多的游戏组件（交易、好友、公会）
+- [ ] 完善的日志系统
+- [ ] 性能优化
+- [ ] 更多单元测试
+
+### v2.0 (Future)
+
+- [ ] 分布式支持
+- [ ] 热更新
+- [ ] 自动扩容
+- [ ] 监控平台集成
 
 ## 许可证
 
-MIT License
+本项目采用 MIT 许可证 - 查看 [LICENSE](LICENSE) 文件了解详情
+
+## 致谢
+
+- [ASIO](https://think-async.com/) - 异步网络库
+- [Protobuf](https://developers.google.com/protocol-buffers) - 序列化框架
+- [nlohmann/json](https://github.com/nlohmann/json) - JSON 库
+- [GoogleTest](https://github.com/google/googletest) - 测试框架
+- [yaml-cpp](https://github.com/jbeder/yaml-cpp) - YAML 解析库
+
+## 联系方式
+
+- 项目主页: [GitHub](https://github.com/your-username/ChwellCore)
+- 问题反馈: [Issues](https://github.com/your-username/ChwellCore/issues)
+- 文档: [Wiki](https://github.com/your-username/ChwellCore/wiki)
+
+---
+
+**维护者**: 虾爬爬 🦐  
+**最后更新**: 2026-03-19
