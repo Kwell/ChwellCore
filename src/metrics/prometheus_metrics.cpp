@@ -1,6 +1,7 @@
 #include "chwell/metrics/prometheus_metrics.h"
 
 #include <algorithm>
+#include <memory>
 
 namespace chwell {
 namespace metrics {
@@ -12,7 +13,7 @@ Counter& PrometheusRegistry::register_counter(
 
     auto it = counters_.find(name);
     if (it != counters_.end()) {
-        return it->second;  // 返回已存在的
+        return *it->second;  // 返回已存在的 Counter
     }
 
     MetricInfo info;
@@ -20,8 +21,9 @@ Counter& PrometheusRegistry::register_counter(
     info.type = "counter";
     metric_infos_[name] = info;
 
-    // 先用 operator[]（构造默认 Counter）
-    return counters_[name];
+    // 先创建空 unique_ptr，再赋值
+    counters_[name] = std::make_unique<Counter>();
+    return *counters_[name];
 }
 
 Gauge& PrometheusRegistry::register_gauge(
@@ -31,7 +33,7 @@ Gauge& PrometheusRegistry::register_gauge(
 
     auto it = gauges_.find(name);
     if (it != gauges_.end()) {
-        return it->second;  // 返回已存在的
+        return *it->second;  // 返回已存在的 Gauge
     }
 
     MetricInfo info;
@@ -39,8 +41,9 @@ Gauge& PrometheusRegistry::register_gauge(
     info.type = "gauge";
     metric_infos_[name] = info;
 
-    // 先用 operator[]（构造默认 Gauge）
-    return gauges_[name];
+    // 先创建空 unique_ptr，再赋值
+    gauges_[name] = std::make_unique<Gauge>();
+    return *gauges_[name];
 }
 
 Histogram& PrometheusRegistry::register_histogram(
@@ -52,7 +55,7 @@ Histogram& PrometheusRegistry::register_histogram(
 
     auto it = histograms_.find(name);
     if (it != histograms_.end()) {
-        return it->second;  // 返回已存在的
+        return *it->second;  // 返回已存在的 Histogram
     }
 
     MetricInfo info;
@@ -60,9 +63,9 @@ Histogram& PrometheusRegistry::register_histogram(
     info.type = "histogram";
     metric_infos_[name] = info;
 
-    // 先构造，再用 operator= 赋值
-    histograms_[name] = Histogram(buckets);
-    return histograms_[name];
+    // 先创建空 unique_ptr，再赋值
+    histograms_[name] = std::make_unique<Histogram>(buckets);
+    return *histograms_[name];
 }
 
 Summary& PrometheusRegistry::register_summary(
@@ -74,7 +77,7 @@ Summary& PrometheusRegistry::register_summary(
 
     auto it = summaries_.find(name);
     if (it != summaries_.end()) {
-        return it->second;  // 返回已存在的
+        return *it->second;  // 返回已存在的 Summary
     }
 
     MetricInfo info;
@@ -82,10 +85,9 @@ Summary& PrometheusRegistry::register_summary(
     info.type = "summary";
     metric_infos_[name] = info;
 
-    // 先用 operator[]（构造默认 Summary）
-    // 然后用 set_quantiles 设置 quantiles
-    summaries_[name].set_quantiles(quantiles);
-    return summaries_[name];
+    // 先创建空 unique_ptr，再赋值
+    summaries_[name] = std::make_unique<Summary>(quantiles);
+    return *summaries_[name];
 }
 
 std::string PrometheusRegistry::export_metrics() const {
@@ -98,23 +100,23 @@ std::string PrometheusRegistry::to_prometheus() const {
     std::ostringstream oss;
 
     for (const auto& pair : counters_) {
-        oss << pair.second.to_prometheus(pair.first,
-                                        metric_infos_.at(pair.first).help);
+        oss << pair.second->to_prometheus(pair.first,
+                                          metric_infos_.at(pair.first).help);
     }
 
     for (const auto& pair : gauges_) {
-        oss << pair.second.to_prometheus(pair.first,
-                                        metric_infos_.at(pair.first).help);
+        oss << pair.second->to_prometheus(pair.first,
+                                          metric_infos_.at(pair.first).help);
     }
 
     for (const auto& pair : histograms_) {
-        oss << pair.second.to_prometheus(pair.first,
-                                        metric_infos_.at(pair.first).help);
+        oss << pair.second->to_prometheus(pair.first,
+                                          metric_infos_.at(pair.first).help);
     }
 
     for (const auto& pair : summaries_) {
-        oss << pair.second.to_prometheus(pair.first,
-                                        metric_infos_.at(pair.first).help);
+        oss << pair.second->to_prometheus(pair.first,
+                                          metric_infos_.at(pair.first).help);
     }
 
     return oss.str();

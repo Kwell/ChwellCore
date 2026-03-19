@@ -1,12 +1,13 @@
 #pragma once
 
 #include <string>
-#include <unordered_map>
+#include <map>
 #include <vector>
 #include <mutex>
 #include <atomic>
 #include <sstream>
 #include <algorithm>
+#include <memory>
 
 namespace chwell {
 namespace metrics {
@@ -147,8 +148,6 @@ public:
     explicit Summary(const std::vector<double>& quantiles)
         : quantiles_(quantiles) {}
 
-    Summary() : quantiles_({}) {}  // 默认构造函数，用于 unordered_map::operator[]
-
     void observe(double value) {
         std::lock_guard<std::mutex> lock(mutex_);
 
@@ -254,11 +253,11 @@ private:
     };
 
     mutable std::mutex mutex_;
-    std::unordered_map<std::string, Counter> counters_;
-    std::unordered_map<std::string, Gauge> gauges_;
-    std::unordered_map<std::string, Histogram> histograms_;
-    std::unordered_map<std::string, Summary> summaries_;
-    std::unordered_map<std::string, MetricInfo> metric_infos_;
+    std::map<std::string, std::unique_ptr<Counter>> counters_;
+    std::map<std::string, std::unique_ptr<Gauge>> gauges_;
+    std::map<std::string, std::unique_ptr<Histogram>> histograms_;
+    std::map<std::string, std::unique_ptr<Summary>> summaries_;
+    std::map<std::string, MetricInfo> metric_infos_;
 };
 
 PrometheusRegistry& get_prometheus_registry();
