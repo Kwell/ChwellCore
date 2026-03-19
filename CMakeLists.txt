@@ -132,6 +132,7 @@ add_library(chwell_core
     src/discovery/service_discovery.cpp
     src/loadbalance/load_balancer.cpp
     src/loadbalance/consistent_hash.cpp
+    src/metrics/prometheus_metrics.cpp
     src/circuitbreaker/circuit_breaker.cpp
     src/ratelimit/rate_limiter.cpp
 )
@@ -234,6 +235,7 @@ if (CHWELL_BUILD_TESTS)
             tests/test_circuitbreaker.cpp
             tests/test_ratelimit.cpp
             tests/test_consistent_hash.cpp
+            tests/test_prometheus_metrics.cpp
         )
         target_link_libraries(chwell_core_tests PRIVATE chwell_core ${CHWELL_GTEST_LIB})
         add_test(NAME chwell_core_tests COMMAND chwell_core_tests)
