@@ -340,5 +340,11 @@ if (CHWELL_BUILD_EXAMPLES)
         examples/sync_demo.cpp
     )
     target_link_libraries(example_sync_demo PRIVATE chwell_core)
+
+    # WebSocket + 游戏组件示例
+    add_executable(example_game_ws_components_demo
+        examples/game_ws_components_demo.cpp
+    )
+    target_link_libraries(example_game_ws_components_demo PRIVATE chwell_core)
 endif()
 
