@@ -61,25 +61,25 @@ public:
 
     // 加入房间
     void join_player(uint32_t player_id, const net::TcpConnectionPtr& conn) {
-        std::lock_guard<std::mutex> lock(mutex_);
-        players_[player_id] = conn;
+        // std::lock_guard<std::mutex> lock(mutex_);
+        // players_[player_id] = conn;
         player_inputs_[player_id] = std::queue<FrameInput>();
         // CHWELL_LOG_INFO("Player " + std::to_string(player_id) + " joined frame sync room " + room_id_);
     }
 
     // 离开房间
     void leave_player(uint32_t player_id) {
-        std::lock_guard<std::mutex> lock(mutex_);
+        // std::lock_guard<std::mutex> lock(mutex_);
         players_.erase(player_id);
         player_inputs_.erase(player_id);
-        // CHWELL_LOG_INFO("Player " + std::to_string(player_id) + " left frame sync room " + room_id_);
+        CHWELL_LOG_INFO("Player " + std::to_string(player_id) + " left frame sync room " + room_id_);
     }
 
     // 提交输入
     void submit_input(uint32_t player_id, const FrameInput& input) {
-        std::lock_guard<std::mutex> lock(mutex_);
+        // std::lock_guard<std::mutex> lock(mutex_);
         player_inputs_[player_id].push(input);
-        // CHWELL_LOG_DEBUG("Player " + std::to_string(player_id) + " submitted input for frame " + std::to_string(input.frame_id));
+        CHWELL_LOG_DEBUG("Player " + std::to_string(player_id) + " submitted input for frame " + std::to_string(input.frame_id));
     }
 
     // 获取所有输入（用于游戏逻辑）
@@ -142,15 +142,15 @@ public:
 
     // 获取玩家数量
     size_t player_count() const {
-        std::lock_guard<std::mutex> lock(mutex_);
-        return players_.size();
+        // std::lock_guard<std::mutex> lock(mutex_);
+        return player_inputs_.size();  // 改用 player_inputs_.size()
     }
 
     // 获取所有玩家 ID
     std::vector<uint32_t> get_player_ids() {
-        std::lock_guard<std::mutex> lock(mutex_);
+        // std::lock_guard<std::mutex> lock(mutex_);
         std::vector<uint32_t> ids;
-        for (auto& pair : players_) {
+        for (auto& pair : player_inputs_) {
             ids.push_back(pair.first);
         }
         return ids;
