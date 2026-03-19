@@ -362,5 +362,11 @@ if (CHWELL_BUILD_EXAMPLES)
         examples/game_ws_components_demo.cpp
     )
     target_link_libraries(example_game_ws_components_demo PRIVATE chwell_core)
+
+    # 协议压力测试客户端
+    add_executable(example_protocol_stress_client
+        examples/protocol_stress_client.cpp
+    )
+    target_link_libraries(example_protocol_stress_client PRIVATE pthread)
 endif()
 
