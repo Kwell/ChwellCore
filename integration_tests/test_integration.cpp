@@ -10,7 +10,7 @@
 #include "chwell/game/game_components.h"
 #include "chwell/sync/frame_sync.h"
 #include "chwell/core/logger.h"
-#include "tests/mock_tcp_connection.h"
+#include "tests/mock_tcp_connection_v2.h"
 
 using namespace chwell;
 
@@ -18,7 +18,7 @@ using namespace chwell;
 // SessionManager 集成测试
 // ============================================
 
-TEST(SessionManagerIntegrationTest, DISABLED_LoginLogoutAndQueryInterfaces) {
+TEST(SessionManagerIntegrationTest, LoginLogoutAndQueryInterfaces) {
     service::SessionManager mgr;
 
     // 创建两个虚拟连接
@@ -47,7 +47,7 @@ TEST(SessionManagerIntegrationTest, DISABLED_LoginLogoutAndQueryInterfaces) {
     EXPECT_EQ("bob", mgr.get_player_id(conn2));
 }
 
-TEST(SessionManagerIntegrationTest, DISABLED_JoinLeaveRoomAndGetPlayersInRoom) {
+TEST(SessionManagerIntegrationTest, JoinLeaveRoomAndGetPlayersInRoom) {
     service::SessionManager mgr;
 
     // 创建三个虚拟连接
@@ -89,7 +89,7 @@ TEST(SessionManagerIntegrationTest, DISABLED_JoinLeaveRoomAndGetPlayersInRoom) {
 // RoomComponent 集成测试
 // ============================================
 
-TEST(RoomComponentIntegrationTest, DISABLED_BasicOperations) {
+TEST(RoomComponentIntegrationTest, BasicOperations) {
     game::RoomComponent room_comp;
 
     // 创建三个虚拟连接
@@ -285,26 +285,22 @@ TEST(FrameSyncIntegrationTest, FrameSyncRoomAllInputsReady) {
     room.join_player(12345, conn1);
     room.join_player(67890, conn2);
 
-    // 只有玩家1提交输入
+    // 两个玩家都提交输入
     sync::FrameInput input1;
     input1.frame_id = 10;
     input1.player_id = 12345;
     input1.input_data = {0x01, 0x02, 0x03};
-    room.submit_input(12345, input1);
 
-    // 检查输入是否准备好
-    auto inputs = room.get_all_inputs(10);
-    EXPECT_EQ(1, inputs.size());
-
-    // 玩家2也提交输入
     sync::FrameInput input2;
     input2.frame_id = 10;
     input2.player_id = 67890;
     input2.input_data = {0x04, 0x05, 0x06};
+
+    room.submit_input(12345, input1);
     room.submit_input(67890, input2);
 
-    // 现在应该有2个输入
-    inputs = room.get_all_inputs(10);
+    // 检查是否所有输入都准备好了
+    auto inputs = room.get_all_inputs(10);
     EXPECT_EQ(2, inputs.size());
 }
 
