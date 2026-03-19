@@ -64,7 +64,7 @@ public:
         std::lock_guard<std::mutex> lock(mutex_);
         players_[player_id] = conn;
         player_inputs_[player_id] = std::queue<FrameInput>();
-        CHWELL_LOG_INFO("Player " + std::to_string(player_id) + " joined frame sync room " + room_id_);
+        // CHWELL_LOG_INFO("Player " + std::to_string(player_id) + " joined frame sync room " + room_id_);
     }
 
     // 离开房间
@@ -72,14 +72,14 @@ public:
         std::lock_guard<std::mutex> lock(mutex_);
         players_.erase(player_id);
         player_inputs_.erase(player_id);
-        CHWELL_LOG_INFO("Player " + std::to_string(player_id) + " left frame sync room " + room_id_);
+        // CHWELL_LOG_INFO("Player " + std::to_string(player_id) + " left frame sync room " + room_id_);
     }
 
     // 提交输入
     void submit_input(uint32_t player_id, const FrameInput& input) {
         std::lock_guard<std::mutex> lock(mutex_);
         player_inputs_[player_id].push(input);
-        CHWELL_LOG_DEBUG("Player " + std::to_string(player_id) + " submitted input for frame " + std::to_string(input.frame_id));
+        // CHWELL_LOG_DEBUG("Player " + std::to_string(player_id) + " submitted input for frame " + std::to_string(input.frame_id));
     }
 
     // 获取所有输入（用于游戏逻辑）
