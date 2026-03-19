@@ -235,6 +235,13 @@ if (CHWELL_BUILD_TESTS)
         )
         target_link_libraries(chwell_core_tests PRIVATE chwell_core ${CHWELL_GTEST_LIB})
         add_test(NAME chwell_core_tests COMMAND chwell_core_tests)
+
+        # 集成测试
+        add_executable(chwell_integration_tests
+            integration_tests/test_integration.cpp
+        )
+        target_link_libraries(chwell_integration_tests PRIVATE chwell_core ${CHWELL_GTEST_LIB})
+        add_test(NAME chwell_integration_tests COMMAND chwell_integration_tests)
     else()
         message(WARNING "GoogleTest not found, CHWELL_BUILD_TESTS is ON but tests will not be built")
     endif()
