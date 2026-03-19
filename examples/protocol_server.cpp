@@ -7,7 +7,7 @@
 #include "chwell/core/config.h"
 #include "chwell/service/service.h"
 #include "chwell/service/protocol_router.h"
-#include "chwell/service/session_component.h"
+#include "chwell/service/session_manager.h"
 #include "chwell/protocol/message.h"
 
 using namespace chwell;
@@ -75,7 +75,7 @@ int main() {
     auto* router = svc.add_component<service::ProtocolRouterComponent>();
 
     // 注册会话组件
-    auto* session = svc.add_component<service::SessionComponent>();
+    auto* session = svc.add_component<service::SessionManager>();
 
     // 创建业务组件
     auto* echo_handler = svc.add_component<EchoHandlerComponent>();

@@ -13,7 +13,7 @@
 #include "chwell/core/config.h"
 #include "chwell/service/service.h"
 #include "chwell/service/protocol_router.h"
-#include "chwell/service/session_component.h"
+#include "chwell/service/session_manager.h"
 #include "chwell/protocol/message.h"
 #include "game_commands.h"
 
@@ -119,7 +119,7 @@ int main() {
                         static_cast<std::size_t>(cfg.worker_threads()));
 
     auto* router = svc.add_component<service::ProtocolRouterComponent>();
-    auto* session = svc.add_component<service::SessionComponent>();
+    auto* session = svc.add_component<service::SessionManager>();
     auto* rooms = svc.add_component<GameRoomComponent>();
 
     // LOGIN

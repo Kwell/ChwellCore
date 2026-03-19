@@ -8,7 +8,7 @@
 #include "chwell/core/config.h"
 #include "chwell/service/service.h"
 #include "chwell/service/protocol_router.h"
-#include "chwell/service/session_component.h"
+#include "chwell/service/session_manager.h"
 #include "chwell/gateway/gateway_forwarder.h"
 #include "chwell/protocol/message.h"
 
@@ -56,7 +56,7 @@ int main() {
     auto* router = svc.add_component<service::ProtocolRouterComponent>();
 
     // 注册会话组件（网关本地处理登录）
-    auto* session = svc.add_component<service::SessionComponent>();
+    auto* session = svc.add_component<service::SessionManager>();
 
     // 注册转发组件（转发到后端逻辑服）
     auto* forwarder = svc.add_component<gateway::GatewayForwarderComponent>(
