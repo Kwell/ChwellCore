@@ -45,7 +45,7 @@ public:
         SessionInfo& s = sessions_[conn.get()];
         s.player_id = player_id;
         s.authed = true;
-        update_active_time(conn);
+        update_active_time(s);
         CHWELL_LOG_INFO("Player login, id=" + player_id);
     }
 
@@ -53,7 +53,7 @@ public:
     void logout(const net::TcpConnectionPtr& conn) {
         auto it = sessions_.find(conn.get());
         if (it != sessions_.end()) {
-            CHWELL_LOG_INFO("Player logout, id=" + it->second.player_id);
+            // CHWELL_LOG_INFO("Player logout, id=" + it->second.player_id);
             sessions_.erase(it);
         }
     }
@@ -63,9 +63,9 @@ public:
         auto it = sessions_.find(conn.get());
         if (it != sessions_.end()) {
             it->second.room_id = room_id;
-            update_active_time(conn);
-            CHWELL_LOG_INFO(
-                "Player " + it->second.player_id + " join room " + room_id);
+            update_active_time(it->second);
+            // CHWELL_LOG_INFO(
+            //     "Player " + it->second.player_id + " join room " + room_id);
         }
     }
 
@@ -75,9 +75,9 @@ public:
         if (it != sessions_.end()) {
             std::string room_id = it->second.room_id;
             it->second.room_id.clear();
-            update_active_time(conn);
-            CHWELL_LOG_INFO(
-                "Player " + it->second.player_id + " leave room " + room_id);
+            update_active_time(it->second);
+            // CHWELL_LOG_INFO(
+            //     "Player " + it->second.player_id + " leave room " + room_id);
         }
     }
 
@@ -86,7 +86,7 @@ public:
         auto it = sessions_.find(conn.get());
         if (it != sessions_.end()) {
             it->second.gateway_id = gateway_id;
-            update_active_time(conn);
+            update_active_time(it->second);
         }
     }
 
@@ -123,15 +123,11 @@ public:
         return players;
     }
 
-    // 更新活跃时间
-    void update_active_time(const net::TcpConnectionPtr& conn) {
-        auto it = sessions_.find(conn.get());
-        if (it != sessions_.end()) {
-            // 简单实现：使用秒级时间戳
-            it->second.last_active_time = 
-                std::chrono::duration_cast<std::chrono::seconds>(
-                    std::chrono::system_clock::now().time_since_epoch()).count();
-        }
+    // 更新活跃时间（内部使用）
+    void update_active_time(SessionInfo& info) {
+        info.last_active_time =
+            std::chrono::duration_cast<std::chrono::seconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count();
     }
 
 private:

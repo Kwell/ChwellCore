@@ -10,6 +10,7 @@
 #include "chwell/game/game_components.h"
 #include "chwell/sync/frame_sync.h"
 #include "chwell/core/logger.h"
+#include "tests/mock_tcp_connection.h"
 
 using namespace chwell;
 
@@ -20,59 +21,23 @@ using namespace chwell;
 TEST(SessionManagerIntegrationTest, DISABLED_LoginLogoutAndQueryInterfaces) {
     service::SessionManager mgr;
 
-    // 创建两个虚拟连接（使用静态对象地址）
-    static int conn1_obj, conn2_obj;
-    auto conn1 = net::TcpConnectionPtr(
-        reinterpret_cast<net::TcpConnection*>(&conn1_obj),
-        [](net::TcpConnection*) {});
-    auto conn2 = net::TcpConnectionPtr(
-        reinterpret_cast<net::TcpConnection*>(&conn2_obj),
-        [](net::TcpConnection*) {});
-
-    std::cout << "conn1.get() = " << conn1.get() << std::endl;
-    std::cout << "conn2.get() = " << conn2.get() << std::endl;
+    // 创建两个虚拟连接
+    auto conn1 = test::MockConnectionFactory::create();
+    auto conn2 = test::MockConnectionFactory::create();
 
     // 测试登录/登出
-    std::cout << "Testing login status before login..." << std::endl;
-    bool logged_in = mgr.is_logged_in(conn1);
-    std::cout << "Logged in: " << (logged_in ? "true" : "false") << std::endl;
-    EXPECT_FALSE(logged_in);
+    EXPECT_FALSE(mgr.is_logged_in(conn1));
+    EXPECT_TRUE(mgr.get_player_id(conn1).empty());
 
-    std::cout << "Testing get_player_id before login..." << std::endl;
-    std::string player_id = mgr.get_player_id(conn1);
-    std::cout << "Player ID: '" << player_id << "'" << std::endl;
-    EXPECT_TRUE(player_id.empty());
-
-    std::cout << "Logging in..." << std::endl;
     mgr.login(conn1, "player123");
-    std::cout << "Login done." << std::endl;
+    EXPECT_TRUE(mgr.is_logged_in(conn1));
+    EXPECT_EQ("player123", mgr.get_player_id(conn1));
 
-    std::cout << "Testing login status after login..." << std::endl;
-    logged_in = mgr.is_logged_in(conn1);
-    std::cout << "Logged in: " << (logged_in ? "true" : "false") << std::endl;
-    EXPECT_TRUE(logged_in);
-
-    std::cout << "Testing get_player_id after login..." << std::endl;
-    player_id = mgr.get_player_id(conn1);
-    std::cout << "Player ID: '" << player_id << "'" << std::endl;
-    EXPECT_EQ("player123", player_id);
-
-    std::cout << "Logging out..." << std::endl;
     mgr.logout(conn1);
-    std::cout << "Logout done." << std::endl;
-
-    std::cout << "Testing login status after logout..." << std::endl;
-    logged_in = mgr.is_logged_in(conn1);
-    std::cout << "Logged in: " << (logged_in ? "true" : "false") << std::endl;
-    EXPECT_FALSE(logged_in);
-
-    std::cout << "Testing get_player_id after logout..." << std::endl;
-    player_id = mgr.get_player_id(conn1);
-    std::cout << "Player ID: '" << player_id << "'" << std::endl;
-    EXPECT_TRUE(player_id.empty());
+    EXPECT_FALSE(mgr.is_logged_in(conn1));
+    EXPECT_TRUE(mgr.get_player_id(conn1).empty());
 
     // 测试多玩家
-    std::cout << "Testing multiple players..." << std::endl;
     mgr.login(conn1, "alice");
     mgr.login(conn2, "bob");
 
@@ -85,17 +50,10 @@ TEST(SessionManagerIntegrationTest, DISABLED_LoginLogoutAndQueryInterfaces) {
 TEST(SessionManagerIntegrationTest, DISABLED_JoinLeaveRoomAndGetPlayersInRoom) {
     service::SessionManager mgr;
 
-    // 创建两个虚拟连接
-    static int conn1_obj, conn2_obj, conn3_obj;
-    auto conn1 = net::TcpConnectionPtr(
-        reinterpret_cast<net::TcpConnection*>(&conn1_obj),
-        [](net::TcpConnection*) {});
-    auto conn2 = net::TcpConnectionPtr(
-        reinterpret_cast<net::TcpConnection*>(&conn2_obj),
-        [](net::TcpConnection*) {});
-    auto conn3 = net::TcpConnectionPtr(
-        reinterpret_cast<net::TcpConnection*>(&conn3_obj),
-        [](net::TcpConnection*) {});
+    // 创建三个虚拟连接
+    auto conn1 = test::MockConnectionFactory::create();
+    auto conn2 = test::MockConnectionFactory::create();
+    auto conn3 = test::MockConnectionFactory::create();
 
     // 登录并加入房间
     mgr.login(conn1, "alice");
@@ -134,17 +92,10 @@ TEST(SessionManagerIntegrationTest, DISABLED_JoinLeaveRoomAndGetPlayersInRoom) {
 TEST(RoomComponentIntegrationTest, DISABLED_BasicOperations) {
     game::RoomComponent room_comp;
 
-    // 创建虚拟连接
-    static int conn1_obj, conn2_obj, conn3_obj;
-    auto conn1 = net::TcpConnectionPtr(
-        reinterpret_cast<net::TcpConnection*>(&conn1_obj),
-        [](net::TcpConnection*) {});
-    auto conn2 = net::TcpConnectionPtr(
-        reinterpret_cast<net::TcpConnection*>(&conn2_obj),
-        [](net::TcpConnection*) {});
-    auto conn3 = net::TcpConnectionPtr(
-        reinterpret_cast<net::TcpConnection*>(&conn3_obj),
-        [](net::TcpConnection*) {});
+    // 创建三个虚拟连接
+    auto conn1 = test::MockConnectionFactory::create();
+    auto conn2 = test::MockConnectionFactory::create();
+    auto conn3 = test::MockConnectionFactory::create();
 
     // 创建两个房间
     room_comp.join_room(conn1, "room1");
@@ -178,17 +129,12 @@ TEST(RoomComponentIntegrationTest, DISABLED_BasicOperations) {
 // FrameSync 集成测试
 // ============================================
 
-TEST(FrameSyncIntegrationTest, DISABLED_FrameSyncRoomJoinLeave) {
+TEST(FrameSyncIntegrationTest, FrameSyncRoomJoinLeave) {
     sync::FrameSyncRoom room("test_room", 30);
 
     // 创建虚拟连接
-    static int conn1_obj, conn2_obj;
-    auto conn1 = net::TcpConnectionPtr(
-        reinterpret_cast<net::TcpConnection*>(&conn1_obj),
-        [](net::TcpConnection*) {});
-    auto conn2 = net::TcpConnectionPtr(
-        reinterpret_cast<net::TcpConnection*>(&conn2_obj),
-        [](net::TcpConnection*) {});
+    auto conn1 = test::MockConnectionFactory::create();
+    auto conn2 = test::MockConnectionFactory::create();
 
     // 测试加入/离开
     room.join_player(12345, conn1);
@@ -204,17 +150,12 @@ TEST(FrameSyncIntegrationTest, DISABLED_FrameSyncRoomJoinLeave) {
     EXPECT_EQ(0, room.player_count());
 }
 
-TEST(FrameSyncIntegrationTest, DISABLED_FrameSyncRoomSubmitAndGetInputs) {
+TEST(FrameSyncIntegrationTest, FrameSyncRoomSubmitAndGetInputs) {
     sync::FrameSyncRoom room("test_room", 30);
 
     // 创建虚拟连接
-    static int conn1_obj, conn2_obj;
-    auto conn1 = net::TcpConnectionPtr(
-        reinterpret_cast<net::TcpConnection*>(&conn1_obj),
-        [](net::TcpConnection*) {});
-    auto conn2 = net::TcpConnectionPtr(
-        reinterpret_cast<net::TcpConnection*>(&conn2_obj),
-        [](net::TcpConnection*) {});
+    auto conn1 = test::MockConnectionFactory::create();
+    auto conn2 = test::MockConnectionFactory::create();
 
     // 加入玩家
     room.join_player(12345, conn1);
@@ -239,17 +180,12 @@ TEST(FrameSyncIntegrationTest, DISABLED_FrameSyncRoomSubmitAndGetInputs) {
     EXPECT_EQ(2, inputs.size());
 }
 
-TEST(FrameSyncIntegrationTest, DISABLED_FrameSyncRoomMultipleInputs) {
+TEST(FrameSyncIntegrationTest, FrameSyncRoomMultipleInputs) {
     sync::FrameSyncRoom room("test_room", 30);
 
     // 创建虚拟连接
-    static int conn1_obj, conn2_obj;
-    auto conn1 = net::TcpConnectionPtr(
-        reinterpret_cast<net::TcpConnection*>(&conn1_obj),
-        [](net::TcpConnection*) {});
-    auto conn2 = net::TcpConnectionPtr(
-        reinterpret_cast<net::TcpConnection*>(&conn2_obj),
-        [](net::TcpConnection*) {});
+    auto conn1 = test::MockConnectionFactory::create();
+    auto conn2 = test::MockConnectionFactory::create();
 
     room.join_player(12345, conn1);
     room.join_player(67890, conn2);
@@ -276,20 +212,13 @@ TEST(FrameSyncIntegrationTest, DISABLED_FrameSyncRoomMultipleInputs) {
     }
 }
 
-TEST(FrameSyncIntegrationTest, DISABLED_FrameSyncRoomGetPlayerIds) {
+TEST(FrameSyncIntegrationTest, FrameSyncRoomGetPlayerIds) {
     sync::FrameSyncRoom room("test_room", 30);
 
     // 创建虚拟连接
-    static int conn1_obj, conn2_obj, conn3_obj;
-    auto conn1 = net::TcpConnectionPtr(
-        reinterpret_cast<net::TcpConnection*>(&conn1_obj),
-        [](net::TcpConnection*) {});
-    auto conn2 = net::TcpConnectionPtr(
-        reinterpret_cast<net::TcpConnection*>(&conn2_obj),
-        [](net::TcpConnection*) {});
-    auto conn3 = net::TcpConnectionPtr(
-        reinterpret_cast<net::TcpConnection*>(&conn3_obj),
-        [](net::TcpConnection*) {});
+    auto conn1 = test::MockConnectionFactory::create();
+    auto conn2 = test::MockConnectionFactory::create();
+    auto conn3 = test::MockConnectionFactory::create();
 
     room.join_player(12345, conn1);
     room.join_player(67890, conn2);
@@ -313,17 +242,12 @@ TEST(FrameSyncIntegrationTest, DISABLED_FrameSyncRoomGetPlayerIds) {
     EXPECT_EQ(0, player_ids.size());
 }
 
-TEST(FrameSyncIntegrationTest, DISABLED_FrameSyncRoomDifferentFrameInputs) {
+TEST(FrameSyncIntegrationTest, FrameSyncRoomDifferentFrameInputs) {
     sync::FrameSyncRoom room("test_room", 30);
 
     // 创建虚拟连接
-    static int conn1_obj, conn2_obj;
-    auto conn1 = net::TcpConnectionPtr(
-        reinterpret_cast<net::TcpConnection*>(&conn1_obj),
-        [](net::TcpConnection*) {});
-    auto conn2 = net::TcpConnectionPtr(
-        reinterpret_cast<net::TcpConnection*>(&conn2_obj),
-        [](net::TcpConnection*) {});
+    auto conn1 = test::MockConnectionFactory::create();
+    auto conn2 = test::MockConnectionFactory::create();
 
     room.join_player(12345, conn1);
     room.join_player(67890, conn2);
@@ -351,17 +275,12 @@ TEST(FrameSyncIntegrationTest, DISABLED_FrameSyncRoomDifferentFrameInputs) {
     EXPECT_EQ(1, inputs11.size());
 }
 
-TEST(FrameSyncIntegrationTest, DISABLED_FrameSyncRoomAllInputsReady) {
+TEST(FrameSyncIntegrationTest, FrameSyncRoomAllInputsReady) {
     sync::FrameSyncRoom room("test_room", 30);
 
     // 创建虚拟连接
-    static int conn1_obj, conn2_obj;
-    auto conn1 = net::TcpConnectionPtr(
-        reinterpret_cast<net::TcpConnection*>(&conn1_obj),
-        [](net::TcpConnection*) {});
-    auto conn2 = net::TcpConnectionPtr(
-        reinterpret_cast<net::TcpConnection*>(&conn2_obj),
-        [](net::TcpConnection*) {});
+    auto conn1 = test::MockConnectionFactory::create();
+    auto conn2 = test::MockConnectionFactory::create();
 
     room.join_player(12345, conn1);
     room.join_player(67890, conn2);
@@ -388,3 +307,5 @@ TEST(FrameSyncIntegrationTest, DISABLED_FrameSyncRoomAllInputsReady) {
     inputs = room.get_all_inputs(10);
     EXPECT_EQ(2, inputs.size());
 }
+
+

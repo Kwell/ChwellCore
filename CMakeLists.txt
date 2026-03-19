@@ -240,6 +240,7 @@ if (CHWELL_BUILD_TESTS)
         add_executable(chwell_integration_tests
             integration_tests/test_integration.cpp
         )
+        target_include_directories(chwell_integration_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
         target_link_libraries(chwell_integration_tests PRIVATE chwell_core ${CHWELL_GTEST_LIB})
         add_test(NAME chwell_integration_tests COMMAND chwell_integration_tests)
     else()
