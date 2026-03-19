@@ -145,7 +145,7 @@ private:
 class WeightedRoundRobinLoadBalancer : public LoadBalancer {
 public:
     WeightedRoundRobinLoadBalancer(std::shared_ptr<discovery::ServiceDiscovery> discovery)
-        : discovery_(discovery), current_index_(0), current_weight_(0) {}
+        : discovery_(discovery) {}
 
     virtual ~WeightedRoundRobinLoadBalancer() = default;
 
@@ -178,10 +178,9 @@ public:
 private:
     std::shared_ptr<discovery::ServiceDiscovery> discovery_;
     LoadBalanceStrategy strategy_ = LoadBalanceStrategy::WEIGHTED_ROUND_ROBIN;
-    std::atomic<size_t> current_index_;
-    std::atomic<int> current_weight_;
     std::vector<discovery::ServiceInstance> instances_;
-    std::unordered_map<std::string, int> weights_;
+    std::unordered_map<std::string, int> weights_;          // 配置的权重
+    std::unordered_map<std::string, int> current_weights_; // 当前权重
     mutable std::mutex mutex_;
 };
 

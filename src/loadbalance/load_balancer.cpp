@@ -1,6 +1,7 @@
 #include "chwell/loadbalance/load_balancer.h"
 #include <algorithm>
 #include <numeric>
+#include <limits>
 
 namespace chwell {
 namespace loadbalance {
@@ -84,6 +85,11 @@ bool WeightedRoundRobinLoadBalancer::select_instance(const std::string& service_
             CHWELL_LOG_WARN("No available instances for service: " + service_id);
             return false;
         }
+        // 按 instance_id 排序，保证顺序稳定
+        std::stable_sort(instances_.begin(), instances_.end(),
+            [](const discovery::ServiceInstance& a, const discovery::ServiceInstance& b) {
+                return a.instance_id < b.instance_id;
+            });
     }
 
     if (instances_.size() == 1) {
@@ -94,8 +100,14 @@ bool WeightedRoundRobinLoadBalancer::select_instance(const std::string& service_
     // 计算总权重
     int total_weight = 0;
     for (const auto& instance : instances_) {
-        int weight = get_weight(instance.instance_id);
+        auto it = weights_.find(instance.instance_id);
+        int weight = (it != weights_.end()) ? it->second : 1;
         total_weight += weight;
+
+        // 初始化当前权重
+        if (current_weights_.find(instance.instance_id) == current_weights_.end()) {
+            current_weights_[instance.instance_id] = 0;
+        }
     }
 
     if (total_weight <= 0) {
@@ -103,23 +115,33 @@ bool WeightedRoundRobinLoadBalancer::select_instance(const std::string& service_
         return false;
     }
 
-    // 使用平滑加权轮询算法
-    int max_weight = 0;
-    int best_index = 0;
+    // 平滑加权轮询算法
+    // 选择 current_weight 最大的实例
+    size_t best_index = 0;
+    int max_current_weight = std::numeric_limits<int>::min();
 
     for (size_t i = 0; i < instances_.size(); ++i) {
-        int weight = get_weight(instances_[static_cast<size_t>(i)].instance_id);
-        current_weight_ += weight;
+        const std::string& instance_id = instances_[i].instance_id;
 
-        if (current_weight_ > max_weight) {
-            max_weight = current_weight_;
-            best_index = static_cast<int>(i);
+        // 获取权重
+        auto weight_it = weights_.find(instance_id);
+        int effective_weight = (weight_it != weights_.end()) ? weight_it->second : 1;
+
+        // 获取当前权重
+        int& current_weight = current_weights_[instance_id];
+        current_weight += effective_weight;
+
+        // 更新最大值
+        if (current_weight > max_current_weight) {
+            max_current_weight = current_weight;
+            best_index = i;
         }
     }
 
-    current_weight_ -= total_weight;
+    // 减去总权重
+    current_weights_[instances_[best_index].instance_id] -= total_weight;
 
-    out = instances_[static_cast<size_t>(best_index)];
+    out = instances_[best_index];
 
     return true;
 }
@@ -128,6 +150,7 @@ void WeightedRoundRobinLoadBalancer::update_instances(const std::vector<discover
     std::lock_guard<std::mutex> lock(mutex_);
 
     instances_ = instances;
+    current_weights_.clear(); // 清空当前权重
 
     CHWELL_LOG_INFO("Updated " + std::to_string(instances.size()) +
                     " instances for WeightedRoundRobinLoadBalancer");
