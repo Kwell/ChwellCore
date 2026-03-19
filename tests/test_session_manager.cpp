@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cstring>
 #include <cstdint>
 #include <vector>
 
@@ -11,9 +12,15 @@ using namespace chwell;
 
 namespace {
 
+// 使用静态对象作为虚拟连接的地址，避免使用无效指针
+static int dummy_conn1_obj;
+static int dummy_conn2_obj;
+
 net::TcpConnectionPtr make_dummy_conn(std::uintptr_t tag) {
+    // 使用静态对象的地址作为指针值
+    void* ptr = (tag == 1) ? &dummy_conn1_obj : &dummy_conn2_obj;
     return net::TcpConnectionPtr(
-        reinterpret_cast<net::TcpConnection*>(tag),
+        reinterpret_cast<net::TcpConnection*>(ptr),
         [](net::TcpConnection*) {});
 }
 

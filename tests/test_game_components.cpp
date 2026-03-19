@@ -12,10 +12,14 @@ using namespace chwell::game;
 
 namespace {
 
+// 使用静态对象作为虚拟连接的地址，避免使用无效指针
+static int dummy_conn1_obj;
+static int dummy_conn2_obj;
+
 // 创建虚拟连接
 net::TcpConnectionPtr make_dummy_conn(std::uintptr_t tag) {
-    // 使用 tag 作为连接对象的指针
-    auto* raw_ptr = reinterpret_cast<net::TcpConnection*>(tag);
+    void* ptr = (tag == 1) ? &dummy_conn1_obj : &dummy_conn2_obj;
+    auto* raw_ptr = reinterpret_cast<net::TcpConnection*>(ptr);
     return net::TcpConnectionPtr(raw_ptr, [](net::TcpConnection*) {
         // 空删除器，不实际释放内存
     });
@@ -307,8 +311,8 @@ TEST(GameComponentsTest, EncodeDecodeJoinRoomResponse) {
 
 // 测试 RoomComponent 基本功能
 TEST(GameComponentsTest, DISABLED_RoomComponentBasicOperations) {
-    // 此测试需要真实的 TcpConnection 对象，暂时禁用
-    // TODO: 集成到集成测试中，使用真实的连接对象
+    // 此测试需要 Service 对象，暂时禁用
+    // TODO: 集成到集成测试中
 }
 
 // 测试错误响应编码

@@ -10,10 +10,17 @@ using namespace chwell;
 
 namespace {
 
+// 使用静态对象作为虚拟连接的地址，避免使用无效指针
+static int dummy_conn1_obj;
+static int dummy_conn2_obj;
+static int dummy_conn3_obj;
+
 // 创建虚拟连接
 net::TcpConnectionPtr make_dummy_conn(std::uintptr_t tag) {
+    void* ptr = (tag == 1) ? &dummy_conn1_obj :
+                 (tag == 2) ? &dummy_conn2_obj : &dummy_conn3_obj;
     return net::TcpConnectionPtr(
-        reinterpret_cast<net::TcpConnection*>(tag),
+        reinterpret_cast<net::TcpConnection*>(ptr),
         [](net::TcpConnection*) {});
 }
 
