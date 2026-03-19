@@ -126,6 +126,7 @@ add_library(chwell_core
     src/slg/map.cpp
     src/slg/battle.cpp
     src/game/game_components.cpp
+    src/game/player_move.cpp
     src/sync/frame_sync.cpp
     src/sync/state_sync.cpp
     src/discovery/service_discovery.cpp
@@ -226,6 +227,7 @@ if (CHWELL_BUILD_TESTS)
             tests/test_task_queue.cpp
             tests/test_slg.cpp
             tests/test_game_components.cpp
+            tests/test_player_move.cpp
             tests/test_sync.cpp
             tests/test_discovery_loadbalance.cpp
             tests/test_circuitbreaker.cpp
