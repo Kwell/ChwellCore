@@ -28,17 +28,28 @@ void TcpServer::start_accept() {
 }
 
 void TcpServer::stop() {
+    if (stopped_) {
+        CHWELL_LOG_WARN("TcpServer already stopped");
+        return;
+    }
+
+    CHWELL_LOG_INFO("TcpServer stopping on port " << port_);
     stopped_ = true;
+
     if (wake_pipe_[1] >= 0) {
         char c = 1;
         ssize_t n = write(wake_pipe_[1], &c, 1);
         (void)n;  // best-effort wake during shutdown
     }
     if (accept_thread_.joinable()) {
+        CHWELL_LOG_DEBUG("Waiting for accept thread to stop...");
         accept_thread_.join();
+        CHWELL_LOG_DEBUG("Accept thread stopped");
     }
     if (wake_pipe_[0] >= 0) { close(wake_pipe_[0]); wake_pipe_[0] = -1; }
     if (wake_pipe_[1] >= 0) { close(wake_pipe_[1]); wake_pipe_[1] = -1; }
+
+    CHWELL_LOG_INFO("TcpServer stopped, remaining connections: " << connections_.size());
 }
 
 void TcpServer::accept_loop() {
@@ -76,18 +87,21 @@ void TcpServer::accept_loop() {
             conn->set_message_callback(message_cb_);
             conn->set_close_callback([this](const TcpConnectionPtr& c) {
                 connections_.erase(c);
+                CHWELL_LOG_INFO("Connection closed, remaining: " << connections_.size());
                 if (disconnect_cb_) {
                     disconnect_cb_(c);
                 }
             });
 
             connections_.insert(conn);
+            CHWELL_LOG_INFO("New connection accepted, total: " << connections_.size());
 
             if (connection_cb_) {
                 connection_cb_(conn);
             }
 
             io_service_.post([conn, this]() {
+                CHWELL_LOG_DEBUG("Starting connection read loop");
                 conn->start();
             });
         }

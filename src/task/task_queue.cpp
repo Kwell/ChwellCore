@@ -22,15 +22,18 @@ TaskQueue::~TaskQueue() {
 
 void TaskQueue::start() {
     if (running_.exchange(true)) {
+        CHWELL_LOG_WARN("TaskQueue already running");
         return; // 已经在运行
     }
-    
+
+    CHWELL_LOG_INFO("TaskQueue starting with " << config_.worker_threads << " worker threads");
+
     for (int i = 0; i < config_.worker_threads; ++i) {
         workers_.emplace_back([this]() {
             worker_loop();
         });
     }
-    
+
     CHWELL_LOG_INFO("TaskQueue started with " << config_.worker_threads << " workers");
 }
 

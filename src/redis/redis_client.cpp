@@ -22,6 +22,7 @@ bool RedisClient::connect() {
 
 void RedisClient::disconnect() {
     std::lock_guard<std::mutex> lock(mutex_);
+    CHWELL_LOG_INFO("RedisClient (memory mock) disconnected");
     data_.clear();
     expires_.clear();
     hashes_.clear();

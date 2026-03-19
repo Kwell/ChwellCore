@@ -15,16 +15,21 @@ bool RoundRobinLoadBalancer::select_instance(const std::string& service_id, disc
 
     // 如果实例列表为空，从服务发现获取
     if (instances_.empty()) {
+        CHWELL_LOG_DEBUG("Fetching instances for service: " << service_id);
         instances_ = discovery_->discover_services(service_id);
         if (instances_.empty()) {
             CHWELL_LOG_WARN("No available instances for service: " + service_id);
             return false;
         }
+        CHWELL_LOG_DEBUG("Fetched " << instances_.size() << " instances for service: " << service_id);
     }
 
     // 轮询选择
     size_t index = current_index_.fetch_add(1, std::memory_order_relaxed) % instances_.size();
     out = instances_[index];
+
+    CHWELL_LOG_DEBUG("Selected instance " << index << "/" << instances_.size()
+                  << " for service: " << service_id);
 
     return true;
 }

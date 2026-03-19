@@ -7,9 +7,11 @@ namespace net {
 
 TcpConnection::TcpConnection(TcpSocket socket)
     : socket_(std::move(socket)), read_buffer_(4096) {
+    CHWELL_LOG_DEBUG("TcpConnection created");
 }
 
 void TcpConnection::start() {
+    CHWELL_LOG_DEBUG("TcpConnection read loop starting");
     run_read_loop();
 }
 
@@ -56,25 +58,41 @@ void TcpConnection::run_read_loop() {
 
 void TcpConnection::send(const std::vector<char>& data) {
     std::lock_guard<std::mutex> lock(send_mutex_);
-    if (closed_ || !socket_.is_open()) return;
+    if (closed_ || !socket_.is_open()) {
+        CHWELL_LOG_WARN("Send failed: connection closed");
+        return;
+    }
+    CHWELL_LOG_DEBUG("Sending " << data.size() << " bytes");
     const char* ptr = data.data();
     std::size_t len = data.size();
     while (len > 0) {
         ssize_t n = socket_.write(ptr, len);
         if (n <= 0) {
-            CHWELL_LOG_WARN("Send failed: " + std::string(strerror(errno)));
+            CHWELL_LOG_ERROR("Send failed: " + std::string(strerror(errno)));
             return;
         }
         ptr += n;
         len -= static_cast<std::size_t>(n);
     }
+    CHWELL_LOG_DEBUG("Send completed");
 }
 
 void TcpConnection::close() {
+    if (closed_) {
+        CHWELL_LOG_DEBUG("Connection already closed");
+        return;
+    }
+    CHWELL_LOG_INFO("Closing connection");
     closed_ = true;
     ErrorCode ec;
     socket_.shutdown(SHUT_RDWR, ec);
+    if (ec) {
+        CHWELL_LOG_WARN("Shutdown failed: " + ec.message());
+    }
     socket_.close(ec);
+    if (ec) {
+        CHWELL_LOG_WARN("Close failed: " + ec.message());
+    }
 }
 
 } // namespace net
