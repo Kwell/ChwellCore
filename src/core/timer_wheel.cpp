@@ -28,6 +28,11 @@ void TimerWheel::start() {
         return; // 已经在运行
     }
     
+    // 重置所有层的当前槽位到 0
+    for (auto& wheel : wheels_) {
+        wheel.current_slot = 0;
+    }
+    
     thread_ = std::thread([this]() {
         run_loop();
     });
