@@ -127,5 +127,15 @@ PrometheusRegistry& get_prometheus_registry() {
     return registry;
 }
 
+void PrometheusRegistry::reset() {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    counters_.clear();
+    gauges_.clear();
+    histograms_.clear();
+    summaries_.clear();
+    metric_infos_.clear();
+}
+
 } // namespace metrics
 } // namespace chwell

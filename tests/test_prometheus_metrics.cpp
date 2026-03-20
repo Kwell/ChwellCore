@@ -100,6 +100,7 @@ TEST(PrometheusMetricsTest, PrometheusExport) {
 
 TEST(PrometheusMetricsTest, MultipleRegistrations) {
     auto& registry = metrics::get_prometheus_registry();
+    registry.reset();  // 清理之前测试的状态
 
     // 注册同一个 Counter 两次，应该返回同一个
     metrics::Counter& counter1 = registry.register_counter("test_counter");

@@ -246,6 +246,9 @@ public:
 
     std::string to_prometheus() const;
 
+    // 清空所有注册的指标（主要用于测试）
+    void reset();
+
 private:
     struct MetricInfo {
         std::string help;
