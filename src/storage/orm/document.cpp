@@ -86,11 +86,19 @@ bool Document::from_string(const std::string& data) {
         data_.clear();
         for (YAML::const_iterator it = node.begin(); it != node.end(); ++it) {
             std::string key = it->first.as<std::string>();
-            std::string value = it->second.as<std::string>();
+            const YAML::Node& val = it->second;
+            std::string value;
+            if (val.IsScalar()) {
+                value = val.as<std::string>();
+            } else {
+                YAML::Emitter emit;
+                emit << val;
+                value = std::string(emit.c_str());
+            }
             data_[key] = value;
         }
         return true;
-    } catch (...) {
+    } catch (const YAML::Exception&) {
         return false;
     }
 }
@@ -151,6 +159,8 @@ bool Document::from_string(const std::string& data) {
             cur.clear();
             in_key = false;
         } else if (c == '\\' && i + 1 < data.size()) {
+            // 保留 '\' 与下一字符，供 unescape 识别 \\n、\\= 等（勿只吞掉反斜杠）
+            cur += '\\';
             cur += data[++i];
         } else {
             cur += c;

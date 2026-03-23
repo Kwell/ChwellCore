@@ -11,7 +11,8 @@
 
 using namespace chwell;
 
-// 定义 Player 实体：继承 Entity，实现 to_document/from_document
+// 定义 Player 实体：继承 Entity，实现 to_document/from_document。
+// table_name() 必须与 repository<Player>(...) 的第二个参数（表名）一致，否则 save 会失败。
 struct Player : public storage::orm::Entity {
     std::string id_;
     std::string name_;

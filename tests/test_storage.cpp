@@ -21,6 +21,18 @@
 using namespace chwell;
 using namespace std::chrono_literals;
 
+namespace {
+
+// 用于 StorageComponent::repository 空指针测试：须为可默认构造的具体 Entity 子类
+struct DummyOrmEntity : storage::orm::Entity {
+    std::string table_name() const override { return "tbl"; }
+    std::string id() const override { return ""; }
+    storage::orm::Document to_document() const override { return {}; }
+    void from_document(const storage::orm::Document&) override {}
+};
+
+}  // namespace
+
 // ===========================================================================
 // Document 序列化往返
 // ===========================================================================
@@ -73,6 +85,18 @@ TEST(DocumentTest, HasAndClear) {
     doc.clear();
     EXPECT_FALSE(doc.has("k"));
 }
+
+#if !defined(CHWELL_USE_YAML)
+// 无 yaml-cpp 时 Document 走 document.cpp 中 #else 备用格式；须与 escape/unescape 往返一致
+TEST(DocumentTest, FallbackFormatUsesUnescapeRoundTrip) {
+    storage::orm::Document doc;
+    doc.set_string("desc", "line1\nline2=ok\\end");
+    std::string s = doc.to_string();
+    storage::orm::Document doc2;
+    ASSERT_TRUE(doc2.from_string(s));
+    EXPECT_EQ(doc2.get_string("desc"), "line1\nline2=ok\\end");
+}
+#endif
 
 // ===========================================================================
 // MemoryStorage 基本 CRUD
@@ -312,8 +336,7 @@ TEST(StorageComponentTest, NullStorageGuardOnRepository) {
         std::unique_ptr<storage::StorageInterface>(nullptr));
 
     // repository() 应抛出而非崩溃
-    EXPECT_THROW(comp.repository<storage::orm::Entity>("tbl"),
-                 std::runtime_error);
+    EXPECT_THROW(comp.repository<DummyOrmEntity>("tbl"), std::runtime_error);
 }
 
 // ===========================================================================

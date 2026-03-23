@@ -17,6 +17,7 @@ public:
     // 类型安全的 getter
     std::string get_string(const std::string& key,
                            const std::string& default_val = "") const;
+    // 数值字段为字符串时使用 strtoll/strtod 解析；无法完整解析为数字时结果未定义，可能得到部分前缀值
     std::int64_t get_int64(const std::string& key, std::int64_t default_val = 0) const;
     int get_int(const std::string& key, int default_val = 0) const;
     double get_double(const std::string& key, double default_val = 0) const;

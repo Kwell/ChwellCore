@@ -41,6 +41,14 @@ struct Player : public storage::orm::Entity {
 
 }  // namespace
 
+TEST(OrmRepositoryTest, SaveFailsWhenTableNameMismatch) {
+    storage::MemoryStorage storage;
+    storage::orm::Repository<Player> repo(&storage, "wrong_table");
+    Player p("p001", "alice", 10);
+    auto r = repo.save(p);
+    EXPECT_FALSE(r.ok);
+}
+
 TEST(OrmRepositoryTest, CrudFlowOnMemoryStorage) {
     storage::MemoryStorage storage;
     storage::orm::Repository<Player> repo(&storage, "players");

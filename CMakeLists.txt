@@ -219,6 +219,9 @@ if (CHWELL_BUILD_TESTS)
     endif()
 
     if (CHWELL_GTEST_LIB)
+        if(NOT CHWELL_USE_YAML)
+            message(STATUS "CHWELL_USE_YAML=OFF: Document 序列化使用 key=value 备用格式（ORM 单元测试仍覆盖往返）")
+        endif()
         add_executable(chwell_core_tests
             tests/test_protocol_parser.cpp
             tests/test_protocol_router.cpp
