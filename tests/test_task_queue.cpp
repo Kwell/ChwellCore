@@ -77,34 +77,40 @@ TEST_F(TaskQueueTest, TaskPriority) {
     config.worker_threads = 1;
     config.enable_priority = true;
     task::TaskQueue queue(config);
-    
-    queue.start();
-    
+
+    // 先提交所有任务再启动工作线程：优先级队列只能对"已在队列中"的任务排序。
+    // 若先 start() 再逐个 submit，唯一的工作线程会在其他任务入队前就抢先取走
+    // 第一个任务（NORMAL），导致 order[0] 不是 URGENT，产生竞态失败。
     std::vector<int> order;
     std::mutex mtx;
-    
+
     queue.submit_void([&order, &mtx]() {
         std::lock_guard<std::mutex> lock(mtx);
         order.push_back(1);
     }, task::TaskPriority::NORMAL);
-    
+
     queue.submit_void([&order, &mtx]() {
         std::lock_guard<std::mutex> lock(mtx);
         order.push_back(2);
     }, task::TaskPriority::URGENT);  // Highest priority
-    
+
     queue.submit_void([&order, &mtx]() {
         std::lock_guard<std::mutex> lock(mtx);
         order.push_back(3);
     }, task::TaskPriority::HIGH);
-    
+
+    // 所有任务已在队列中，启动后工作线程按优先级顺序取出
+    queue.start();
+
     std::this_thread::sleep_for(300ms);
-    
+
     // 由于优先级队列实现，任务应该全部执行完成
     ASSERT_EQ(order.size(), 3u);
-    // 高优先级任务应该先执行
+    // 高优先级任务应该先执行：URGENT(2) > HIGH(3) > NORMAL(1)
     EXPECT_EQ(order[0], 2);
-    
+    EXPECT_EQ(order[1], 3);
+    EXPECT_EQ(order[2], 1);
+
     queue.stop();
 }
 
