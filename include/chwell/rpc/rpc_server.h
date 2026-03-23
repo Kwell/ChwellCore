@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <string_view>
 #include <functional>
 #include <unordered_map>
 #include <memory>
@@ -40,7 +41,7 @@ public:
     int active_connections() const { return active_connections_.load(); }
     
 private:
-    void handle_message(const net::TcpConnectionPtr& conn, const std::vector<char>& data);
+    void handle_message(const net::TcpConnectionPtr& conn, std::string_view data);
     void handle_connect(const net::TcpConnectionPtr& conn);
     void handle_disconnect(const net::TcpConnectionPtr& conn);
     

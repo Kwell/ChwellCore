@@ -25,28 +25,40 @@ public:
 // 长度头编解码器：| length (4 bytes, network byte order) | body (length bytes) |
 class LengthHeaderCodec : public Codec {
 public:
-    LengthHeaderCodec() : buffer_() {}
+    LengthHeaderCodec() : buffer_(), head_(0) {}
 
     virtual std::vector<char> encode(const std::string& message) override;
     virtual std::vector<std::string> decode(const std::vector<char>& data) override;
-    virtual void reset() override { buffer_.clear(); }
+    virtual void reset() override {
+        buffer_.clear();
+        head_ = 0;
+    }
 
 private:
+    void compact_prefix();
+
     std::vector<char> buffer_;
+    std::size_t head_;
 };
 
 // JSON 编解码器：使用 4 字节长度前缀（网络字节序）成帧，与 LengthHeaderCodec 一致。
 // message 为 UTF-8 JSON 字符串，便于游戏逻辑中直接使用 JSON 文本。
 class JsonCodec : public Codec {
 public:
-    JsonCodec() : buffer_() {}
+    JsonCodec() : buffer_(), head_(0) {}
 
     virtual std::vector<char> encode(const std::string& message) override;
     virtual std::vector<std::string> decode(const std::vector<char>& data) override;
-    virtual void reset() override { buffer_.clear(); }
+    virtual void reset() override {
+        buffer_.clear();
+        head_ = 0;
+    }
 
 private:
+    void compact_prefix();
+
     std::vector<char> buffer_;
+    std::size_t head_;
 };
 
 // Protobuf 编解码器：varint32 长度前缀流式格式
@@ -54,14 +66,20 @@ private:
 // message 为单条 protobuf 消息的二进制序列化结果（如 msg.SerializeAsString()）。
 class ProtobufCodec : public Codec {
 public:
-    ProtobufCodec() : buffer_() {}
+    ProtobufCodec() : buffer_(), head_(0) {}
 
     virtual std::vector<char> encode(const std::string& message) override;
     virtual std::vector<std::string> decode(const std::vector<char>& data) override;
-    virtual void reset() override { buffer_.clear(); }
+    virtual void reset() override {
+        buffer_.clear();
+        head_ = 0;
+    }
 
 private:
+    void compact_prefix();
+
     std::vector<char> buffer_;
+    std::size_t head_;
 };
 
 } // namespace codec

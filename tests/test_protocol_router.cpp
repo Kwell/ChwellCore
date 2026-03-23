@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "chwell/net/posix_io.h"
@@ -24,6 +25,10 @@ std::vector<char> make_frame(uint16_t cmd, const std::string& body) {
     return protocol::serialize(protocol::Message(cmd, body));
 }
 
+std::string_view as_view(const std::vector<char>& v) {
+    return std::string_view(v.data(), v.size());
+}
+
 }  // namespace
 
 // 1. 注册 handler 后，完整帧被正确路由并调用
@@ -39,7 +44,8 @@ TEST(ProtocolRouterTest, RoutesToRegisteredHandler) {
     });
 
     auto conn = make_dummy_conn();
-    router.on_message(conn, make_frame(0x0001, "hello"));
+    auto frame = make_frame(0x0001, "hello");
+    router.on_message(conn, as_view(frame));
 
     EXPECT_EQ(received_cmd, 0x0001u);
     EXPECT_EQ(received_body, "hello");
@@ -54,7 +60,8 @@ TEST(ProtocolRouterTest, UnknownCmdDoesNotCrash) {
                                         const protocol::Message&) { called = true; });
 
     auto conn = make_dummy_conn();
-    ASSERT_NO_THROW(router.on_message(conn, make_frame(0x9999, "ignored")));
+    auto ignored = make_frame(0x9999, "ignored");
+    ASSERT_NO_THROW(router.on_message(conn, as_view(ignored)));
     EXPECT_FALSE(called);
 }
 
@@ -73,10 +80,13 @@ TEST(ProtocolRouterTest, ReassemblesFragmentedMessage) {
     auto frame = make_frame(0x0002, "fragment");
     std::size_t half = frame.size() / 2;
 
-    router.on_message(conn, {frame.begin(), frame.begin() + half});
+    std::vector<char> first_chunk(frame.begin(), frame.begin() + static_cast<std::ptrdiff_t>(half));
+    router.on_message(conn, as_view(first_chunk));
     EXPECT_EQ(call_count, 0);  // 不完整，尚未触发
 
-    router.on_message(conn, {frame.begin() + half, frame.end()});
+    std::vector<char> second_chunk(frame.begin() + static_cast<std::ptrdiff_t>(half),
+                                   frame.end());
+    router.on_message(conn, as_view(second_chunk));
     EXPECT_EQ(call_count, 1);  // 补齐后触发一次
 }
 
@@ -98,7 +108,7 @@ TEST(ProtocolRouterTest, RoutesTwoMessagesInOneFeed) {
     combined.insert(combined.end(), f1.begin(), f1.end());
     combined.insert(combined.end(), f2.begin(), f2.end());
 
-    router.on_message(conn, combined);
+    router.on_message(conn, as_view(combined));
 
     ASSERT_EQ(cmds.size(), 2u);
     EXPECT_EQ(cmds[0], 0x0010u);
@@ -117,11 +127,13 @@ TEST(ProtocolRouterTest, DisconnectCleansParserForConnection) {
     auto frame = make_frame(0x0003, "clean");
 
     // 只送前 2 字节，parser 中留有不完整数据
-    router.on_message(conn, {frame.begin(), frame.begin() + 2});
+    std::vector<char> head2(frame.begin(), frame.begin() + 2);
+    router.on_message(conn, as_view(head2));
     router.on_disconnect(conn);  // 断开：parser 被清除
 
     // 补发剩余数据，因 parser 已清理，不应触发 handler
-    router.on_message(conn, {frame.begin() + 2, frame.end()});
+    std::vector<char> tail_rest(frame.begin() + 2, frame.end());
+    router.on_message(conn, as_view(tail_rest));
     EXPECT_EQ(call_count, 0);
 }
 

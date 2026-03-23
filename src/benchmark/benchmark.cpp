@@ -9,6 +9,7 @@
 #include "chwell/discovery/service_discovery.h"
 
 #include <algorithm>
+#include <string_view>
 #include <random>
 #include <sstream>
 #include <iostream>
@@ -427,7 +428,8 @@ void benchmark_protocol_router_dispatch(size_t iterations, size_t handlers_count
     net::TcpConnectionPtr bench_conn;
 
     for (size_t i = 0; i < iterations; ++i) {
-        router.on_message(bench_conn, raw);
+        router.on_message(bench_conn,
+                          std::string_view(raw.data(), raw.size()));
     }
 }
 

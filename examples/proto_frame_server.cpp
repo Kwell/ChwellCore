@@ -26,9 +26,10 @@ public:
     }
 
     virtual void on_message(const net::TcpConnectionPtr& conn,
-                            const std::vector<char>& data) override {
+                            std::string_view data) override {
         auto& codec = codecs_[conn.get()];
-        std::vector<std::string> messages = codec.decode(data);
+        std::vector<char> chunk(data.begin(), data.end());
+        std::vector<std::string> messages = codec.decode(chunk);
 
         for (const auto& bin : messages) {
             std::string text(bin.begin(), bin.end());

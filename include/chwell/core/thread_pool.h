@@ -20,6 +20,7 @@ public:
     ThreadPool& operator=(const ThreadPool&) = delete;
 
     void post(const std::function<void()>& task);
+    void post(std::function<void()>&& task);
 
 private:
     void worker_loop();

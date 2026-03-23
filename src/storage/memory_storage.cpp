@@ -61,5 +61,30 @@ std::vector<std::string> MemoryStorage::keys(const std::string& prefix) {
     return result;
 }
 
+std::vector<StorageResult> MemoryStorage::mget(
+    const std::vector<std::string>& keys) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    prune_expired();
+    std::vector<StorageResult> out;
+    out.reserve(keys.size());
+    for (const auto& k : keys) {
+        auto it = data_.find(k);
+        if (it == data_.end()) {
+            out.push_back(StorageResult::failure("key not found"));
+        } else {
+            out.push_back(StorageResult::success(it->second.value));
+        }
+    }
+    return out;
+}
+
+StorageResult MemoryStorage::mput(const std::vector<StorageDocument>& docs) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (const auto& doc : docs) {
+        data_[doc.key] = Entry{doc.value, doc.expire_at};
+    }
+    return StorageResult::success();
+}
+
 }  // namespace storage
 }  // namespace chwell

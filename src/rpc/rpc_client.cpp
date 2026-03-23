@@ -67,7 +67,7 @@ bool RpcClient::connect(const std::string& host, unsigned short port) {
     net::TcpSocket tcpsocket(fd);
     connection_ = std::make_shared<net::TcpConnection>(std::move(tcpsocket));
     connection_->set_message_callback([this](const net::TcpConnectionPtr& conn,
-                                             const std::vector<char>& data) {
+                                             std::string_view data) {
         on_message(conn, data);
     });
     connection_->set_close_callback([this](const net::TcpConnectionPtr& conn) {
@@ -192,7 +192,7 @@ bool RpcClient::call_sync(std::uint16_t cmd, const std::vector<char>& request_da
     return success;
 }
 
-void RpcClient::on_message(const net::TcpConnectionPtr& conn, const std::vector<char>& data) {
+void RpcClient::on_message(const net::TcpConnectionPtr& conn, std::string_view data) {
     (void)conn;
     // Accumulate and parse multiple messages per read (handle batched TCP delivery)
     recv_buffer_.insert(recv_buffer_.end(), data.begin(), data.end());

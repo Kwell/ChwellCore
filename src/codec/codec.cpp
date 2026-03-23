@@ -6,6 +6,17 @@
 namespace chwell {
 namespace codec {
 
+void LengthHeaderCodec::compact_prefix() {
+    if (head_ == 0) {
+        return;
+    }
+    // 已消费前缀较大时前移，避免每帧 O(n) erase
+    if (head_ >= 4096 && head_ * 2 >= buffer_.size()) {
+        buffer_.erase(buffer_.begin(), buffer_.begin() + static_cast<std::ptrdiff_t>(head_));
+        head_ = 0;
+    }
+}
+
 std::vector<char> LengthHeaderCodec::encode(const std::string& message) {
     std::uint32_t len = static_cast<std::uint32_t>(message.size());
     std::uint32_t len_net = core::host_to_net32(len);
@@ -24,25 +35,35 @@ std::vector<std::string> LengthHeaderCodec::decode(const std::vector<char>& data
     buffer_.insert(buffer_.end(), data.begin(), data.end());
 
     while (true) {
-        if (buffer_.size() < 4) {
+        std::size_t avail = buffer_.size() - head_;
+        if (avail < 4) {
             break;
         }
 
         std::uint32_t len_net;
-        std::memcpy(&len_net, &buffer_[0], 4);
+        std::memcpy(&len_net, buffer_.data() + head_, 4);
         std::uint32_t body_len = core::net_to_host32(len_net);
 
-        if (buffer_.size() < 4 + body_len) {
+        if (avail < 4 + body_len) {
             break;
         }
 
-        std::string msg(buffer_.begin() + 4, buffer_.begin() + 4 + body_len);
-        messages.push_back(msg);
-
-        buffer_.erase(buffer_.begin(), buffer_.begin() + 4 + body_len);
+        messages.emplace_back(buffer_.data() + head_ + 4, body_len);
+        head_ += 4 + body_len;
     }
 
+    compact_prefix();
     return messages;
+}
+
+void JsonCodec::compact_prefix() {
+    if (head_ == 0) {
+        return;
+    }
+    if (head_ >= 4096 && head_ * 2 >= buffer_.size()) {
+        buffer_.erase(buffer_.begin(), buffer_.begin() + static_cast<std::ptrdiff_t>(head_));
+        head_ = 0;
+    }
 }
 
 std::vector<char> JsonCodec::encode(const std::string& message) {
@@ -63,24 +84,24 @@ std::vector<std::string> JsonCodec::decode(const std::vector<char>& data) {
     buffer_.insert(buffer_.end(), data.begin(), data.end());
 
     while (true) {
-        if (buffer_.size() < 4) {
+        std::size_t avail = buffer_.size() - head_;
+        if (avail < 4) {
             break;
         }
 
         std::uint32_t len_net;
-        std::memcpy(&len_net, &buffer_[0], 4);
+        std::memcpy(&len_net, buffer_.data() + head_, 4);
         std::uint32_t body_len = core::net_to_host32(len_net);
 
-        if (buffer_.size() < 4 + body_len) {
+        if (avail < 4 + body_len) {
             break;
         }
 
-        std::string msg(buffer_.begin() + 4, buffer_.begin() + 4 + body_len);
-        messages.push_back(msg);
-
-        buffer_.erase(buffer_.begin(), buffer_.begin() + 4 + body_len);
+        messages.emplace_back(buffer_.data() + head_ + 4, body_len);
+        head_ += 4 + body_len;
     }
 
+    compact_prefix();
     return messages;
 }
 
@@ -124,35 +145,38 @@ std::vector<char> ProtobufCodec::encode(const std::string& message) {
     return out;
 }
 
+void ProtobufCodec::compact_prefix() {
+    if (head_ == 0) {
+        return;
+    }
+    if (head_ >= 4096 && head_ * 2 >= buffer_.size()) {
+        buffer_.erase(buffer_.begin(), buffer_.begin() + static_cast<std::ptrdiff_t>(head_));
+        head_ = 0;
+    }
+}
+
 std::vector<std::string> ProtobufCodec::decode(const std::vector<char>& data) {
     std::vector<std::string> result;
     buffer_.insert(buffer_.end(), data.begin(), data.end());
 
-    std::size_t pos = 0;
+    std::size_t pos = head_;
     while (pos < buffer_.size()) {
         std::size_t saved_pos = pos;
         std::uint32_t len = 0;
         if (!parse_varint32(buffer_, pos, len)) {
-            // 不完整的长度字段，等待更多数据
             pos = saved_pos;
             break;
         }
         if (buffer_.size() - pos < len) {
-            // body 不完整，回退到长度起始位置等待更多数据
             pos = saved_pos;
             break;
         }
-        std::string msg(buffer_.begin() + static_cast<std::ptrdiff_t>(pos),
-                        buffer_.begin() + static_cast<std::ptrdiff_t>(pos + len));
-        result.push_back(msg);
+        result.emplace_back(buffer_.data() + pos, len);
         pos += len;
     }
 
-    if (pos > 0) {
-        buffer_.erase(buffer_.begin(),
-                      buffer_.begin() + static_cast<std::ptrdiff_t>(pos));
-    }
-
+    head_ = pos;
+    compact_prefix();
     return result;
 }
 

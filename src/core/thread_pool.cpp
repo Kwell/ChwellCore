@@ -34,6 +34,17 @@ void ThreadPool::post(const std::function<void()>& task) {
     cond_.notify_one();
 }
 
+void ThreadPool::post(std::function<void()>&& task) {
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (stopped_) {
+            return;
+        }
+        tasks_.push(std::move(task));
+    }
+    cond_.notify_one();
+}
+
 void ThreadPool::worker_loop() {
     while (true) {
         std::function<void()> task;

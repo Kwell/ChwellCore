@@ -43,9 +43,10 @@ void TcpConnection::run_read_loop() {
             break;
         }
 
-        std::vector<char> msg(read_buffer_.begin(), read_buffer_.begin() + n);
         if (message_cb_) {
-            message_cb_(shared_from_this(), msg);
+            message_cb_(shared_from_this(),
+                        std::string_view(read_buffer_.data(),
+                                         static_cast<std::size_t>(n)));
         }
     }
 
@@ -57,6 +58,10 @@ void TcpConnection::run_read_loop() {
 }
 
 void TcpConnection::send(const std::vector<char>& data) {
+    send(std::string_view(data.data(), data.size()));
+}
+
+void TcpConnection::send(std::string_view data) {
     std::lock_guard<std::mutex> lock(send_mutex_);
     if (closed_ || !socket_.is_open()) {
         CHWELL_LOG_WARN("Send failed: connection closed");

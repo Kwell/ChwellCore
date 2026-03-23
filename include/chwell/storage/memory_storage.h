@@ -24,6 +24,9 @@ public:
     virtual StorageResult remove(const std::string& key) override;
     virtual bool exists(const std::string& key) override;
     virtual std::vector<std::string> keys(const std::string& prefix = "") override;
+    virtual std::vector<StorageResult> mget(
+        const std::vector<std::string>& keys) override;
+    virtual StorageResult mput(const std::vector<StorageDocument>& docs) override;
 
 private:
     void prune_expired();

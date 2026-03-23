@@ -6,7 +6,7 @@ namespace chwell {
 namespace service {
 
 void ProtocolRouterComponent::on_message(const net::TcpConnectionPtr& conn,
-                                         const std::vector<char>& data) {
+                                         std::string_view data) {
     CHWELL_LOG_DEBUG("ProtocolRouter received " << data.size() << " bytes");
 
     // 获取或创建该连接的解析器

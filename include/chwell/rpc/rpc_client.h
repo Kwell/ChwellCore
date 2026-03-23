@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <string_view>
 #include <functional>
 #include <memory>
 #include <unordered_map>
@@ -66,7 +67,7 @@ public:
     }
 
 private:
-    void on_message(const net::TcpConnectionPtr& conn, const std::vector<char>& data);
+    void on_message(const net::TcpConnectionPtr& conn, std::string_view data);
     void on_disconnect(const net::TcpConnectionPtr& conn);
 
     // 启动/停止超时清理线程

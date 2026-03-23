@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <vector>
+#include <string_view>
 #include <functional>
 #include <mutex>
 #include <atomic>
@@ -14,7 +15,8 @@ namespace net {
 class TcpConnection;
 
 typedef std::shared_ptr<TcpConnection> TcpConnectionPtr;
-typedef std::function<void(const TcpConnectionPtr&, const std::vector<char>&)> MessageCallback;
+// 第二个参数指向 TcpConnection 内部读缓冲区的本次 read 区间；仅在回调返回前有效。
+typedef std::function<void(const TcpConnectionPtr&, std::string_view)> MessageCallback;
 typedef std::function<void(const TcpConnectionPtr&)> ConnectionCallback;
 
 class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
@@ -23,6 +25,7 @@ public:
 
     void start();
     void send(const std::vector<char>& data);
+    void send(std::string_view data);
     void close();
 
     void set_message_callback(const MessageCallback& cb) { message_cb_ = cb; }

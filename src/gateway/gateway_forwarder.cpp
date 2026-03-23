@@ -118,7 +118,7 @@ net::TcpConnectionPtr GatewayForwarderComponent::do_connect(
     net::TcpConnectionPtr backend = std::make_shared<net::TcpConnection>(std::move(socket));
 
     backend->set_message_callback([this](const net::TcpConnectionPtr& conn,
-                                         const std::vector<char>& data) {
+                                         std::string_view data) {
         on_backend_message(conn, data);
     });
     backend->set_close_callback([this](const net::TcpConnectionPtr& conn) {
@@ -164,7 +164,7 @@ void GatewayForwarderComponent::forward(const net::TcpConnectionPtr& client_conn
 }
 
 void GatewayForwarderComponent::on_backend_message(
-    const net::TcpConnectionPtr& backend_conn, const std::vector<char>& data) {
+    const net::TcpConnectionPtr& backend_conn, std::string_view data) {
     net::TcpConnectionPtr client_conn;
     {
         std::lock_guard<std::mutex> lock(mutex_);

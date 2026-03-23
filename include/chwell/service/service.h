@@ -1,5 +1,6 @@
 #pragma once
 
+#include <string_view>
 #include <vector>
 #include <memory>
 #include <type_traits>
@@ -31,7 +32,7 @@ public:
         });
 
         server_.set_message_callback([this](const net::TcpConnectionPtr& conn,
-                                            const std::vector<char>& data) {
+                                            std::string_view data) {
             dispatch_message(conn, data);
         });
     }
@@ -94,7 +95,7 @@ public:
 
 private:
     void dispatch_message(const net::TcpConnectionPtr& conn,
-                          const std::vector<char>& data) {
+                          std::string_view data) {
         for (std::size_t i = 0; i < components_.size(); ++i) {
             components_[i]->on_message(conn, data);
         }

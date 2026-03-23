@@ -30,7 +30,6 @@ struct BenchmarkConfig {
     size_t warmup_iterations = 1000;  // 预热迭代次数
     size_t measurement_iterations = 10000;  // 测量迭代次数
     bool skip_warmup = false;  // 跳过预热
-    bool run_in_separate_process = false;  // 在独立进程运行
 };
 
 // 基准测试函数

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <string_view>
 #include <vector>
 #include <memory>
 #include <type_traits>
@@ -25,6 +26,7 @@ public:
 
     // 发送数据
     virtual void send(const std::vector<char>& data) = 0;
+    virtual void send(std::string_view data) = 0;
     virtual void send_text(const std::string& text) = 0;
 
     // 关闭连接
@@ -47,9 +49,12 @@ public:
         conn_->send(data);
     }
 
-    void send_text(const std::string& text) override {
-        std::vector<char> data(text.begin(), text.end());
+    void send(std::string_view data) override {
         conn_->send(data);
+    }
+
+    void send_text(const std::string& text) override {
+        conn_->send(std::string_view(text.data(), text.size()));
     }
 
     void close() override {
@@ -75,6 +80,10 @@ public:
 
     void send(const std::vector<char>& data) override {
         conn_->send_binary(data);
+    }
+
+    void send(std::string_view data) override {
+        conn_->send_binary(std::vector<char>(data.begin(), data.end()));
     }
 
     void send_text(const std::string& text) override {

@@ -16,7 +16,7 @@ public:
     }
 
     virtual void on_message(const net::TcpConnectionPtr& conn,
-                            const std::vector<char>& data) override {
+                            std::string_view data) override {
         std::string msg(data.begin(), data.end());
         CHWELL_LOG_INFO("EchoComponent received: " + msg);
         conn->send(data);

@@ -2,6 +2,7 @@
 
 #include <unordered_map>
 #include <string>
+#include <string_view>
 #include <memory>
 #include <mutex>
 
@@ -49,7 +50,7 @@ private:
     net::TcpConnectionPtr do_connect(const net::TcpConnectionPtr& client_conn,
                                      const std::string& host, unsigned short port);
     void on_backend_message(const net::TcpConnectionPtr& backend_conn,
-                            const std::vector<char>& data);
+                            std::string_view data);
     void on_backend_close(const net::TcpConnectionPtr& backend_conn);
 
     std::string backend_host_;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "chwell/net/tcp_connection.h"
@@ -22,9 +23,9 @@ public:
     virtual void on_register(Service& /*svc*/) {}
 
     // 收到一条来自某连接的原始消息时的回调
-    // 这里先用最简单的字节流接口，下游可以在内部自行做协议解析
+    // data 仅在回调返回前有效（与 TcpConnection 读缓冲一致）
     virtual void on_message(const net::TcpConnectionPtr& /*conn*/,
-                            const std::vector<char>& /*data*/) {}
+                            std::string_view /*data*/) {}
 
     // 连接断开时的回调（可选实现）
     virtual void on_disconnect(const net::TcpConnectionPtr& /*conn*/) {}

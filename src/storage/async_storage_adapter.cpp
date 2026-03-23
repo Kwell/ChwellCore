@@ -95,7 +95,7 @@ void AsyncStorageAdapter::worker_loop() {
             task = std::move(tasks_.front());
             tasks_.pop();
         }
-        queue_cv_.notify_all();
+        queue_cv_.notify_one();
         task();
     }
 }
@@ -150,9 +150,10 @@ std::future<StorageResult> AsyncStorageAdapter::async_put(
         p->set_value(StorageResult::failure(kNullStorageMsg));
         return f;
     }
-    if (!enqueue([this, key, value, expire_at, p]() {
-            fulfill_result_promise(p, [this, &key, &value, expire_at] {
-                return storage_->put(key, value, expire_at);
+    std::string val(value);
+    if (!enqueue([this, key, val = std::move(val), expire_at, p]() {
+            fulfill_result_promise(p, [this, &key, &val, expire_at] {
+                return storage_->put(key, val, expire_at);
             });
         })) {
         p->set_value(StorageResult::failure(kShutdownMsg));
@@ -212,8 +213,9 @@ std::future<std::vector<StorageResult>> AsyncStorageAdapter::async_mget(
         p->set_value(fail_vec(kNullStorageMsg));
         return f;
     }
-    if (!enqueue([this, keys, p]() {
-            fulfill_vector_promise(p, [this, keys] {
+    std::vector<std::string> keys_owned(keys);
+    if (!enqueue([this, keys = std::move(keys_owned), p]() {
+            fulfill_vector_promise(p, [this, &keys] {
                 return storage_->mget(keys);
             });
         })) {
@@ -230,7 +232,8 @@ std::future<StorageResult> AsyncStorageAdapter::async_mput(
         p->set_value(StorageResult::failure(kNullStorageMsg));
         return f;
     }
-    if (!enqueue([this, docs, p]() {
+    std::vector<StorageDocument> docs_owned(docs);
+    if (!enqueue([this, docs = std::move(docs_owned), p]() {
             fulfill_result_promise(p, [this, &docs] {
                 return storage_->mput(docs);
             });
@@ -271,9 +274,10 @@ void AsyncStorageAdapter::async_put(const std::string& key,
         cb(StorageResult::failure(kNullStorageMsg));
         return;
     }
-    if (!enqueue([this, key, value, expire_at, cb]() {
+    std::string val(value);
+    if (!enqueue([this, key, val = std::move(val), expire_at, cb]() {
             try {
-                cb(storage_->put(key, value, expire_at));
+                cb(storage_->put(key, val, expire_at));
             } catch (const std::exception& e) {
                 cb(StorageResult::failure(e.what()));
             } catch (...) {

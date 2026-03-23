@@ -9,7 +9,13 @@
 namespace chwell {
 namespace storage {
 
-// 存储接口：上层逻辑只依赖此接口，不关心底层是 MySQL、MongoDB 或其他介质
+// 存储接口：上层逻辑只依赖此接口，不关心底层是 MySQL、MongoDB 或其他介质。
+//
+// 批量 API：mget/mput 的默认实现为逐条调用 get/put，语义正确但往返次数多；
+// 各后端若支持批量或管道，应覆盖以实现更高吞吐。
+//
+// 阻塞型后端（如 libmysqlclient）：勿在 IO/主循环线程直接同步调用，请通过
+// AsyncStorageAdapter 等工作线程包装，避免阻塞事件循环。
 class StorageInterface {
 public:
     virtual ~StorageInterface() {}
@@ -38,7 +44,7 @@ public:
         return {};
     }
 
-    // 批量获取（可选，默认逐条调用 get）
+    // 批量获取（可选；默认逐条 get，适合简单实现或无法批量的驱动）
     virtual std::vector<StorageResult> mget(const std::vector<std::string>& keys) {
         std::vector<StorageResult> results;
         for (const auto& k : keys) {

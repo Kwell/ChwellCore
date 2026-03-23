@@ -37,7 +37,7 @@ void RpcServer::start() {
     });
     
     server_->set_message_callback([this](const net::TcpConnectionPtr& conn,
-                                          const std::vector<char>& data) {
+                                          std::string_view data) {
         handle_message(conn, data);
     });
     
@@ -64,7 +64,7 @@ void RpcServer::handle_disconnect(const net::TcpConnectionPtr& conn) {
     CHWELL_LOG_DEBUG("RPC client disconnected, active=" << active_connections_.load());
 }
 
-void RpcServer::handle_message(const net::TcpConnectionPtr& conn, const std::vector<char>& data) {
+void RpcServer::handle_message(const net::TcpConnectionPtr& conn, std::string_view data) {
     // 累积数据到缓冲区
     std::vector<char> buffer;
     {
@@ -73,7 +73,7 @@ void RpcServer::handle_message(const net::TcpConnectionPtr& conn, const std::vec
         buf.insert(buf.end(), data.begin(), data.end());
         buffer = buf;  // 复制一份用于解析
     }
-    
+
     // 解析消息
     protocol::Parser parser;
     auto messages = parser.feed(buffer);

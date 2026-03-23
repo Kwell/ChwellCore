@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string_view>
 #include <functional>
 #include <unordered_map>
 #include <vector>
@@ -38,7 +39,7 @@ public:
 
     // 组件接口：收到原始消息时，解析协议并路由
     virtual void on_message(const net::TcpConnectionPtr& conn,
-                            const std::vector<char>& data) override;
+                            std::string_view data) override;
 
     // 组件接口：连接断开时清理解析器
     virtual void on_disconnect(const net::TcpConnectionPtr& conn) override;
