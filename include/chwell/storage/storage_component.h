@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <stdexcept>
 #include <string>
 
 #include "chwell/storage/storage_interface.h"
@@ -52,8 +53,14 @@ public:
     }
 
     // ORM 仓储：类型安全的 CRUD，无需手写 key-value
+    // 若 storage_ 未初始化则抛出 std::runtime_error
     template <typename T>
     orm::Repository<T> repository(const std::string& table_name) {
+        if (!storage_) {
+            throw std::runtime_error(
+                "StorageComponent: storage not initialized, "
+                "cannot create Repository<T> for table '" + table_name + "'");
+        }
         return orm::Repository<T>(storage_.get(), table_name);
     }
 

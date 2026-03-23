@@ -115,19 +115,30 @@ StorageResult MysqlStorage::get(const std::string& key) {
         return r;
     }
 
-    char value_buf[65536];
+    // 先用空缓冲区绑定，获取实际长度后再二次读取，避免固定 64KB 截断大值
     unsigned long value_len = 0;
+    my_bool is_null = 0;
     MYSQL_BIND result;
     std::memset(&result, 0, sizeof(result));
-    result.buffer_type = MYSQL_TYPE_STRING;
-    result.buffer = value_buf;
-    result.buffer_length = sizeof(value_buf);
-    result.length = &value_len;
+    result.buffer_type   = MYSQL_TYPE_STRING;
+    result.buffer        = nullptr;
+    result.buffer_length = 0;
+    result.length        = &value_len;
+    result.is_null       = &is_null;
     mysql_stmt_bind_result(stmt, &result);
 
+    int fetch_rc = mysql_stmt_fetch(stmt);
     StorageResult ret;
-    if (mysql_stmt_fetch(stmt) == 0) {
-        ret = StorageResult::success(std::string(value_buf, value_len));
+    if (fetch_rc == 0 || fetch_rc == MYSQL_DATA_TRUNCATED) {
+        if (is_null) {
+            ret = StorageResult::success("");
+        } else {
+            std::string buf(value_len, '\0');
+            result.buffer        = &buf[0];
+            result.buffer_length = value_len;
+            mysql_stmt_fetch_column(stmt, &result, 0, 0);
+            ret = StorageResult::success(buf);
+        }
     } else {
         ret = StorageResult::failure("key not found");
     }
@@ -243,6 +254,77 @@ bool MysqlStorage::exists(const std::string& key) {
 #else
     (void)key;
     return false;
+#endif
+}
+
+std::vector<std::string> MysqlStorage::keys(const std::string& prefix) {
+#if defined(CHWELL_USE_MYSQL)
+    if (!conn_) return {};
+
+    std::string table = "kv";
+    auto it = config_.extra.find("table");
+    if (it != config_.extra.end()) table = it->second;
+
+    MYSQL* mysql = static_cast<MYSQL*>(conn_);
+    MYSQL_STMT* stmt = mysql_stmt_init(mysql);
+    if (!stmt) return {};
+
+    std::string sql = "SELECT k FROM `" + table +
+                      "` WHERE (expire_at=0 OR expire_at>UNIX_TIMESTAMP())";
+    bool has_prefix = !prefix.empty();
+    if (has_prefix) {
+        sql += " AND k LIKE ?";
+    }
+
+    if (mysql_stmt_prepare(stmt, sql.c_str(), static_cast<unsigned long>(sql.size())) != 0) {
+        mysql_stmt_close(stmt);
+        return {};
+    }
+
+    // 构造 LIKE 参数：prefix + '%'，并转义 MySQL LIKE 通配符
+    std::string like_pat;
+    if (has_prefix) {
+        like_pat.reserve(prefix.size() + 4);
+        for (unsigned char c : prefix) {
+            if (c == '%' || c == '_' || c == '\\') like_pat += '\\';
+            like_pat += static_cast<char>(c);
+        }
+        like_pat += '%';
+
+        MYSQL_BIND param;
+        std::memset(&param, 0, sizeof(param));
+        unsigned long pat_len = static_cast<unsigned long>(like_pat.size());
+        param.buffer_type   = MYSQL_TYPE_STRING;
+        param.buffer        = const_cast<char*>(like_pat.data());
+        param.buffer_length = pat_len;
+        param.length        = &pat_len;
+        mysql_stmt_bind_param(stmt, &param);
+    }
+
+    if (mysql_stmt_execute(stmt) != 0) {
+        mysql_stmt_close(stmt);
+        return {};
+    }
+
+    unsigned long key_len = 0;
+    char key_buf[512];
+    MYSQL_BIND res;
+    std::memset(&res, 0, sizeof(res));
+    res.buffer_type   = MYSQL_TYPE_STRING;
+    res.buffer        = key_buf;
+    res.buffer_length = sizeof(key_buf);
+    res.length        = &key_len;
+    mysql_stmt_bind_result(stmt, &res);
+
+    std::vector<std::string> result;
+    while (mysql_stmt_fetch(stmt) == 0) {
+        result.emplace_back(key_buf, key_len);
+    }
+    mysql_stmt_close(stmt);
+    return result;
+#else
+    (void)prefix;
+    return {};
 #endif
 }
 

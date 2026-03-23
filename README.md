@@ -234,16 +234,50 @@ public:
 
 ### 存储层 (`chwell/storage`)
 
+**同步接口：**
+
 ```cpp
 // 从 YAML 配置创建存储实例（type: memory | mysql | mongodb）
-auto store = storage::create_storage_from_yaml("config/storage.yaml");
+auto store = storage::StorageFactory::create_from_yaml("config/storage.yaml");
 store->put("player:123", data);
-auto [ok, val] = store->get("player:123");
+auto r = store->get("player:123");  // r.ok, r.value
 
 // ORM 仓储
-storage::Repository<Player> repo(store);
+storage::orm::Repository<Player> repo(store.get(), "players");
 repo.save(player);
-auto p = repo.find_by_id("player123");
+auto p = repo.find("player123");    // std::unique_ptr<Player>
+auto all = repo.find_all();         // std::vector<std::unique_ptr<Player>>
+```
+
+**异步接口（`chwell/storage/async_storage_adapter.h`）：**
+
+`AsyncStorageAdapter` 包装任意 `StorageInterface`，内置线程池，提供 Future 和 Callback 两种风格：
+
+```cpp
+#include "chwell/storage/async_storage_adapter.h"
+
+storage::MemoryStorage mem;
+storage::AsyncStorageAdapter async_store(&mem, /*num_threads=*/4);
+
+// Future 风格
+auto f = async_store.async_put("key", "value");
+f.get();  // 等待完成
+
+auto f_get = async_store.async_get("key");
+auto result = f_get.get();   // result.ok, result.value
+
+// 批量操作
+auto f_mget = async_store.async_mget({"k1", "k2", "k3"});
+auto results = f_mget.get(); // std::vector<StorageResult>
+
+// Callback 风格
+async_store.async_get("key", [](storage::StorageResult r) {
+    if (r.ok) { /* 使用 r.value */ }
+});
+
+async_store.async_exists("key", [](bool exists) {
+    // 处理结果
+});
 ```
 
 ### 集群与 RPC (`chwell/cluster`, `chwell/rpc`)
@@ -570,6 +604,7 @@ cd ChwellBenchmark/build
 | `test_player_move.cpp` | 玩家移动同步 |
 | `test_udp_socket.cpp` | UDP Socket 创建 / 绑定 / 发送接收 |
 | `test_orm_repository.cpp` | ORM 仓储 CRUD |
+| `test_storage.cpp` | Document 序列化、MemoryStorage TTL、批量操作、StorageFactory、StorageComponent nullptr guard、AsyncStorageAdapter（Future/Callback/并发）|
 | `test_redis_client.cpp` | Redis 客户端（需本地 Redis）|
 | `test_gateway_multinode.cpp` | 多节点注册 / 服务发现 / 分布式锁 |
 
@@ -702,12 +737,13 @@ ChwellCore/
 - AOI（格子 / 十字链表）+ SLG 模块
 - Benchmark 框架（含 tcp / memory / loadbalance / protocol 基准全实现）
 - H5 对战 Demo（完整前后端）
-- 单元测试全覆盖（212 个测试用例）
+- 存储模块全面整治（MySQL 大值修复、MySQL/MongoDB keys() 修复、MongoDB 全局 init 修复）
+- 异步存储接口（`AsyncStorageInterface` + `AsyncStorageAdapter`，Future + Callback 两套 API）
+- 单元测试全覆盖（258 个测试用例）
 
 ### 规划中
 
 - 结构化日志（spdlog 集成选项）
-- 异步存储接口
 - 更多游戏组件（好友、公会、排行榜）
 - 热更新支持
 - 更多集成测试场景

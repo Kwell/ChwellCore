@@ -6,10 +6,36 @@
 #include <bson/bson.h>
 #include <chrono>
 #include <cstring>
+#include <mutex>
+#include <atomic>
+#include <cstdlib>
 #endif
 
 namespace chwell {
 namespace storage {
+
+#if defined(CHWELL_USE_MONGODB)
+// mongoc_init/cleanup 必须在整个进程生命周期内各调用一次。
+// 用引用计数保证：第一个实例 connect 时 init，所有实例 disconnect 后 cleanup（通过 atexit）。
+namespace {
+std::mutex  g_mongoc_mutex;
+std::atomic<int> g_mongoc_refcount{0};
+
+void ensure_mongoc_init() {
+    std::lock_guard<std::mutex> lk(g_mongoc_mutex);
+    if (g_mongoc_refcount.fetch_add(1) == 0) {
+        mongoc_init();
+        // 进程退出时执行一次 cleanup
+        std::atexit([]() { mongoc_cleanup(); });
+    }
+}
+
+void release_mongoc_ref() {
+    // 引用计数递减；cleanup 由 atexit 负责，此处不再主动调用
+    g_mongoc_refcount.fetch_sub(1);
+}
+}  // namespace
+#endif
 
 MongodbStorage::MongodbStorage(const StorageConfig& config) : config_(config) {}
 
@@ -19,7 +45,7 @@ MongodbStorage::~MongodbStorage() {
 
 bool MongodbStorage::connect() {
 #if defined(CHWELL_USE_MONGODB)
-    mongoc_init();
+    ensure_mongoc_init();
 
     std::string uri_str = "mongodb://127.0.0.1:27017";
     auto it = config_.extra.find("uri");
@@ -35,7 +61,7 @@ bool MongodbStorage::connect() {
     if (!client) {
         CHWELL_LOG_ERROR("MongodbStorage: connect failed: " +
                                        std::string(error.message));
-        mongoc_cleanup();
+        release_mongoc_ref();
         return false;
     }
 
@@ -70,7 +96,7 @@ void MongodbStorage::disconnect() {
     if (client_) {
         mongoc_client_destroy(static_cast<mongoc_client_t*>(client_));
         client_ = nullptr;
-        mongoc_cleanup();
+        release_mongoc_ref();
     }
 #endif
 }
@@ -204,8 +230,18 @@ std::vector<std::string> MongodbStorage::keys(const std::string& prefix) {
     mongoc_collection_t* coll = static_cast<mongoc_collection_t*>(collection_);
     bson_t* query = bson_new();
     if (!prefix.empty()) {
-        bson_t regex;
-        std::string pattern = "^" + prefix;
+        // 转义正则特殊字符，确保 prefix 作为字面量匹配
+        std::string escaped;
+        escaped.reserve(prefix.size() * 2 + 1);
+        for (unsigned char c : prefix) {
+            if (c == '.' || c == '*' || c == '+' || c == '?' || c == '(' ||
+                c == ')' || c == '[' || c == ']' || c == '{' || c == '}' ||
+                c == '^' || c == '$' || c == '|' || c == '\\') {
+                escaped += '\\';
+            }
+            escaped += static_cast<char>(c);
+        }
+        std::string pattern = "^" + escaped;
         BSON_APPEND_REGEX(query, "_id", pattern.c_str(), "");
     }
 

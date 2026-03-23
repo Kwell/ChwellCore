@@ -122,6 +122,7 @@ add_library(chwell_core
     src/storage/storage_component.cpp
     src/storage/storage_config_loader.cpp
     src/storage/orm/document.cpp
+    src/storage/async_storage_adapter.cpp
     src/aoi/aoi.cpp
     src/task/task_queue.cpp
     src/redis/redis_client.cpp
@@ -222,6 +223,7 @@ if (CHWELL_BUILD_TESTS)
             tests/test_protocol_parser.cpp
             tests/test_protocol_router.cpp
             tests/test_orm_repository.cpp
+            tests/test_storage.cpp
             tests/test_session_manager.cpp
             tests/test_timer_wheel.cpp
             tests/test_aoi.cpp
@@ -244,6 +246,12 @@ if (CHWELL_BUILD_TESTS)
             tests/test_udp_socket.cpp
         )
         target_link_libraries(chwell_core_tests PRIVATE chwell_core ${CHWELL_GTEST_LIB})
+        target_compile_definitions(chwell_core_tests PRIVATE
+            $<$<BOOL:${CHWELL_USE_YAML}>:CHWELL_USE_YAML>
+            $<$<BOOL:${CHWELL_USE_MYSQL}>:CHWELL_USE_MYSQL>
+            $<$<BOOL:${CHWELL_USE_MONGODB}>:CHWELL_USE_MONGODB>
+            $<$<BOOL:${CHWELL_USE_OPENSSL}>:CHWELL_USE_OPENSSL>
+        )
         add_test(NAME chwell_core_tests COMMAND chwell_core_tests)
 
         # 集成测试
