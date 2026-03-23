@@ -4,6 +4,9 @@
 #include "chwell/protocol/parser.h"
 #include "chwell/service/protocol_router.h"
 #include "chwell/net/tcp_connection.h"
+#include "chwell/loadbalance/load_balancer.h"
+#include "chwell/loadbalance/consistent_hash.h"
+#include "chwell/discovery/service_discovery.h"
 
 #include <algorithm>
 #include <random>
@@ -11,6 +14,9 @@
 #include <iostream>
 #include <iomanip>
 #include <fstream>
+#include <map>
+#include <sys/socket.h>
+#include <unistd.h>
 
 namespace chwell {
 namespace benchmark {
@@ -228,18 +234,133 @@ void BenchmarkSuite::print_results() const {
 // 具体 Benchmarks 实现
 // ============================================
 
+namespace tcp_bench {
+
+void benchmark_tcp_connect() {
+    int sv[2];
+    if (::socketpair(AF_UNIX, SOCK_STREAM, 0, sv) < 0) {
+        CHWELL_LOG_ERROR("benchmark_tcp_connect: socketpair failed");
+        return;
+    }
+    ::close(sv[0]);
+    ::close(sv[1]);
+}
+
+void benchmark_tcp_send_receive() {
+    int sv[2];
+    if (::socketpair(AF_UNIX, SOCK_STREAM, 0, sv) < 0) {
+        CHWELL_LOG_ERROR("benchmark_tcp_send_receive: socketpair failed");
+        return;
+    }
+    const char msg[] = "ping";
+    char buf[8];
+    ::send(sv[0], msg, sizeof(msg) - 1, 0);
+    ::recv(sv[1], buf, sizeof(buf), MSG_DONTWAIT);
+    ::close(sv[0]);
+    ::close(sv[1]);
+}
+
+void benchmark_concurrent_connections(int num_connections) {
+    std::vector<int> fds;
+    fds.reserve(num_connections * 2);
+    for (int i = 0; i < num_connections; ++i) {
+        int sv[2];
+        if (::socketpair(AF_UNIX, SOCK_STREAM, 0, sv) < 0) break;
+        fds.push_back(sv[0]);
+        fds.push_back(sv[1]);
+    }
+    for (int fd : fds) ::close(fd);
+}
+
+} // namespace tcp_bench
+
+namespace memory_bench {
+
+void benchmark_vector_alloc(size_t size, size_t count) {
+    std::vector<int> v;
+    v.reserve(size);
+    for (size_t i = 0; i < count; ++i) {
+        v.push_back(static_cast<int>(i));
+        if (v.size() >= size) v.clear();
+    }
+    volatile size_t s = v.size();
+    (void)s;
+}
+
+void benchmark_map_insert(size_t count) {
+    std::map<int, int> m;
+    for (size_t i = 0; i < count; ++i) {
+        m[static_cast<int>(i)] = static_cast<int>(i);
+    }
+    volatile size_t s = m.size();
+    (void)s;
+}
+
+void benchmark_string_concat(size_t length) {
+    std::string result;
+    result.reserve(length);
+    for (size_t i = 0; i < length; ++i) {
+        result += static_cast<char>('a' + (i % 26));
+    }
+    volatile size_t s = result.size();
+    (void)s;
+}
+
+} // namespace memory_bench
+
 namespace loadbalance_bench {
 
 void benchmark_round_robin_select(size_t iterations) {
-    // TODO: 实现轮询选择基准测试
+    auto discovery = std::make_shared<discovery::MemoryServiceDiscovery>(30000, 0);
+    for (int i = 0; i < 5; ++i) {
+        discovery::ServiceInstance inst;
+        inst.service_id  = "bench_svc";
+        inst.instance_id = "inst_" + std::to_string(i);
+        inst.host        = "127.0.0.1";
+        inst.port        = static_cast<uint16_t>(8000 + i);
+        inst.is_alive    = true;
+        discovery->register_service(inst);
+    }
+    loadbalance::RoundRobinLoadBalancer lb(discovery);
+    for (size_t i = 0; i < iterations; ++i) {
+        discovery::ServiceInstance out;
+        volatile bool ok = lb.select_instance("bench_svc", out);
+        (void)ok;
+    }
 }
 
 void benchmark_consistent_hash_select(size_t iterations) {
-    // TODO: 实现一致性哈希选择基准测试
+    loadbalance::ConsistentHashLoadBalancer lb(160);
+    for (int i = 0; i < 5; ++i) {
+        lb.add_instance("bench_svc", "inst_" + std::to_string(i), 1);
+    }
+    for (size_t i = 0; i < iterations; ++i) {
+        std::string out_id;
+        volatile bool ok = lb.select_instance("bench_svc", "key_" + std::to_string(i), out_id);
+        (void)ok;
+    }
 }
 
 void benchmark_weighted_round_robin_select(size_t iterations) {
-    // TODO: 实现加权轮询选择基准测试
+    auto discovery = std::make_shared<discovery::MemoryServiceDiscovery>(30000, 0);
+    for (int i = 0; i < 5; ++i) {
+        discovery::ServiceInstance inst;
+        inst.service_id  = "bench_svc";
+        inst.instance_id = "inst_" + std::to_string(i);
+        inst.host        = "127.0.0.1";
+        inst.port        = static_cast<uint16_t>(8000 + i);
+        inst.is_alive    = true;
+        discovery->register_service(inst);
+    }
+    loadbalance::WeightedRoundRobinLoadBalancer lb(discovery);
+    for (int i = 0; i < 5; ++i) {
+        lb.set_weight("inst_" + std::to_string(i), i + 1);
+    }
+    for (size_t i = 0; i < iterations; ++i) {
+        discovery::ServiceInstance out;
+        volatile bool ok = lb.select_instance("bench_svc", out);
+        (void)ok;
+    }
 }
 
 } // namespace loadbalance_bench
@@ -288,30 +409,25 @@ void benchmark_protocol_parser_parse(size_t iterations, size_t body_size) {
 }
 
 // 协议路由器分发基准测试
+// iterations：每次函数调用中执行的分发次数（测量路由查找 + handler 调用延迟）
+// handlers_count：注册的 handler 数量（衡量哈希表规模对查找的影响）
 void benchmark_protocol_router_dispatch(size_t iterations, size_t handlers_count) {
-    // 创建虚拟路由器
     service::ProtocolRouterComponent router;
 
-    // 注册多个处理器
     for (size_t i = 0; i < handlers_count; ++i) {
-        router.register_handler(1000 + i, [](const net::TcpConnectionPtr&, const protocol::Message&) {
-            // 空处理器
-        });
+        router.register_handler(static_cast<std::uint16_t>(1000 + i),
+            [](const net::TcpConnectionPtr&, const protocol::Message&) {});
     }
 
-    // 创建虚拟消息
-    std::vector<protocol::Message> messages;
-    for (size_t i = 0; i < handlers_count; ++i) {
-        messages.emplace_back(1000 + i, std::string(100, 'x'));
-    }
+    // 序列化一条消息（循环分发到第一个注册的 handler）
+    protocol::Message msg(static_cast<std::uint16_t>(1000), std::string(100, 'x'));
+    std::vector<char> raw = protocol::serialize(msg);
 
-    // 模拟分发
+    // 使用空连接作为 key（不解引用）
+    net::TcpConnectionPtr bench_conn;
+
     for (size_t i = 0; i < iterations; ++i) {
-        for (const auto& msg : messages) {
-            // 这里只是模拟，实际需要通过 on_message 调用
-            volatile std::uint16_t cmd = msg.cmd;
-            (void)cmd;  // 防止被优化掉
-        }
+        router.on_message(bench_conn, raw);
     }
 }
 

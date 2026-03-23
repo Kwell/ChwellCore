@@ -121,6 +121,12 @@ public:
     // 手动恢复
     void recover();
 
+    // 记录一次成功（供 execute_with_result 调用）
+    void record_success();
+
+    // 记录一次失败（供 execute_with_result 调用）
+    void record_failure(const std::string& reason);
+
 private:
     // 获取当前时间戳（毫秒）
     std::uint64_t current_timestamp_ms() const {
@@ -174,10 +180,10 @@ CircuitBreakerResult CircuitBreaker::execute_with_result(std::function<T()> func
         result.success = true;
         result.state = get_state();
 
-        // 根据熔断器类型调用相应方法
         DefaultCircuitBreaker* cb = dynamic_cast<DefaultCircuitBreaker*>(this);
         if (cb) {
-            // 成功调用
+            cb->record_success();
+            result.state = get_state();
         }
 
         return result;
@@ -190,10 +196,10 @@ CircuitBreakerResult CircuitBreaker::execute_with_result(std::function<T()> func
         result.success = false;
         result.state = get_state();
 
-        // 根据熔断器类型调用相应方法
         DefaultCircuitBreaker* cb = dynamic_cast<DefaultCircuitBreaker*>(this);
         if (cb) {
-            // 失败调用
+            cb->record_failure(result.reason);
+            result.state = get_state();
         }
 
         return result;

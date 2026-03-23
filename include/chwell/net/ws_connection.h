@@ -24,6 +24,7 @@ public:
 
     void start();
     void send_text(const std::string& text);
+    void send_binary(const std::vector<char>& data);
     void close();
 
     void set_message_callback(const WsMessageCallback& cb) { message_cb_ = cb; }

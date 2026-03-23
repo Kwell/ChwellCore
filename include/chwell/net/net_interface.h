@@ -8,21 +8,22 @@
 namespace chwell {
 namespace net {
 
-// 通用连接接口：为后续 TCP / UDP / WS 等多种实现提供统一抽象
-class IConnection {
+// 通用连接接口：为 TCP / UDP / WS 等多种传输提供统一抽象
+// 注意：此接口不同于 connection_adapter.h 中的 IConnection，以避免 ODR 冲突
+class INetConnection {
 public:
-    virtual ~IConnection() {}
+    virtual ~INetConnection() {}
 
-    // 发送原始字节数据（具体实现可选择可靠/不可靠、文本/二进制等）
+    // 发送原始字节数据
     virtual void send(const std::vector<char>& data) = 0;
 
     // 关闭连接
     virtual void close() = 0;
 };
 
-typedef std::shared_ptr<IConnection> IConnectionPtr;
-typedef std::function<void(const IConnectionPtr&, const std::vector<char>&)> INetMessageCallback;
-typedef std::function<void(const IConnectionPtr&)> INetConnectionCallback;
+typedef std::shared_ptr<INetConnection> INetConnectionPtr;
+typedef std::function<void(const INetConnectionPtr&, const std::vector<char>&)> INetMessageCallback;
+typedef std::function<void(const INetConnectionPtr&)> INetConnectionCallback;
 
 // 通用服务器接口：可以由 TCP/WS 等实现
 class IServer {

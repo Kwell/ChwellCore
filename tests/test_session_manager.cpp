@@ -12,21 +12,22 @@ using namespace chwell;
 
 namespace {
 
-// 使用静态对象作为虚拟连接的地址，避免使用无效指针
+// 使用 aliasing 构造函数创建虚拟连接：避免触发 enable_shared_from_this 初始化
+// aliasing ctor 不会访问 T 对象内部，因此对 reinterpret_cast 指针是安全的
 static int dummy_conn1_obj;
 static int dummy_conn2_obj;
 
 net::TcpConnectionPtr make_dummy_conn(std::uintptr_t tag) {
-    // 使用静态对象的地址作为指针值
-    void* ptr = (tag == 1) ? &dummy_conn1_obj : &dummy_conn2_obj;
-    return net::TcpConnectionPtr(
-        reinterpret_cast<net::TcpConnection*>(ptr),
-        [](net::TcpConnection*) {});
+    // guard 负责控制生命周期，ptr 仅作为 map key 使用（永不解引用）
+    auto guard = std::make_shared<int>(static_cast<int>(tag));
+    void* ptr = (tag == 1) ? static_cast<void*>(&dummy_conn1_obj)
+                            : static_cast<void*>(&dummy_conn2_obj);
+    return net::TcpConnectionPtr(guard, reinterpret_cast<net::TcpConnection*>(ptr));
 }
 
 }  // namespace
 
-TEST(SessionManagerTest, DISABLED_LoginLogoutAndQueryInterfaces) {
+TEST(SessionManagerTest, LoginLogoutAndQueryInterfaces) {
     service::SessionManager mgr;
 
     auto conn = make_dummy_conn(1);
@@ -43,7 +44,7 @@ TEST(SessionManagerTest, DISABLED_LoginLogoutAndQueryInterfaces) {
     EXPECT_TRUE(mgr.get_player_id(conn).empty());
 }
 
-TEST(SessionManagerTest, DISABLED_JoinLeaveRoomAndGetPlayersInRoom) {
+TEST(SessionManagerTest, JoinLeaveRoomAndGetPlayersInRoom) {
     service::SessionManager mgr;
 
     auto conn1 = make_dummy_conn(1);

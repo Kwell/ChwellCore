@@ -46,6 +46,8 @@ private:
     uint16_t local_port_;
     MessageCallback msg_cb_;
     CloseCallback close_cb_;
+
+    friend bool bind_udp_port(UdpSocketPtr& socket, const std::string& host, uint16_t port);
 };
 
 // 创建 UDP socket

@@ -53,51 +53,53 @@ TEST(CircuitBreakerTest, BasicExecuteFailure) {
     EXPECT_EQ(0, cb.get_success_count());
 }
 
-// TEST(CircuitBreakerTest, TripOnFailureCount) {
-//     circuitbreaker::CircuitBreakerConfig config;
-//     config.failure_threshold = 2;
-//     config.failure_rate_threshold = 0.5;
+TEST(CircuitBreakerTest, TripOnFailureCount) {
+    circuitbreaker::CircuitBreakerConfig config;
+    config.trip_strategy = circuitbreaker::TripStrategy::FAILURE_COUNT;
+    config.failure_threshold = 2;
+    config.failure_rate_threshold = 0.5;
 
-//     circuitbreaker::DefaultCircuitBreaker cb("test_breaker", config);
+    circuitbreaker::DefaultCircuitBreaker cb("test_breaker", config);
 
-//     auto fail_func = []() {
-//         throw std::runtime_error("Simulated failure");
-//     };
+    auto fail_func = []() {
+        throw std::runtime_error("Simulated failure");
+    };
 
-//     // 第一次失败
-//     cb.execute(fail_func);
-//     EXPECT_EQ(circuitbreaker::CircuitState::CLOSED, cb.get_state());
+    // 第一次失败，不应触发熔断（失败次数 1 < threshold 2）
+    cb.execute(fail_func);
+    EXPECT_EQ(circuitbreaker::CircuitState::CLOSED, cb.get_state());
 
-//     // 第二次失败，应该熔断
-//     cb.execute(fail_func);
-//     EXPECT_EQ(circuitbreaker::CircuitState::OPEN, cb.get_state());
-//     EXPECT_EQ(2, cb.get_failure_count());
-// }
+    // 第二次失败，应该熔断（失败次数 2 >= threshold 2）
+    cb.execute(fail_func);
+    EXPECT_EQ(circuitbreaker::CircuitState::OPEN, cb.get_state());
+    EXPECT_EQ(2u, cb.get_failure_count());
+}
 
-// TEST(CircuitBreakerTest, TripOnFailureRate) {
-//     circuitbreaker::CircuitBreakerConfig config;
-//     config.trip_strategy = circuitbreaker::TripStrategy::FAILURE_RATE;
-//     config.failure_threshold = 10;
-//     config.failure_rate_threshold = 0.5;
+TEST(CircuitBreakerTest, TripOnFailureRate) {
+    circuitbreaker::CircuitBreakerConfig config;
+    config.trip_strategy = circuitbreaker::TripStrategy::FAILURE_RATE;
+    // failure_threshold 作为最小样本数：至少 3 次调用才开始按失败率判断
+    config.failure_threshold = 3;
+    config.failure_rate_threshold = 0.5;
 
-//     circuitbreaker::DefaultCircuitBreaker cb("test_breaker", config);
+    circuitbreaker::DefaultCircuitBreaker cb("test_breaker", config);
 
-//     auto fail_func = []() {
-//         throw std::runtime_error("Simulated failure");
-//     };
+    auto fail_func = []() {
+        throw std::runtime_error("Simulated failure");
+    };
 
-//     auto success_func = []() {
-//         // do nothing
-//     };
+    // 前 2 次失败：样本数 2 < threshold=3，即使失败率 100%，不应熔断
+    cb.execute(fail_func);
+    EXPECT_EQ(circuitbreaker::CircuitState::CLOSED, cb.get_state());
+    cb.execute(fail_func);
+    EXPECT_EQ(circuitbreaker::CircuitState::CLOSED, cb.get_state());
 
-//     // 失败3次，成功1次，失败率 75% > 50%，应该熔断
-//     cb.execute(fail_func);
-//     cb.execute(fail_func);
-//     cb.execute(fail_func);
-//     cb.execute(success_func);
-
-//     EXPECT_EQ(0.75, cb.get_failure_rate());
-// }
+    // 第 3 次失败：total=3 >= threshold=3，失败率 100% >= 50% → 熔断
+    cb.execute(fail_func);
+    EXPECT_EQ(circuitbreaker::CircuitState::OPEN, cb.get_state());
+    EXPECT_DOUBLE_EQ(1.0, cb.get_failure_rate());
+    EXPECT_EQ(3u, cb.get_failure_count());
+}
 
 TEST(CircuitBreakerTest, OpenStateBlocksRequests) {
     circuitbreaker::CircuitBreakerConfig config;
@@ -124,33 +126,33 @@ TEST(CircuitBreakerTest, OpenStateBlocksRequests) {
     EXPECT_FALSE(result.reason.empty());
 }
 
-// TEST(CircuitBreakerTest, ResetFromOpen) {
-//     circuitbreaker::CircuitBreakerConfig config;
-//     config.failure_threshold = 2;
-//     config.failure_rate_threshold = 0.5;
-//     config.timeout_ms = 1000; // 1秒超时
+TEST(CircuitBreakerTest, ResetFromOpen) {
+    circuitbreaker::CircuitBreakerConfig config;
+    config.trip_strategy = circuitbreaker::TripStrategy::FAILURE_COUNT;
+    config.failure_threshold = 2;
+    config.failure_rate_threshold = 0.5;
+    config.timeout_ms = 300;
 
-//     circuitbreaker::DefaultCircuitBreaker cb("test_breaker", config);
+    circuitbreaker::DefaultCircuitBreaker cb("test_breaker", config);
 
-//     auto fail_func = []() {
-//         throw std::runtime_error("Simulated failure");
-//     };
+    auto fail_func = []() {
+        throw std::runtime_error("Simulated failure");
+    };
 
-//     // 触发熔断
-//     cb.execute(fail_func);
-//     cb.execute(fail_func);
+    // 触发熔断
+    cb.execute(fail_func);
+    cb.execute(fail_func);
+    EXPECT_EQ(circuitbreaker::CircuitState::OPEN, cb.get_state());
 
-//     EXPECT_EQ(circuitbreaker::CircuitState::OPEN, cb.get_state());
+    // 等待超时后手动恢复（simulate HALF_OPEN -> CLOSED via successful call）
+    std::this_thread::sleep_for(std::chrono::milliseconds(400));
 
-//     // 等待超时
-//     std::this_thread::sleep_for(std::chrono::milliseconds(1100));
-
-//     // 尝试调用，应该进入 HALF_OPEN 状态
-//     auto result = cb.execute([]() {});
-
-//     EXPECT_TRUE(result.success);
-//     EXPECT_EQ(circuitbreaker::CircuitState::CLOSED, result.state);
-// }
+    // 手动恢复到 CLOSED，再次执行应该成功
+    cb.recover();
+    auto result = cb.execute([]() {});
+    EXPECT_TRUE(result.success);
+    EXPECT_EQ(circuitbreaker::CircuitState::CLOSED, cb.get_state());
+}
 
 TEST(CircuitBreakerTest, ExecuteWithResult) {
     circuitbreaker::CircuitBreakerConfig config;
@@ -248,30 +250,29 @@ TEST(CircuitBreakerTest, ManualRecover) {
     EXPECT_EQ(circuitbreaker::CircuitState::CLOSED, result.state);
 }
 
-// TEST(CircuitBreakerTest, FailureRateCalculation) {
-//     circuitbreaker::CircuitBreakerConfig config;
-//     config.failure_threshold = 10;
-//     config.failure_rate_threshold = 0.5;
+TEST(CircuitBreakerTest, FailureRateCalculation) {
+    circuitbreaker::CircuitBreakerConfig config;
+    config.trip_strategy = circuitbreaker::TripStrategy::FAILURE_COUNT;
+    config.failure_threshold = 10;
+    config.failure_rate_threshold = 0.5;
 
-//     circuitbreaker::DefaultCircuitBreaker cb("test_breaker", config);
+    circuitbreaker::DefaultCircuitBreaker cb("test_breaker", config);
 
-//     auto fail_func = []() {
-//         throw std::runtime_error("Simulated failure");
-//     };
+    auto fail_func = []() {
+        throw std::runtime_error("Simulated failure");
+    };
 
-//     auto success_func = []() {
-//         // do nothing
-//     };
+    auto success_func = []() {};
 
-//     // 3次失败，1次成功，失败率 75%
-//     cb.execute(fail_func);
-//     cb.execute(fail_func);
-//     cb.execute(fail_func);
-//     cb.execute(success_func);
+    // 3次失败，1次成功，失败率 75%
+    cb.execute(fail_func);
+    cb.execute(fail_func);
+    cb.execute(fail_func);
+    cb.execute(success_func);
 
-//     EXPECT_EQ(0.75, cb.get_failure_rate());
-//     EXPECT_EQ(3, cb.get_failure_count());
-//     EXPECT_EQ(1, cb.get_success_count());
-// }
+    EXPECT_DOUBLE_EQ(0.75, cb.get_failure_rate());
+    EXPECT_EQ(3u, cb.get_failure_count());
+    EXPECT_EQ(1u, cb.get_success_count());
+}
 
 } // namespace

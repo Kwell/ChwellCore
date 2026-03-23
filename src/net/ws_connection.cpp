@@ -51,6 +51,22 @@ void WsConnection::send_text(const std::string& text) {
     }
 }
 
+void WsConnection::send_binary(const std::vector<char>& data) {
+    std::lock_guard<std::mutex> lock(send_mutex_);
+    if (closed_ || !socket_.is_open()) return;
+    const char* ptr = data.data();
+    std::size_t len = data.size();
+    while (len > 0) {
+        ssize_t n = socket_.write(ptr, len);
+        if (n <= 0) {
+            CHWELL_LOG_WARN("WsConnection send_binary failed: " + std::string(strerror(errno)));
+            return;
+        }
+        ptr += n;
+        len -= static_cast<std::size_t>(n);
+    }
+}
+
 void WsConnection::close() {
     closed_ = true;
     ErrorCode ec;

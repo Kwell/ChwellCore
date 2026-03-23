@@ -10,18 +10,17 @@ using namespace chwell;
 
 namespace {
 
-// 使用静态对象作为虚拟连接的地址，避免使用无效指针
+// 使用 aliasing 构造函数创建虚拟连接：避免触发 enable_shared_from_this 初始化
 static int dummy_conn1_obj;
 static int dummy_conn2_obj;
 static int dummy_conn3_obj;
 
-// 创建虚拟连接
 net::TcpConnectionPtr make_dummy_conn(std::uintptr_t tag) {
-    void* ptr = (tag == 1) ? &dummy_conn1_obj :
-                 (tag == 2) ? &dummy_conn2_obj : &dummy_conn3_obj;
-    return net::TcpConnectionPtr(
-        reinterpret_cast<net::TcpConnection*>(ptr),
-        [](net::TcpConnection*) {});
+    auto guard = std::make_shared<int>(static_cast<int>(tag));
+    void* ptr = (tag == 1) ? static_cast<void*>(&dummy_conn1_obj)
+              : (tag == 2) ? static_cast<void*>(&dummy_conn2_obj)
+                           : static_cast<void*>(&dummy_conn3_obj);
+    return net::TcpConnectionPtr(guard, reinterpret_cast<net::TcpConnection*>(ptr));
 }
 
 // ============================================
@@ -123,7 +122,7 @@ TEST(FrameSyncTest, FrameSyncRoomCreateDestroy) {
     EXPECT_FALSE(room.is_running());
 }
 
-TEST(FrameSyncTest, DISABLED_FrameSyncRoomJoinLeave) {
+TEST(FrameSyncTest, FrameSyncRoomJoinLeave) {
     sync::FrameSyncRoom room("test_room", 30);
 
     auto conn1 = make_dummy_conn(1);
@@ -157,7 +156,7 @@ TEST(FrameSyncTest, FrameSyncRoomAdvanceFrame) {
     EXPECT_EQ(3, room.current_frame());
 }
 
-TEST(FrameSyncTest, DISABLED_FrameSyncRoomSubmitAndGetInputs) {
+TEST(FrameSyncTest, FrameSyncRoomSubmitAndGetInputs) {
     sync::FrameSyncRoom room("test_room", 30);
 
     auto conn = make_dummy_conn(1);
@@ -177,7 +176,7 @@ TEST(FrameSyncTest, DISABLED_FrameSyncRoomSubmitAndGetInputs) {
     EXPECT_EQ(3, inputs[0].input_data.size());
 }
 
-TEST(FrameSyncTest, DISABLED_FrameSyncRoomMultipleInputs) {
+TEST(FrameSyncTest, FrameSyncRoomMultipleInputs) {
     sync::FrameSyncRoom room("test_room", 30);
 
     auto conn1 = make_dummy_conn(1);
@@ -226,7 +225,7 @@ TEST(FrameSyncTest, FrameSyncRoomSnapshotNotFound) {
     EXPECT_FALSE(found);
 }
 
-TEST(FrameSyncTest, DISABLED_FrameSyncRoomGetPlayerIds) {
+TEST(FrameSyncTest, FrameSyncRoomGetPlayerIds) {
     sync::FrameSyncRoom room("test_room", 30);
 
     auto conn1 = make_dummy_conn(1);
@@ -261,7 +260,7 @@ TEST(FrameSyncTest, FrameSyncRoomEmptyInputs) {
     EXPECT_EQ(0, inputs.size());
 }
 
-TEST(FrameSyncTest, DISABLED_FrameSyncRoomDifferentFrameInputs) {
+TEST(FrameSyncTest, FrameSyncRoomDifferentFrameInputs) {
     sync::FrameSyncRoom room("test_room", 30);
 
     auto conn = make_dummy_conn(1);
@@ -289,7 +288,7 @@ TEST(FrameSyncTest, DISABLED_FrameSyncRoomDifferentFrameInputs) {
     EXPECT_EQ(20, inputs[0].frame_id);
 }
 
-TEST(FrameSyncTest, DISABLED_FrameSyncRoomAllInputsReady) {
+TEST(FrameSyncTest, FrameSyncRoomAllInputsReady) {
     sync::FrameSyncRoom room("test_room", 30);
 
     auto conn1 = make_dummy_conn(1);
@@ -535,14 +534,14 @@ TEST(StateSyncTest, StateSyncRoomCreateSnapshot) {
     EXPECT_EQ(1710837600000ULL, snapshot.timestamp);
 }
 
-// TEST(StateSyncTest, DISABLED_StateSyncRoomSnapshotEmpty) {
-//     sync::StateSyncRoom room("test_room");
-//
-//     auto snapshot = room.create_snapshot("entity123");
-//     EXPECT_EQ("entity123", snapshot.entity_id);
-//     EXPECT_EQ(0, snapshot.states.size());
-//     // 不检查 timestamp，因为空实体的 timestamp 是未初始化的
-// }
+TEST(StateSyncTest, StateSyncRoomSnapshotEmpty) {
+    sync::StateSyncRoom room("test_room");
+
+    auto snapshot = room.create_snapshot("entity123");
+    EXPECT_EQ("entity123", snapshot.entity_id);
+    EXPECT_EQ(0u, snapshot.states.size());
+    // 不检查 timestamp，因为空实体的 timestamp 是未初始化的
+}
 
 TEST(StateSyncTest, StateSyncRoomBasicOperations) {
     sync::StateSyncRoom room("test_room");

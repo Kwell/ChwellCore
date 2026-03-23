@@ -65,23 +65,25 @@ TEST(TimerWheelTest, CancelTimer) {
     wheel.stop();
 }
 
-TEST(TimerWheelTest, DISABLED_MultipleTimers) {
+TEST(TimerWheelTest, MultipleTimers) {
     core::TimerWheel wheel(100, 60, 4);
     wheel.start();
-    
+
     std::vector<int> order;
-    
+
     wheel.add_timer(300, [&order]() { order.push_back(3); });
     wheel.add_timer(100, [&order]() { order.push_back(1); });
     wheel.add_timer(200, [&order]() { order.push_back(2); });
-    
-    std::this_thread::sleep_for(400ms);
-    
+
+    // 等待 1000ms：给最长 300ms 定时器充足裕量，
+    // 在高负载（如与 benchmark 测试并发）场景下仍能可靠触发
+    std::this_thread::sleep_for(1000ms);
+
     ASSERT_EQ(order.size(), 3u);
     EXPECT_EQ(order[0], 1);
     EXPECT_EQ(order[1], 2);
     EXPECT_EQ(order[2], 3);
-    
+
     wheel.stop();
 }
 

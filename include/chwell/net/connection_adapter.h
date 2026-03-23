@@ -74,11 +74,7 @@ public:
     }
 
     void send(const std::vector<char>& data) override {
-        // WebSocket 二进制帧
-        // 需要实现 WebSocket 帧格式
-        // 暂时转换为文本发送
-        std::string text(data.begin(), data.end());
-        conn_->send_text(text);
+        conn_->send_binary(data);
     }
 
     void send_text(const std::string& text) override {

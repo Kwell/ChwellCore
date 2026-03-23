@@ -98,6 +98,7 @@ add_library(chwell_core
     src/net/tcp_server.cpp
     src/net/tcp_connection.cpp
     src/net/udp_server.cpp
+    src/net/udp_socket.cpp
     src/net/ws_connection.cpp
     src/net/ws_server.cpp
     src/net/tls.cpp
@@ -240,6 +241,7 @@ if (CHWELL_BUILD_TESTS)
             tests/test_benchmark.cpp
             tests/test_rpc.cpp
             tests/test_gateway_multinode.cpp
+            tests/test_udp_socket.cpp
         )
         target_link_libraries(chwell_core_tests PRIVATE chwell_core ${CHWELL_GTEST_LIB})
         add_test(NAME chwell_core_tests COMMAND chwell_core_tests)

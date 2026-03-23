@@ -5,11 +5,11 @@
 namespace chwell {
 namespace net {
 
-// 连接接口：抽象所有连接类型的共同功能
-// 包括 TcpConnection 和 WsConnection
-class IConnection {
+// 基础连接接口：仅提供原生句柄与描述的最小抽象
+// 注意：功能更完整的接口请使用 connection_adapter.h 中的 IConnection
+class IBaseConnection {
 public:
-    virtual ~IConnection() = default;
+    virtual ~IBaseConnection() = default;
 
     // 获取原生句柄
     virtual int native_handle() const = 0;

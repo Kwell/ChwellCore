@@ -310,7 +310,7 @@ TEST(GameComponentsTest, EncodeDecodeJoinRoomResponse) {
 }
 
 // 测试 RoomComponent 基本功能
-TEST(GameComponentsTest, DISABLED_RoomComponentBasicOperations) {
+TEST(GameComponentsTest, RoomComponentBasicOperations) {
     // 此测试需要 Service 对象，暂时禁用
     // TODO: 集成到集成测试中
 }

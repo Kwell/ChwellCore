@@ -15,7 +15,7 @@ using namespace chwell;
 TEST(UdpSocketTest, CreateUdpSocket) {
     auto socket = net::create_udp_socket("127.0.0.1", 0);
     EXPECT_NE(nullptr, socket);
-    EXPECT_GE(0, socket->native_handle());
+    EXPECT_GE(socket->native_handle(), 0);
 }
 
 TEST(UdpSocketTest, BindPort) {
@@ -60,7 +60,7 @@ TEST(UdpSocketTest, MultipleSockets) {
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 }
 
-TEST(UdpSocketTest, DISABLED_SendReceive) {
+TEST(UdpSocketTest, SendReceive) {
     // 创建接收 socket
     auto recv_socket = net::create_udp_socket("127.0.0.1", 9900);
     ASSERT_NE(nullptr, recv_socket);

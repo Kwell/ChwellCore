@@ -95,6 +95,23 @@ double DefaultCircuitBreaker::get_failure_rate() const {
     return static_cast<double>(get_failure_count()) / static_cast<double>(total);
 }
 
+void DefaultCircuitBreaker::record_success() {
+    success_count_++;
+    if (state_.load(std::memory_order_relaxed) == CircuitState::HALF_OPEN) {
+        state_.store(CircuitState::CLOSED, std::memory_order_relaxed);
+        CHWELL_LOG_INFO("Circuit breaker " + name_ + " recovered to CLOSED state");
+    }
+}
+
+void DefaultCircuitBreaker::record_failure(const std::string& reason) {
+    failure_count_++;
+    last_failure_time_ms_.store(current_timestamp_ms(), std::memory_order_relaxed);
+    if (should_trip()) {
+        state_.store(CircuitState::OPEN, std::memory_order_relaxed);
+        CHWELL_LOG_WARN("Circuit breaker " + name_ + " tripped to OPEN state: " + reason);
+    }
+}
+
 void DefaultCircuitBreaker::trip() {
     state_.store(CircuitState::OPEN, std::memory_order_relaxed);
     last_failure_time_ms_.store(current_timestamp_ms(), std::memory_order_relaxed);
@@ -117,7 +134,8 @@ bool DefaultCircuitBreaker::should_trip() const {
             return failures >= config_.failure_threshold;
 
         case TripStrategy::FAILURE_RATE:
-            if (total == 0) {
+            // 至少需要 failure_threshold 个样本才能判断失败率
+            if (total < static_cast<uint64_t>(config_.failure_threshold)) {
                 return false;
             }
             return get_failure_rate() >= config_.failure_rate_threshold;
