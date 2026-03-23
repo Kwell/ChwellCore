@@ -222,13 +222,19 @@ make -j$(nproc)
 ### 事件总线 (`chwell/event`)
 - `EventBus` - 发布/订阅事件系统
 
-### 可靠性 (`chwell/reliability`)
-- `HeartbeatManager` - 心跳管理
-- `RateLimiter` - 令牌桶限流
-- `CircuitBreaker` - 熔断器
-- `Metrics` - 监控指标
-- `ServiceDiscovery` - 服务发现
-- `LoadBalancer` - 负载均衡
+### 服务发现与负载均衡 (`chwell/discovery`, `chwell/loadbalance`)
+- `MemoryServiceDiscovery` - 内存服务发现（含后台心跳过期清理线程）
+- `RoundRobinLoadBalancer` / `WeightedRoundRobinLoadBalancer` / `RandomLoadBalancer` - 负载均衡策略
+- `ConsistentHashLoadBalancer` - 虚拟节点一致性哈希
+
+### 可靠性 (`chwell/circuitbreaker`, `chwell/ratelimit`, `chwell/metrics`)
+- `DefaultCircuitBreaker` - 熔断器（失败次数/失败率策略，已与 RpcClient 集成）
+- `TokenBucketRateLimiter` / `LeakyBucketRateLimiter` / `FixedWindowRateLimiter` - 限流器
+- `Metrics` - Prometheus 监控指标
+
+### 分布式锁 (`chwell/redis`)
+- `DistributedLock` - 基于 Redis setnx+expire 的分布式锁，含自动续租和 fencing token
+- `DistributedLockGuard` - RAII 风格分布式锁守卫
 
 ## 游戏协议
 
@@ -506,24 +512,25 @@ ChwellCore/
 │   │   ├── mysql_storage.h   # MySQL存储
 │   │   ├── mongodb_storage.h # MongoDB存储
 │   │   └── repository.h      # ORM仓储
-│   ├── cluster/              # 集群
-│   │   ├── node.h            # 节点管理
-│   │   └── discovery.h       # 服务发现
+│   ├── cluster/              # 集群节点
+│   │   ├── node.h            # 节点（含心跳/生命周期管理）
+│   │   └── node_registry.h   # 静态节点注册表（YAML加载+一致性哈希选路）
 │   ├── rpc/                  # RPC
-│   │   ├── rpc_client.h      # RPC客户端
+│   │   ├── rpc_client.h      # RPC客户端（并发调用/request_id/call_sync/超时/熔断集成）
 │   │   └── rpc_server.h      # RPC服务端
 │   ├── gateway/              # 网关
-│   │   └── forwarder.h       # 消息转发
+│   │   └── gateway_forwarder.h # 消息转发（多后端一致性哈希选路）
 │   ├── redis/                # Redis
-│   │   └── redis_client.h    # Redis客户端
+│   │   ├── redis_client.h    # Redis客户端
+│   │   └── distributed_lock.h # 分布式锁（setnx+expire+续租+fencing token）
 │   ├── event/                # 事件总线
 │   │   └── event_bus.h       # 发布/订阅
-│   ├── reliability/          # 可靠性
-│   │   ├── rate_limiter.h    # 限流器
-│   │   ├── circuit_breaker.h # 熔断器
-│   │   ├── metrics.h         # 监控指标
-│   │   ├── discovery.h       # 服务发现
-│   │   └── load_balancer.h   # 负载均衡
+│   ├── discovery/            # 服务发现
+│   │   └── service_discovery.h # MemoryServiceDiscovery（含后台过期清理线程）
+│   ├── circuitbreaker/       # 熔断器
+│   │   └── circuit_breaker.h # DefaultCircuitBreaker（已与RpcClient集成）
+│   ├── ratelimit/            # 限流
+│   │   └── rate_limiter.h    # 令牌桶/漏桶/固定窗口限流器
 │   ├── benchmark/            # 性能测试
 │   │   └── benchmark.h       # Benchmark框架
 │   ├── http/                 # HTTP
@@ -533,9 +540,9 @@ ChwellCore/
 │   │   └── codec.h           # 编解码器
 │   ├── loadbalance/          # 负载均衡
 │   │   ├── load_balancer.h   # 负载均衡器
-│   │   └── consistent_hash.h # 一致性哈希
+│   │   └── consistent_hash.h # 一致性哈希（NodeRegistry复用此实现）
 │   └── metrics/              # 监控
-│       └── prometheus.h      # Prometheus指标
+│       └── prometheus_metrics.h # Prometheus指标
 ├── src/                      # 实现文件
 │   ├── core/
 │   ├── net/
@@ -554,7 +561,9 @@ ChwellCore/
 │   ├── gateway/
 │   ├── redis/
 │   ├── event/
-│   ├── reliability/
+│   ├── discovery/
+│   ├── circuitbreaker/
+│   ├── ratelimit/
 │   ├── benchmark/
 │   ├── http/
 │   ├── loadbalance/
@@ -573,7 +582,9 @@ ChwellCore/
 │   ├── test_circuitbreaker.cpp
 │   ├── test_ratelimit.cpp
 │   ├── test_consistent_hash.cpp
-│   └── test_benchmark.cpp
+│   ├── test_benchmark.cpp
+│   ├── test_rpc.cpp              # RPC并发/call_sync/超时/熔断集成测试
+│   └── test_gateway_multinode.cpp # 网关多节点/服务发现/Node心跳/分布式锁测试
 ├── integration_tests/         # 集成测试
 │   └── test_integration.cpp
 ├── examples/                 # 示例程序

@@ -5,23 +5,29 @@
 #include "chwell/protocol/message.h"
 #include "chwell/net/posix_io.h"
 #include "chwell/net/tcp_connection.h"
-#include "chwell/cluster/node_registry.h"
 
 #include <cstring>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <sstream>
+#include <cstdint>
 
 namespace chwell {
 namespace gateway {
 
 GatewayForwarderComponent::GatewayForwarderComponent(
     const std::string& backend_host, unsigned short backend_port)
-    : backend_host_(backend_host), backend_port_(backend_port) {}
+    : backend_host_(backend_host)
+    , backend_port_(backend_port)
+    , cluster_config_path_("") {}
 
-GatewayForwarderComponent::GatewayForwarderComponent(const std::string& node_type)
-    : backend_node_type_(node_type) {}
+GatewayForwarderComponent::GatewayForwarderComponent(
+    const std::string& node_type, const std::string& cluster_config_path)
+    : backend_node_type_(node_type)
+    , cluster_config_path_(cluster_config_path.empty() ? "config/cluster.yaml"
+                                                        : cluster_config_path) {}
 
 void GatewayForwarderComponent::on_register(service::Service& svc) {
     service_ = &svc;
@@ -49,27 +55,41 @@ net::TcpConnectionPtr GatewayForwarderComponent::connect_backend(
     std::string host = backend_host_;
     unsigned short port = backend_port_;
 
-    // 如果指定了 node_type，则尝试通过全局 NodeRegistry 进行节点发现
     if (!backend_node_type_.empty()) {
-        static cluster::NodeRegistry s_registry;
-        static bool s_loaded = false;
-        if (!s_loaded) {
-            // 这里采用简单的静态 YAML 配置，后续可替换为 etcd/Consul 等动态发现
-            if (!s_registry.load_from_yaml_file("config/cluster.yaml")) {
-                CHWELL_LOG_WARN("Gateway: failed to load cluster config, fallback to direct backend host/port");
+        // Ensure registry is loaded (lazy init, not static globals)
+        if (!registry_loaded_) {
+            if (!registry_.load_from_yaml_file(cluster_config_path_)) {
+                CHWELL_LOG_WARN("Gateway: failed to load cluster config from '"
+                                + cluster_config_path_ + "', fallback to direct host/port");
             }
-            s_loaded = true;
+            registry_loaded_ = true;
         }
 
-        std::string key = "client";
+        // Use connection pointer address as hash key for stable sharding per client
+        std::string hash_key = std::to_string(
+            reinterpret_cast<uintptr_t>(client_conn.get()));
+
         cluster::NodeInfo info;
-        if (s_registry.select_node_by_hash(key, info, backend_node_type_)) {
+        if (registry_.select_node_by_hash(hash_key, info, backend_node_type_)) {
             host = info.listen_addr;
             port = info.listen_port;
         } else {
-            CHWELL_LOG_WARN("Gateway: no backend node found for type=" + backend_node_type_ +
-                            ", fallback to direct backend host/port");
+            CHWELL_LOG_WARN("Gateway: no backend node found for type=" + backend_node_type_
+                            + ", fallback to direct backend host/port");
         }
+    }
+
+    return do_connect(client_conn, host, port);
+}
+
+net::TcpConnectionPtr GatewayForwarderComponent::do_connect(
+    const net::TcpConnectionPtr& client_conn,
+    const std::string& host, unsigned short port) {
+
+    if (host.empty() || port == 0) {
+        CHWELL_LOG_ERROR("Gateway: invalid backend address " + host + ":"
+                         + std::to_string(port));
+        return nullptr;
     }
 
     int fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -88,8 +108,8 @@ net::TcpConnectionPtr GatewayForwarderComponent::connect_backend(
     }
 
     if (::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
-        CHWELL_LOG_ERROR("Gateway: connect to backend failed: " +
-                                       std::string(strerror(errno)));
+        CHWELL_LOG_ERROR("Gateway: connect to backend " + host + ":"
+                         + std::to_string(port) + " failed: " + strerror(errno));
         close(fd);
         return nullptr;
     }
@@ -113,13 +133,13 @@ net::TcpConnectionPtr GatewayForwarderComponent::connect_backend(
 
     service_->io_service().post([backend]() { backend->start(); });
 
-    CHWELL_LOG_INFO("Gateway: connected to backend " + host + ":" +
-                                  std::to_string(port));
+    CHWELL_LOG_INFO("Gateway: connected to backend " + host + ":"
+                    + std::to_string(port));
     return backend;
 }
 
 void GatewayForwarderComponent::forward(const net::TcpConnectionPtr& client_conn,
-                                       const protocol::Message& msg) {
+                                        const protocol::Message& msg) {
     net::TcpConnectionPtr backend;
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -160,12 +180,23 @@ void GatewayForwarderComponent::on_backend_message(
 }
 
 void GatewayForwarderComponent::on_backend_close(const net::TcpConnectionPtr& backend_conn) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    auto it = backend_to_client_.find(backend_conn.get());
-    if (it != backend_to_client_.end()) {
-        client_to_backend_.erase(it->second.get());
-        backend_to_client_.erase(it);
-        CHWELL_LOG_INFO("Gateway: backend connection closed");
+    net::TcpConnectionPtr client_conn;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = backend_to_client_.find(backend_conn.get());
+        if (it != backend_to_client_.end()) {
+            client_conn = it->second;
+            client_to_backend_.erase(it->second.get());
+            backend_to_client_.erase(it);
+        }
+    }
+    CHWELL_LOG_INFO("Gateway: backend connection closed");
+
+    // If using node_type mode, attempt reconnect to another available node
+    if (client_conn && !backend_node_type_.empty()) {
+        CHWELL_LOG_INFO("Gateway: attempting reconnect for client after backend close");
+        // The next forward() call will trigger connect_backend() again,
+        // which will pick a new node via hash. No explicit action needed here.
     }
 }
 

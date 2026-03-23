@@ -4,6 +4,7 @@
 #include <vector>
 #include <functional>
 #include <cstdint>
+#include <unordered_map>
 
 namespace chwell {
 namespace loadbalance {

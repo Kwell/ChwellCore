@@ -7,6 +7,7 @@
 
 #include "chwell/service/component.h"
 #include "chwell/protocol/message.h"
+#include "chwell/cluster/node_registry.h"
 
 namespace chwell {
 namespace net {
@@ -25,7 +26,9 @@ public:
                               unsigned short backend_port);
 
     // 使用 NodeRegistry + node_type 的构造函数
-    explicit GatewayForwarderComponent(const std::string& node_type);
+    // cluster_config_path: YAML 配置路径，默认 "config/cluster.yaml"
+    explicit GatewayForwarderComponent(const std::string& node_type,
+                                       const std::string& cluster_config_path);
 
     virtual std::string name() const override {
         return "GatewayForwarderComponent";
@@ -43,6 +46,8 @@ public:
 
 private:
     net::TcpConnectionPtr connect_backend(const net::TcpConnectionPtr& client_conn);
+    net::TcpConnectionPtr do_connect(const net::TcpConnectionPtr& client_conn,
+                                     const std::string& host, unsigned short port);
     void on_backend_message(const net::TcpConnectionPtr& backend_conn,
                             const std::vector<char>& data);
     void on_backend_close(const net::TcpConnectionPtr& backend_conn);
@@ -50,7 +55,12 @@ private:
     std::string backend_host_;
     unsigned short backend_port_{0};
     std::string backend_node_type_;
+    std::string cluster_config_path_;
     service::Service* service_{nullptr};
+
+    // Instance-level NodeRegistry (not static globals)
+    bool registry_loaded_{false};
+    cluster::NodeRegistry registry_;
 
     mutable std::mutex mutex_;
     std::unordered_map<const net::TcpConnection*, net::TcpConnectionPtr> client_to_backend_;

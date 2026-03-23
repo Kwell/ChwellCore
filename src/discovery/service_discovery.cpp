@@ -4,6 +4,43 @@
 namespace chwell {
 namespace discovery {
 
+MemoryServiceDiscovery::MemoryServiceDiscovery(int64_t heartbeat_timeout_ms,
+                                               int64_t cleanup_interval_ms)
+    : heartbeat_timeout_ms_(heartbeat_timeout_ms)
+    , cleanup_interval_ms_(cleanup_interval_ms) {
+    if (cleanup_interval_ms_ > 0) {
+        start_cleanup_thread();
+    }
+}
+
+MemoryServiceDiscovery::~MemoryServiceDiscovery() {
+    stop_cleanup_thread();
+}
+
+void MemoryServiceDiscovery::start_cleanup_thread() {
+    cleanup_running_.store(true);
+    cleanup_thread_ = std::thread([this]() {
+        while (cleanup_running_.load()) {
+            std::unique_lock<std::mutex> lock(cleanup_mutex_);
+            cleanup_cv_.wait_for(lock,
+                                 std::chrono::milliseconds(cleanup_interval_ms_),
+                                 [this]() { return !cleanup_running_.load(); });
+            if (!cleanup_running_.load()) break;
+            cleanup_expired_instances();
+        }
+    });
+    CHWELL_LOG_INFO("MemoryServiceDiscovery: cleanup thread started (interval="
+                    + std::to_string(cleanup_interval_ms_) + "ms)");
+}
+
+void MemoryServiceDiscovery::stop_cleanup_thread() {
+    cleanup_running_.store(false);
+    cleanup_cv_.notify_all();
+    if (cleanup_thread_.joinable()) {
+        cleanup_thread_.join();
+    }
+}
+
 bool MemoryServiceDiscovery::register_service(const ServiceInstance& instance) {
     std::lock_guard<std::mutex> lock(mutex_);
 

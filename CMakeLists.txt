@@ -238,6 +238,8 @@ if (CHWELL_BUILD_TESTS)
             tests/test_consistent_hash.cpp
             tests/test_prometheus_metrics.cpp
             tests/test_benchmark.cpp
+            tests/test_rpc.cpp
+            tests/test_gateway_multinode.cpp
         )
         target_link_libraries(chwell_core_tests PRIVATE chwell_core ${CHWELL_GTEST_LIB})
         add_test(NAME chwell_core_tests COMMAND chwell_core_tests)
@@ -368,5 +370,11 @@ if (CHWELL_BUILD_EXAMPLES)
         examples/protocol_stress_client.cpp
     )
     target_link_libraries(example_protocol_stress_client PRIVATE pthread)
+
+    # JSON 帧客户端（4字节大端长度前缀 + JSON 文本）
+    add_executable(example_json_frame_client
+        examples/json_frame_client.cpp
+    )
+    target_link_libraries(example_json_frame_client PRIVATE chwell_core)
 endif()
 

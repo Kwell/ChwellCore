@@ -6,6 +6,8 @@
 #include <mutex>
 #include <functional>
 
+#include "chwell/loadbalance/consistent_hash.h"
+
 #if defined(CHWELL_USE_YAML)
 #include <yaml-cpp/yaml.h>
 #endif
@@ -72,6 +74,8 @@ public:
         info.listen_port = listen_port;
         info.node_type = node_type;
         info.online = true;
+        // Add to consistent hash ring (use node_type as service_id, node_id as instance_id)
+        ch_balancer_.add_instance(node_type, node_id);
     }
 
     // 注销节点
@@ -80,6 +84,7 @@ public:
         auto it = nodes_.find(node_id);
         if (it != nodes_.end()) {
             it->second.online = false;
+            ch_balancer_.remove_instance(it->second.node_type, node_id);
         }
     }
 
@@ -113,40 +118,23 @@ public:
     }
 
     // 一致性哈希选择节点：根据 key 在指定类型的在线节点中选择一个节点
-    // 若 node_type 为空，则在所有在线节点中选择
+    // 若 node_type 为空，使用 "__all__" 服务组选择
     bool select_node_by_hash(const std::string& key,
                              NodeInfo& out,
                              const std::string& node_type = std::string()) const {
         std::lock_guard<std::mutex> lock(mutex_);
-        std::vector<const NodeInfo*> candidates;
-        candidates.reserve(nodes_.size());
-        for (const auto& pair : nodes_) {
-            const NodeInfo& info = pair.second;
-            if (!info.online) continue;
-            if (!node_type.empty() && info.node_type != node_type) continue;
-            candidates.push_back(&info);
-        }
-        if (candidates.empty()) {
+
+        std::string service_group = node_type.empty() ? "__all__" : node_type;
+        std::string selected_id;
+        if (!ch_balancer_.select_instance(service_group, key, selected_id)) {
             return false;
         }
 
-        // 简单一致性哈希：对 key+node_id 计算 hash，选择 hash 最大的节点
-        std::hash<std::string> hasher;
-        std::size_t best_hash = 0;
-        const NodeInfo* best = nullptr;
-        for (const NodeInfo* info : candidates) {
-            std::string combined = key;
-            combined.append("#").append(info->node_id);
-            std::size_t h = hasher(combined);
-            if (!best || h > best_hash) {
-                best_hash = h;
-                best = info;
-            }
-        }
-        if (!best) {
+        auto it = nodes_.find(selected_id);
+        if (it == nodes_.end() || !it->second.online) {
             return false;
         }
-        out = *best;
+        out = it->second;
         return true;
     }
 
@@ -158,6 +146,7 @@ private:
         }
         std::lock_guard<std::mutex> lock(mutex_);
         nodes_.clear();
+        ch_balancer_.clear();
 
         const YAML::Node& nodes = root["nodes"];
         for (const auto& n : nodes) {
@@ -169,6 +158,8 @@ private:
             info.online = true;
             if (!info.node_id.empty() && info.listen_port != 0) {
                 nodes_[info.node_id] = info;
+                ch_balancer_.add_instance(info.node_type, info.node_id);
+                ch_balancer_.add_instance("__all__", info.node_id);
             }
         }
         return !nodes_.empty();
@@ -177,6 +168,7 @@ private:
 
     mutable std::mutex mutex_;
     std::unordered_map<std::string, NodeInfo> nodes_;
+    mutable loadbalance::ConsistentHashLoadBalancer ch_balancer_;
 };
 
 } // namespace cluster

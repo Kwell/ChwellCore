@@ -91,24 +91,39 @@ void RpcServer::handle_message(const net::TcpConnectionPtr& conn, const std::vec
             }
         }
         
+        // Extract request_id prefix (first 4 bytes of body, big-endian)
+        // and strip it before passing to handler; echo it back in response.
+        std::vector<char> handler_body;
+        std::vector<char> request_id_prefix;
+        if (msg.body.size() >= 4) {
+            request_id_prefix.assign(msg.body.begin(), msg.body.begin() + 4);
+            handler_body.assign(msg.body.begin() + 4, msg.body.end());
+        } else {
+            handler_body = msg.body;
+        }
+
         if (handler) {
             // 处理请求
-            std::vector<char> response;
+            std::vector<char> handler_response;
             try {
-                handler(msg.body, response);
+                handler(handler_body, handler_response);
             } catch (const std::exception& e) {
                 CHWELL_LOG_ERROR("RPC handler exception: " << e.what());
-                response = std::vector<char>(e.what(), e.what() + strlen(e.what()));
+                handler_response = std::vector<char>(e.what(), e.what() + strlen(e.what()));
             }
-            
-            // 发送响应
+
+            // 在响应 body 前缀中回传 request_id
+            std::vector<char> response;
+            response.insert(response.end(), request_id_prefix.begin(), request_id_prefix.end());
+            response.insert(response.end(), handler_response.begin(), handler_response.end());
+
             protocol::Message resp_msg(msg.cmd, response);
             auto serialized = protocol::serialize(resp_msg);
             conn->send(serialized);
         } else {
-            // 方法未找到
+            // 方法未找到，仍需回传 request_id 使客户端能匹配
             CHWELL_LOG_WARN("RPC method not found: " << msg.cmd);
-            protocol::Message resp_msg(msg.cmd, std::vector<char>());
+            protocol::Message resp_msg(msg.cmd, request_id_prefix);
             auto serialized = protocol::serialize(resp_msg);
             conn->send(serialized);
         }

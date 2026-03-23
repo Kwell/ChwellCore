@@ -7,6 +7,9 @@
 #include <vector>
 #include <functional>
 #include <mutex>
+#include <atomic>
+#include <thread>
+#include <condition_variable>
 #include <chrono>
 
 namespace chwell {
@@ -69,10 +72,12 @@ public:
 
 class MemoryServiceDiscovery : public ServiceDiscovery {
 public:
-    MemoryServiceDiscovery(int64_t heartbeat_timeout_ms = 30000)
-        : heartbeat_timeout_ms_(heartbeat_timeout_ms) {}
+    // cleanup_interval_ms: how often the background thread runs cleanup.
+    // 0 disables the background thread (caller must invoke cleanup manually).
+    explicit MemoryServiceDiscovery(int64_t heartbeat_timeout_ms = 30000,
+                                    int64_t cleanup_interval_ms = 10000);
 
-    virtual ~MemoryServiceDiscovery() = default;
+    virtual ~MemoryServiceDiscovery();
 
     // 注册服务实例
     virtual bool register_service(const ServiceInstance& instance) override;
@@ -111,11 +116,20 @@ private:
             std::chrono::system_clock::now().time_since_epoch()).count();
     }
 
+    void start_cleanup_thread();
+    void stop_cleanup_thread();
+
     mutable std::mutex mutex_;
     std::unordered_map<std::string, ServiceInstance> instances_; // instance_id -> instance
     std::unordered_map<std::string, std::unordered_set<std::string>> service_index_; // service_id -> instance_ids
     std::unordered_map<std::string, std::vector<ServiceListener>> listeners_; // service_id -> listeners
     int64_t heartbeat_timeout_ms_;
+    int64_t cleanup_interval_ms_;
+
+    std::thread cleanup_thread_;
+    std::atomic<bool> cleanup_running_{false};
+    std::mutex cleanup_mutex_;
+    std::condition_variable cleanup_cv_;
 };
 
 } // namespace discovery
