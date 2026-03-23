@@ -27,11 +27,13 @@ std::vector<Message> Parser::feed(const std::vector<char>& data) {
             break; // 数据不完整，等待更多数据
         }
 
-        // 解析一个完整的消息
+        // 直接在 buffer_ 上原地读取，无需构造临时 vector
         Message msg;
-        if (deserialize(std::vector<char>(buffer_.begin(), buffer_.begin() + 4 + body_len), msg)) {
-            messages.push_back(msg);
-        }
+        std::uint16_t cmd_net;
+        std::memcpy(&cmd_net, &buffer_[0], 2);
+        msg.cmd = core::net_to_host16(cmd_net);
+        msg.body.assign(buffer_.begin() + 4, buffer_.begin() + 4 + body_len);
+        messages.push_back(std::move(msg));
 
         // 移除已处理的数据
         buffer_.erase(buffer_.begin(), buffer_.begin() + 4 + body_len);

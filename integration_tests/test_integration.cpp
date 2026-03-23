@@ -22,8 +22,8 @@ TEST(SessionManagerIntegrationTest, LoginLogoutAndQueryInterfaces) {
     service::SessionManager mgr;
 
     // 创建两个虚拟连接
-    auto conn1 = test::MockConnectionFactory::create();
-    auto conn2 = test::MockConnectionFactory::create();
+    auto conn1 = test::MockConnectionFactoryV2::create();
+    auto conn2 = test::MockConnectionFactoryV2::create();
 
     // 测试登录/登出
     EXPECT_FALSE(mgr.is_logged_in(conn1));
@@ -51,9 +51,9 @@ TEST(SessionManagerIntegrationTest, JoinLeaveRoomAndGetPlayersInRoom) {
     service::SessionManager mgr;
 
     // 创建三个虚拟连接
-    auto conn1 = test::MockConnectionFactory::create();
-    auto conn2 = test::MockConnectionFactory::create();
-    auto conn3 = test::MockConnectionFactory::create();
+    auto conn1 = test::MockConnectionFactoryV2::create();
+    auto conn2 = test::MockConnectionFactoryV2::create();
+    auto conn3 = test::MockConnectionFactoryV2::create();
 
     // 登录并加入房间
     mgr.login(conn1, "alice");
@@ -93,9 +93,9 @@ TEST(RoomComponentIntegrationTest, BasicOperations) {
     game::RoomComponent room_comp;
 
     // 创建三个虚拟连接
-    auto conn1 = test::MockConnectionFactory::create();
-    auto conn2 = test::MockConnectionFactory::create();
-    auto conn3 = test::MockConnectionFactory::create();
+    auto conn1 = test::MockConnectionFactoryV2::create();
+    auto conn2 = test::MockConnectionFactoryV2::create();
+    auto conn3 = test::MockConnectionFactoryV2::create();
 
     // 创建两个房间
     room_comp.join_room(conn1, "room1");
@@ -133,8 +133,8 @@ TEST(FrameSyncIntegrationTest, FrameSyncRoomJoinLeave) {
     sync::FrameSyncRoom room("test_room", 30);
 
     // 创建虚拟连接
-    auto conn1 = test::MockConnectionFactory::create();
-    auto conn2 = test::MockConnectionFactory::create();
+    auto conn1 = test::MockConnectionFactoryV2::create();
+    auto conn2 = test::MockConnectionFactoryV2::create();
 
     // 测试加入/离开
     room.join_player(12345, conn1);
@@ -154,8 +154,8 @@ TEST(FrameSyncIntegrationTest, FrameSyncRoomSubmitAndGetInputs) {
     sync::FrameSyncRoom room("test_room", 30);
 
     // 创建虚拟连接
-    auto conn1 = test::MockConnectionFactory::create();
-    auto conn2 = test::MockConnectionFactory::create();
+    auto conn1 = test::MockConnectionFactoryV2::create();
+    auto conn2 = test::MockConnectionFactoryV2::create();
 
     // 加入玩家
     room.join_player(12345, conn1);
@@ -184,8 +184,8 @@ TEST(FrameSyncIntegrationTest, FrameSyncRoomMultipleInputs) {
     sync::FrameSyncRoom room("test_room", 30);
 
     // 创建虚拟连接
-    auto conn1 = test::MockConnectionFactory::create();
-    auto conn2 = test::MockConnectionFactory::create();
+    auto conn1 = test::MockConnectionFactoryV2::create();
+    auto conn2 = test::MockConnectionFactoryV2::create();
 
     room.join_player(12345, conn1);
     room.join_player(67890, conn2);
@@ -216,9 +216,9 @@ TEST(FrameSyncIntegrationTest, FrameSyncRoomGetPlayerIds) {
     sync::FrameSyncRoom room("test_room", 30);
 
     // 创建虚拟连接
-    auto conn1 = test::MockConnectionFactory::create();
-    auto conn2 = test::MockConnectionFactory::create();
-    auto conn3 = test::MockConnectionFactory::create();
+    auto conn1 = test::MockConnectionFactoryV2::create();
+    auto conn2 = test::MockConnectionFactoryV2::create();
+    auto conn3 = test::MockConnectionFactoryV2::create();
 
     room.join_player(12345, conn1);
     room.join_player(67890, conn2);
@@ -246,8 +246,8 @@ TEST(FrameSyncIntegrationTest, FrameSyncRoomDifferentFrameInputs) {
     sync::FrameSyncRoom room("test_room", 30);
 
     // 创建虚拟连接
-    auto conn1 = test::MockConnectionFactory::create();
-    auto conn2 = test::MockConnectionFactory::create();
+    auto conn1 = test::MockConnectionFactoryV2::create();
+    auto conn2 = test::MockConnectionFactoryV2::create();
 
     room.join_player(12345, conn1);
     room.join_player(67890, conn2);
@@ -279,8 +279,8 @@ TEST(FrameSyncIntegrationTest, FrameSyncRoomAllInputsReady) {
     sync::FrameSyncRoom room("test_room", 30);
 
     // 创建虚拟连接
-    auto conn1 = test::MockConnectionFactory::create();
-    auto conn2 = test::MockConnectionFactory::create();
+    auto conn1 = test::MockConnectionFactoryV2::create();
+    auto conn2 = test::MockConnectionFactoryV2::create();
 
     room.join_player(12345, conn1);
     room.join_player(67890, conn2);

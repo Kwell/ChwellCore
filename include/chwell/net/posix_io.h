@@ -125,7 +125,6 @@ public:
 
 private:
     int listen_fd_{-1};
-    int wake_fd_{-1};  // 用于 stop 时唤醒
 };
 
 // IoService - 简化为工作队列 + 停止信号

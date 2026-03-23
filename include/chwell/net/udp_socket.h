@@ -12,7 +12,7 @@ namespace chwell {
 namespace net {
 
 // UDP 连接（无状态）
-class UdpSocket {
+class UdpSocket : public std::enable_shared_from_this<UdpSocket> {
 public:
     using MessageCallback = std::function<void(const UdpSocketPtr&, const std::string&, const std::string&, uint16_t)>;
     using CloseCallback = std::function<void(const UdpSocketPtr&)>;

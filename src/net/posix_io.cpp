@@ -34,10 +34,6 @@ TcpAcceptor::~TcpAcceptor() {
         close(listen_fd_);
         listen_fd_ = -1;
     }
-    if (wake_fd_ >= 0) {
-        close(wake_fd_);
-        wake_fd_ = -1;
-    }
 }
 
 TcpSocket TcpAcceptor::accept(ErrorCode& ec) {

@@ -1,6 +1,14 @@
 #include "chwell/net/connection_pool.h"
 #include <cassert>
 #include <thread>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <poll.h>
+#include <cerrno>
+#include <cstring>
 
 namespace chwell {
 namespace net {
@@ -17,16 +25,24 @@ ConnectionPool::~ConnectionPool() {
 }
 
 bool ConnectionPool::init() {
-    std::lock_guard<std::mutex> lock(mutex_);
-    
     if (shutdown_) {
         return false;
     }
-    
-    // 简化实现：不预创建连接，按需创建
-    CHWELL_LOG_INFO("ConnectionPool initialized for " 
-                  << config_.host << ":" << config_.port);
-    
+
+    // 预创建 min_connections 个连接（在锁外创建，避免阻塞锁）
+    for (int i = 0; i < config_.min_connections; ++i) {
+        auto pooled = std::make_unique<PooledConnection>();
+        if (create_connection(*pooled)) {
+            std::lock_guard<std::mutex> lock(mutex_);
+            connections_.push_back(std::move(pooled));
+        }
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    CHWELL_LOG_INFO("ConnectionPool initialized for "
+                  << config_.host << ":" << config_.port
+                  << " (" << connections_.size() << "/" << config_.min_connections
+                  << " pre-created)");
     return true;
 }
 
@@ -59,16 +75,70 @@ void ConnectionPool::shutdown() {
 }
 
 bool ConnectionPool::create_connection(PooledConnection& conn) {
-    // 简化实现：返回一个占位连接
-    // 实际项目中需要实现真正的连接逻辑
-    conn.connection.reset();  // 暂时返回空
+    if (config_.host.empty() || config_.port == 0) {
+        CHWELL_LOG_ERROR("ConnectionPool: invalid host/port (host="
+                       << config_.host << " port=" << config_.port << ")");
+        return false;
+    }
+
+    struct sockaddr_in addr;
+    std::memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(config_.port);
+    if (inet_pton(AF_INET, config_.host.c_str(), &addr.sin_addr) <= 0) {
+        CHWELL_LOG_ERROR("ConnectionPool: invalid host address: " + config_.host);
+        return false;
+    }
+
+    // 创建非阻塞 socket，以便支持连接超时
+    int fd = ::socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
+    if (fd < 0) {
+        CHWELL_LOG_ERROR("ConnectionPool: socket() failed: " + std::string(strerror(errno)));
+        return false;
+    }
+
+    int ret = ::connect(fd, reinterpret_cast<const sockaddr*>(&addr), sizeof(addr));
+    if (ret < 0 && errno != EINPROGRESS) {
+        CHWELL_LOG_ERROR("ConnectionPool: connect() failed: " + std::string(strerror(errno)));
+        ::close(fd);
+        return false;
+    }
+
+    if (ret < 0) {
+        // EINPROGRESS：用 poll 等待连接完成
+        int timeout_ms = config_.connect_timeout_ms > 0 ? config_.connect_timeout_ms : 5000;
+        struct pollfd pfd;
+        pfd.fd = fd;
+        pfd.events = POLLOUT;
+        int r = poll(&pfd, 1, timeout_ms);
+        if (r <= 0) {
+            CHWELL_LOG_ERROR("ConnectionPool: connect timeout to "
+                           + config_.host + ":" + std::to_string(config_.port));
+            ::close(fd);
+            return false;
+        }
+        int err = 0;
+        socklen_t len = sizeof(err);
+        if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &len) < 0 || err != 0) {
+            CHWELL_LOG_ERROR("ConnectionPool: connect error: " + std::string(strerror(err)));
+            ::close(fd);
+            return false;
+        }
+    }
+
+    // 切回阻塞模式（与 TcpSocket 阻塞 read/write 一致）
+    int flags = fcntl(fd, F_GETFL, 0);
+    fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
+
+    conn.connection = std::make_shared<TcpConnection>(TcpSocket(fd));
     conn.create_time = PooledConnection::current_time_ms();
     conn.last_used_time = conn.create_time;
     conn.in_use = false;
-    conn.is_valid = false;
-    
-    CHWELL_LOG_WARN("ConnectionPool::create_connection not fully implemented");
-    return false;
+    conn.is_valid = true;
+
+    CHWELL_LOG_INFO("ConnectionPool: new connection to "
+                  + config_.host + ":" + std::to_string(config_.port));
+    return true;
 }
 
 bool ConnectionPool::validate_connection(PooledConnection& conn) {
@@ -110,7 +180,23 @@ void ConnectionPool::cleanup_expired() {
 }
 
 void ConnectionPool::maybe_expand() {
-    // 简化实现
+    // 若当前空闲连接不足 min_connections，尝试补充（在持有 mutex_ 的情况下调用时需注意）
+    int total = static_cast<int>(connections_.size()) + pending_creates_.load();
+    if (total >= config_.min_connections || total >= config_.max_connections) {
+        return;
+    }
+    ++pending_creates_;
+    // 启动线程异步补充，避免在锁内阻塞
+    std::thread([this]() {
+        PooledConnection conn;
+        if (create_connection(conn)) {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (!shutdown_) {
+                connections_.push_back(std::make_unique<PooledConnection>(conn));
+            }
+        }
+        --pending_creates_;
+    }).detach();
 }
 
 bool ConnectionPool::try_get_idle(PooledConnection& conn) {
@@ -131,22 +217,57 @@ void ConnectionPool::get_connection(ConnectionCallback callback, int timeout_ms)
         callback(empty);
         return;
     }
-    
-    std::unique_lock<std::mutex> lock(mutex_);
-    
-    cleanup_expired();
-    
+
+    {
+        std::unique_lock<std::mutex> lock(mutex_);
+
+        cleanup_expired();
+
+        PooledConnection conn;
+        if (try_get_idle(conn)) {
+            lock.unlock();
+            callback(conn);
+            return;
+        }
+
+        // 未超过最大连接数时，先记录 pending 然后锁外创建
+        int total = static_cast<int>(connections_.size()) + pending_creates_.load();
+        if (total < config_.max_connections) {
+            ++pending_creates_;
+        } else {
+            // 已达上限：排队等待（timeout_ms==0 则立即返回空）
+            if (timeout_ms != 0) {
+                waiting_callbacks_.push(callback);
+            } else {
+                lock.unlock();
+                PooledConnection empty;
+                callback(empty);
+            }
+            return;
+        }
+    }
+
+    // 在锁外实际建立 TCP 连接，避免阻塞池锁
     PooledConnection conn;
-    if (try_get_idle(conn)) {
-        lock.unlock();
-        callback(conn);
+    bool ok = create_connection(conn);
+    --pending_creates_;
+
+    if (!ok) {
+        PooledConnection empty;
+        callback(empty);
         return;
     }
-    
-    // 暂时返回空连接
-    lock.unlock();
-    PooledConnection empty;
-    callback(empty);
+
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!shutdown_) {
+            conn.in_use = true;
+            conn.last_used_time = PooledConnection::current_time_ms();
+            connections_.push_back(std::make_unique<PooledConnection>(conn));
+        }
+    }
+
+    callback(conn);
 }
 
 PooledConnection ConnectionPool::get_connection_sync(int timeout_ms) {

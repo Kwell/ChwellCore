@@ -49,7 +49,10 @@ void TcpServer::stop() {
     if (wake_pipe_[0] >= 0) { close(wake_pipe_[0]); wake_pipe_[0] = -1; }
     if (wake_pipe_[1] >= 0) { close(wake_pipe_[1]); wake_pipe_[1] = -1; }
 
-    CHWELL_LOG_INFO("TcpServer stopped, remaining connections: " << connections_.size());
+    {
+        std::lock_guard<std::mutex> lock(connections_mutex_);
+        CHWELL_LOG_INFO("TcpServer stopped, remaining connections: " << connections_.size());
+    }
 }
 
 void TcpServer::accept_loop() {
@@ -86,21 +89,25 @@ void TcpServer::accept_loop() {
             auto conn = std::make_shared<TcpConnection>(std::move(socket));
             conn->set_message_callback(message_cb_);
             conn->set_close_callback([this](const TcpConnectionPtr& c) {
+                std::size_t remaining = 0;
                 {
                     std::lock_guard<std::mutex> lock(connections_mutex_);
                     connections_.erase(c);
+                    remaining = connections_.size();
                 }
-                CHWELL_LOG_INFO("Connection closed, remaining: " << connections_.size());
+                CHWELL_LOG_INFO("Connection closed, remaining: " << remaining);
                 if (disconnect_cb_) {
                     disconnect_cb_(c);
                 }
             });
 
+            std::size_t total = 0;
             {
                 std::lock_guard<std::mutex> lock(connections_mutex_);
                 connections_.insert(conn);
+                total = connections_.size();
             }
-            CHWELL_LOG_INFO("New connection accepted, total: " << connections_.size());
+            CHWELL_LOG_INFO("New connection accepted, total: " << total);
 
             if (connection_cb_) {
                 connection_cb_(conn);

@@ -50,7 +50,9 @@ void UdpSocket::close() {
         fd_ = -1;
 
         if (close_cb_) {
-            close_cb_(UdpSocketPtr());
+            // weak_from_this().lock() 在正常关闭时返回有效指针，
+            // 在析构期调用时返回 null（此时引用计数已归零）
+            close_cb_(weak_from_this().lock());
         }
 
         CHWELL_LOG_INFO("UDP socket closed");
@@ -65,7 +67,16 @@ UdpSocketPtr create_udp_socket(const std::string& host, uint16_t port) {
         return nullptr;
     }
 
-    return std::make_shared<UdpSocket>(fd);
+    auto socket = std::make_shared<UdpSocket>(fd);
+
+    // 若调用方指定了端口，则立即绑定；port==0 时仅创建不绑定
+    if (port != 0) {
+        if (!bind_udp_port(socket, host, port)) {
+            return nullptr;
+        }
+    }
+
+    return socket;
 }
 
 bool bind_udp_port(UdpSocketPtr& socket, const std::string& host, uint16_t port) {
@@ -79,7 +90,16 @@ bool bind_udp_port(UdpSocketPtr& socket, const std::string& host, uint16_t port)
 
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port);
-    addr.sin_addr.s_addr = INADDR_ANY;  // 绑定所有地址
+
+    // 空字符串或 "0.0.0.0" 时监听全部网卡，否则按指定地址绑定
+    if (host.empty() || host == "0.0.0.0") {
+        addr.sin_addr.s_addr = INADDR_ANY;
+    } else {
+        if (inet_pton(AF_INET, host.c_str(), &addr.sin_addr) <= 0) {
+            CHWELL_LOG_ERROR("Invalid bind address: " + host);
+            return false;
+        }
+    }
 
     if (bind(socket->native_handle(), reinterpret_cast<struct sockaddr*>(&addr),
              sizeof(addr)) < 0) {
@@ -88,7 +108,7 @@ bool bind_udp_port(UdpSocketPtr& socket, const std::string& host, uint16_t port)
         return false;
     }
 
-    // 获取实际绑定的端口
+    // 回填实际绑定的地址和端口（支持 port=0 时系统分配）
     struct sockaddr_in bound_addr;
     socklen_t addr_len = sizeof(bound_addr);
     if (getsockname(socket->native_handle(),
@@ -97,11 +117,11 @@ bool bind_udp_port(UdpSocketPtr& socket, const std::string& host, uint16_t port)
         return false;
     }
 
-    // 提取端口号
     socket->local_port_ = ntohs(bound_addr.sin_port);
-    socket->local_addr_ = "0.0.0.0";
+    socket->local_addr_ = host.empty() ? "0.0.0.0" : host;
 
-    CHWELL_LOG_INFO("UDP socket bound to port " + std::to_string(port));
+    CHWELL_LOG_INFO("UDP socket bound to " + socket->local_addr_ +
+                    ":" + std::to_string(socket->local_port_));
     return true;
 }
 
