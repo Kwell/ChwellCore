@@ -215,8 +215,51 @@ StorageResult MongodbStorage::remove(const std::string& key) {
 
 bool MongodbStorage::exists(const std::string& key) {
 #if defined(CHWELL_USE_MONGODB)
-    auto r = get(key);
-    return r.ok;
+    if (!collection_) return false;
+
+    mongoc_collection_t* coll = static_cast<mongoc_collection_t*>(collection_);
+    bson_t* query = bson_new();
+    BSON_APPEND_UTF8(query, "_id", key.c_str());
+
+    bson_t* opts = bson_new();
+    bson_t projection;
+    bson_init(&projection);
+    BSON_APPEND_INT32(&projection, "expire_at", 1);
+    BSON_APPEND_DOCUMENT(opts, "projection", &projection);
+    bson_destroy(&projection);
+
+    bson_error_t error;
+    bson_t* doc =
+        mongoc_collection_find_one_with_opts(coll, query, opts, nullptr, &error);
+    bson_destroy(opts);
+    bson_destroy(query);
+
+    if (!doc) {
+        (void)error;
+        return false;
+    }
+
+    std::int64_t expire_at = 0;
+    bson_iter_t iter;
+    if (bson_iter_init(&iter, doc)) {
+        while (bson_iter_next(&iter)) {
+            const char* kn = bson_iter_key(&iter);
+            if (std::strcmp(kn, "expire_at") == 0 && BSON_ITER_HOLDS_INT64(&iter)) {
+                expire_at = bson_iter_int64(&iter);
+            }
+        }
+    }
+    bson_destroy(doc);
+
+    if (expire_at > 0) {
+        auto now = std::chrono::duration_cast<std::chrono::seconds>(
+                       std::chrono::system_clock::now().time_since_epoch())
+                       .count();
+        if (expire_at < now) {
+            return false;
+        }
+    }
+    return true;
 #else
     (void)key;
     return false;
@@ -259,6 +302,11 @@ std::vector<std::string> MongodbStorage::keys(const std::string& prefix) {
             const char* str = bson_iter_utf8(&iter, &len);
             result.push_back(std::string(str, len));
         }
+    }
+    bson_error_t cerr;
+    if (mongoc_cursor_error(cursor, &cerr)) {
+        (void)cerr;
+        result.clear();
     }
     mongoc_cursor_destroy(cursor);
     return result;

@@ -249,8 +249,51 @@ StorageResult MysqlStorage::remove(const std::string& key) {
 
 bool MysqlStorage::exists(const std::string& key) {
 #if defined(CHWELL_USE_MYSQL)
-    auto r = get(key);
-    return r.ok;
+    if (!conn_) return false;
+
+    std::string table = "kv";
+    auto it = config_.extra.find("table");
+    if (it != config_.extra.end()) table = it->second;
+
+    MYSQL* mysql = static_cast<MYSQL*>(conn_);
+    MYSQL_STMT* stmt = mysql_stmt_init(mysql);
+    if (!stmt) return false;
+
+    std::string sql =
+        "SELECT 1 FROM `" + table +
+        "` WHERE k=? AND (expire_at=0 OR expire_at>UNIX_TIMESTAMP()) LIMIT 1";
+    if (mysql_stmt_prepare(stmt, sql.c_str(),
+                           static_cast<unsigned long>(sql.size())) != 0) {
+        mysql_stmt_close(stmt);
+        return false;
+    }
+
+    MYSQL_BIND param;
+    std::memset(&param, 0, sizeof(param));
+    unsigned long key_len = static_cast<unsigned long>(key.size());
+    param.buffer_type     = MYSQL_TYPE_STRING;
+    param.buffer          = const_cast<char*>(key.data());
+    param.buffer_length   = key_len;
+    param.length          = &key_len;
+    mysql_stmt_bind_param(stmt, &param);
+
+    std::int64_t       one      = 0;
+    my_bool            res_null = 0;
+    MYSQL_BIND         res_bind;
+    std::memset(&res_bind, 0, sizeof(res_bind));
+    res_bind.buffer_type = MYSQL_TYPE_LONGLONG;
+    res_bind.buffer      = &one;
+    res_bind.is_null     = &res_null;
+    mysql_stmt_bind_result(stmt, &res_bind);
+
+    if (mysql_stmt_execute(stmt) != 0) {
+        mysql_stmt_close(stmt);
+        return false;
+    }
+
+    int col_result = mysql_stmt_fetch(stmt);
+    mysql_stmt_close(stmt);
+    return col_result == 0;
 #else
     (void)key;
     return false;

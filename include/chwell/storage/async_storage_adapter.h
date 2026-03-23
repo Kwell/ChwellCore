@@ -24,14 +24,16 @@ namespace storage {
 //
 // 生命周期：
 //   - 构造后自动启动工作线程
-//   - 析构时等待所有已提交任务执行完毕后停止线程
+//   - 析构时置停止标志后不再接受新任务；已入队任务会执行完再 join 线程
 //
 // 线程安全：所有 async_* 方法均可从任意线程并发调用。
 class AsyncStorageAdapter : public AsyncStorageInterface {
 public:
     // storage 必须在 AsyncStorageAdapter 的整个生命周期内有效
+    // max_queue_size：任务队列最大长度，0 表示不限制；非零时队列满则阻塞入队直到有空间或正在关闭
     explicit AsyncStorageAdapter(StorageInterface* storage,
-                                 std::size_t num_threads = 4);
+                                 std::size_t num_threads = 4,
+                                 std::size_t max_queue_size = 0);
 
     ~AsyncStorageAdapter() override;
 
@@ -63,8 +65,8 @@ public:
     void async_exists(const std::string& key, AsyncExistsCallback cb) override;
 
 private:
-    // 向任务队列提交一个可调用对象
-    void enqueue(std::function<void()> task);
+    // 入队成功返回 true；已停止或 storage 为空时返回 false（调用方须立即完成 promise/回调）
+    bool enqueue(std::function<void()> task);
 
     // 工作线程主循环
     void worker_loop();
@@ -75,6 +77,7 @@ private:
     std::mutex                     queue_mutex_;
     std::condition_variable        queue_cv_;
     std::atomic<bool>              stopping_{false};
+    std::size_t                    max_queue_size_{0};
 };
 
 }  // namespace storage

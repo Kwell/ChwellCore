@@ -62,11 +62,30 @@ public:
         std::vector<std::unique_ptr<T>> result;
         std::string prefix = table_name_ + ":";
         auto keys = storage_->keys(prefix);
-        for (const auto& k : keys) {
-            auto entity = find(extract_id(k));
-            if (entity) {
-                result.push_back(std::move(entity));
+        if (keys.empty()) {
+            return result;
+        }
+        auto responses = storage_->mget(keys);
+        if (responses.size() != keys.size()) {
+            for (const auto& k : keys) {
+                auto entity = find(extract_id(k));
+                if (entity) {
+                    result.push_back(std::move(entity));
+                }
             }
+            return result;
+        }
+        for (std::size_t i = 0; i < keys.size(); ++i) {
+            if (!responses[i].ok) {
+                continue;
+            }
+            Document doc;
+            if (!doc.from_string(responses[i].value)) {
+                continue;
+            }
+            auto entity = std::unique_ptr<T>(new T());
+            entity->from_document(doc);
+            result.push_back(std::move(entity));
         }
         return result;
     }

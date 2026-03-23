@@ -440,3 +440,43 @@ TEST(AsyncStorageAdapterTest, ConcurrentWrites) {
         EXPECT_EQ(r.value, expected);
     }
 }
+
+// ===========================================================================
+// AsyncStorageAdapter — 析构、空指针、队列上限
+// ===========================================================================
+
+TEST(AsyncStorageAdapterTest, PendingWorkDrainedBeforeDestructorReturns) {
+    storage::MemoryStorage mem;
+    std::vector<std::future<storage::StorageResult>> futures;
+    {
+        storage::AsyncStorageAdapter adapter(&mem, 2);
+        for (int i = 0; i < 32; ++i) {
+            futures.push_back(adapter.async_put("drain_" + std::to_string(i), "v"));
+        }
+    }
+    for (auto& f : futures) {
+        ASSERT_TRUE(f.get().ok);
+    }
+}
+
+TEST(AsyncStorageAdapterTest, NullStorageFutureFails) {
+    storage::AsyncStorageAdapter adapter(nullptr, 1);
+    auto f = adapter.async_get("k");
+    auto r = f.get();
+    EXPECT_FALSE(r.ok);
+    EXPECT_NE(r.error_msg.find("null"), std::string::npos);
+}
+
+TEST(AsyncStorageAdapterTest, MaxQueueManyOpsComplete) {
+    storage::MemoryStorage mem;
+    storage::AsyncStorageAdapter adapter(&mem, 2, 32);
+    std::vector<std::future<storage::StorageResult>> futures;
+    futures.reserve(400);
+    for (int i = 0; i < 400; ++i) {
+        futures.push_back(
+            adapter.async_put("mq_" + std::to_string(i), "x"));
+    }
+    for (auto& f : futures) {
+        ASSERT_TRUE(f.get().ok);
+    }
+}
