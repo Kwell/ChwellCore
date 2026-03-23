@@ -139,6 +139,10 @@ private:
     // 触发事件
     void trigger_event(const AoiEvent& event);
     
+    // 无锁版本（调用方须持有 mutex_）
+    std::vector<Entity>   get_entities_in_view_locked(int x, int y) const;
+    std::vector<uint64_t> get_entity_ids_in_view_locked(int x, int y) const;
+
     Config config_;
     mutable std::mutex mutex_;
     

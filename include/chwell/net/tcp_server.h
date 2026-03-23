@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <mutex>
 #include <set>
 #include <thread>
 #include <atomic>
@@ -29,6 +30,7 @@ private:
     unsigned short port_;
     TcpAcceptor acceptor_;
     int wake_pipe_[2]{-1, -1};
+    std::mutex connections_mutex_;
     std::set<TcpConnectionPtr> connections_;
     std::thread accept_thread_;
     std::atomic<bool> stopped_{false};

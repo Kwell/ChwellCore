@@ -156,6 +156,17 @@ public:
         return ids;
     }
 
+    // 获取所有玩家的连接（用于广播）
+    std::vector<net::TcpConnectionPtr> get_player_connections() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        std::vector<net::TcpConnectionPtr> conns;
+        conns.reserve(players_.size());
+        for (const auto& pair : players_) {
+            conns.push_back(pair.second);
+        }
+        return conns;
+    }
+
     // 检查是否所有玩家都提交了输入
     bool all_inputs_ready(uint32_t frame_id) {
         std::lock_guard<std::mutex> lock(mutex_);

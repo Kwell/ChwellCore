@@ -161,6 +161,11 @@ void FrameSyncComponent::handle_frame_sync_req(const net::TcpConnectionPtr& conn
     size_t size = data.size();
     size_t offset = 0;
 
+    if (size < 2) {
+        CHWELL_LOG_ERROR("handle_frame_sync_req: data too short (< 2 bytes)");
+        return;
+    }
+
     uint16_t room_id_len_net;
     std::memcpy(&room_id_len_net, ptr + offset, 2);
     uint16_t room_id_len = core::net_to_host16(room_id_len_net);
@@ -231,28 +236,29 @@ void FrameSyncComponent::join_room(uint32_t player_id, const std::string& room_i
 }
 
 void FrameSyncComponent::leave_room(uint32_t player_id, const std::string& room_id) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    bool should_destroy = false;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
 
-    auto it = rooms_.find(room_id);
-    if (it != rooms_.end()) {
-        it->second->leave_player(player_id);
-    }
+        auto it = rooms_.find(room_id);
+        if (it != rooms_.end()) {
+            it->second->leave_player(player_id);
+            should_destroy = (it->second->player_count() == 0);
+        }
 
-    // 清理连接信息
-    for (auto cit = connections_.begin(); cit != connections_.end(); ) {
-        if (cit->second.player_id == player_id && cit->second.room_id == room_id) {
-            cit = connections_.erase(cit);
-        } else {
-            ++cit;
+        // 清理连接信息
+        for (auto cit = connections_.begin(); cit != connections_.end(); ) {
+            if (cit->second.player_id == player_id && cit->second.room_id == room_id) {
+                cit = connections_.erase(cit);
+            } else {
+                ++cit;
+            }
         }
     }
 
-    // 如果房间空了，销毁房间
-    if (rooms_.find(room_id) != rooms_.end()) {
-        auto& room = rooms_[room_id];
-        if (room->player_count() == 0) {
-            destroy_room(room_id);
-        }
+    // 在锁外调用 destroy_room，避免重入同一个 mutex
+    if (should_destroy) {
+        destroy_room(room_id);
     }
 }
 
@@ -282,15 +288,18 @@ void FrameSyncComponent::create_snapshot(const std::string& room_id, const Frame
 }
 
 void FrameSyncComponent::broadcast_frame_state(const std::string& room_id, const FrameState& state) {
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    auto it = rooms_.find(room_id);
-    if (it == rooms_.end()) {
-        return;
+    // 先取出玩家连接（get_player_connections 内部加 FrameSyncRoom 的锁），
+    // 再加 FrameSyncComponent 的锁，保持锁顺序一致，避免死锁
+    std::vector<net::TcpConnectionPtr> player_conns;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = rooms_.find(room_id);
+        if (it == rooms_.end()) {
+            return;
+        }
+        // get_player_connections() 返回真实的 shared_ptr，不再使用悬垂裸指针
+        player_conns = it->second->get_player_connections();
     }
-
-    auto& room = it->second;
-    auto player_ids = room->get_player_ids();
 
     // 编码状态: [frame_id(4)][state_data_len(2)][state_data]
     std::string body;
@@ -299,19 +308,8 @@ void FrameSyncComponent::broadcast_frame_state(const std::string& room_id, const
 
     protocol::Message msg(frame_cmd::S2C_FRAME_STATE, std::vector<char>(body.begin(), body.end()));
 
-    // 广播到房间内所有玩家
-    for (uint32_t player_id : player_ids) {
-        // 找到对应的连接
-        for (auto& pair : connections_) {
-            if (pair.second.player_id == player_id && pair.second.room_id == room_id) {
-                auto* raw_ptr = pair.first;
-                // 注意：这里需要从 raw_ptr 获取 shared_ptr
-                // 实际实现时需要维护连接映射
-                service::ProtocolRouterComponent::send_message(
-                    net::TcpConnectionPtr(raw_ptr, [](net::TcpConnection*) {}), msg);
-                break;
-            }
-        }
+    for (const auto& conn : player_conns) {
+        service::ProtocolRouterComponent::send_message(conn, msg);
     }
 
     CHWELL_LOG_INFO("Broadcasted frame state to room " + room_id + ", frame_id=" + std::to_string(state.frame_id));
@@ -341,14 +339,19 @@ void FrameSyncComponent::send_frame_snapshot(const net::TcpConnectionPtr& conn, 
 }
 
 void FrameSyncComponent::on_disconnect(const net::TcpConnectionPtr& conn) {
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    auto it = connections_.find(conn.get());
-    if (it != connections_.end()) {
-        uint32_t player_id = it->second.player_id;
-        std::string room_id = it->second.room_id;
-        connections_.erase(it);
-
+    uint32_t player_id = 0;
+    std::string room_id;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = connections_.find(conn.get());
+        if (it != connections_.end()) {
+            player_id = it->second.player_id;
+            room_id = it->second.room_id;
+            connections_.erase(it);
+        }
+    }
+    // 在锁外调用 leave_room，避免 on_disconnect → leave_room → destroy_room 三重死锁
+    if (!room_id.empty()) {
         leave_room(player_id, room_id);
     }
 }

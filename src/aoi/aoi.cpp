@@ -308,23 +308,11 @@ bool GridAoi::get_entity(uint64_t entity_id, Entity& entity) const {
     return false;
 }
 
-std::vector<Entity> GridAoi::get_entities_in_view(uint64_t watcher_id) const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    
-    auto it = entities_.find(watcher_id);
-    if (it == entities_.end()) {
-        return {};
-    }
-    
-    return get_entities_in_view(it->second.x, it->second.y);
-}
-
-std::vector<Entity> GridAoi::get_entities_in_view(int x, int y) const {
+// 无锁实现（调用方须持有 mutex_）
+std::vector<Entity> GridAoi::get_entities_in_view_locked(int x, int y) const {
     std::vector<Entity> result;
-    
     int min_gx, min_gy, max_gx, max_gy;
     get_grids_in_view(x, y, min_gx, min_gy, max_gx, max_gy);
-    
     for (int gy = min_gy; gy <= max_gy; ++gy) {
         for (int gx = min_gx; gx <= max_gx; ++gx) {
             int gidx = grid_index(gx, gy);
@@ -336,27 +324,13 @@ std::vector<Entity> GridAoi::get_entities_in_view(int x, int y) const {
             }
         }
     }
-    
     return result;
 }
 
-std::vector<uint64_t> GridAoi::get_entity_ids_in_view(uint64_t watcher_id) const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    
-    auto it = entities_.find(watcher_id);
-    if (it == entities_.end()) {
-        return {};
-    }
-    
-    return get_entity_ids_in_view(it->second.x, it->second.y);
-}
-
-std::vector<uint64_t> GridAoi::get_entity_ids_in_view(int x, int y) const {
+std::vector<uint64_t> GridAoi::get_entity_ids_in_view_locked(int x, int y) const {
     std::vector<uint64_t> result;
-    
     int min_gx, min_gy, max_gx, max_gy;
     get_grids_in_view(x, y, min_gx, min_gy, max_gx, max_gy);
-    
     for (int gy = min_gy; gy <= max_gy; ++gy) {
         for (int gx = min_gx; gx <= max_gx; ++gx) {
             int gidx = grid_index(gx, gy);
@@ -365,8 +339,35 @@ std::vector<uint64_t> GridAoi::get_entity_ids_in_view(int x, int y) const {
             }
         }
     }
-    
     return result;
+}
+
+std::vector<Entity> GridAoi::get_entities_in_view(uint64_t watcher_id) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = entities_.find(watcher_id);
+    if (it == entities_.end()) {
+        return {};
+    }
+    return get_entities_in_view_locked(it->second.x, it->second.y);
+}
+
+std::vector<Entity> GridAoi::get_entities_in_view(int x, int y) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return get_entities_in_view_locked(x, y);
+}
+
+std::vector<uint64_t> GridAoi::get_entity_ids_in_view(uint64_t watcher_id) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = entities_.find(watcher_id);
+    if (it == entities_.end()) {
+        return {};
+    }
+    return get_entity_ids_in_view_locked(it->second.x, it->second.y);
+}
+
+std::vector<uint64_t> GridAoi::get_entity_ids_in_view(int x, int y) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return get_entity_ids_in_view_locked(x, y);
 }
 
 std::vector<Entity> GridAoi::get_entities_in_grid(int grid_x, int grid_y) const {

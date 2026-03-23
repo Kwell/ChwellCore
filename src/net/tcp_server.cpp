@@ -86,14 +86,20 @@ void TcpServer::accept_loop() {
             auto conn = std::make_shared<TcpConnection>(std::move(socket));
             conn->set_message_callback(message_cb_);
             conn->set_close_callback([this](const TcpConnectionPtr& c) {
-                connections_.erase(c);
+                {
+                    std::lock_guard<std::mutex> lock(connections_mutex_);
+                    connections_.erase(c);
+                }
                 CHWELL_LOG_INFO("Connection closed, remaining: " << connections_.size());
                 if (disconnect_cb_) {
                     disconnect_cb_(c);
                 }
             });
 
-            connections_.insert(conn);
+            {
+                std::lock_guard<std::mutex> lock(connections_mutex_);
+                connections_.insert(conn);
+            }
             CHWELL_LOG_INFO("New connection accepted, total: " << connections_.size());
 
             if (connection_cb_) {

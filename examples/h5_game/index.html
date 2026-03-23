@@ -202,7 +202,13 @@
     ws = new WebSocket(url);
     ws.binaryType = 'arraybuffer';
     ws.onopen = () => {
-      log('loginStatus', '已连接，请点击登录');
+      log('loginStatus', '已连接，正在登录…');
+      const pid = document.getElementById('playerId').value.trim();
+      if (pid) {
+        send(Cmd.LOGIN, pid);
+      } else {
+        log('loginStatus', '已连接，请输入昵称后点击登录');
+      }
     };
     ws.onclose = () => {
       log('loginStatus', '连接已断开');
@@ -233,8 +239,15 @@
         log('lobbyPlayerId', playerId);
         sendListRooms();
         if (!heartbeatTimer) heartbeatTimer = setInterval(() => {
-          if (ws && ws.readyState === WebSocket.OPEN)
-            ws.send(writeMsg(Cmd.HEARTBEAT, 'ping'));
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            // body 为 8 字节小端 int64 时间戳（毫秒）
+            const now = Date.now();
+            const buf = new ArrayBuffer(8);
+            const view = new DataView(buf);
+            view.setUint32(0, now & 0xFFFFFFFF, true);
+            view.setUint32(4, Math.floor(now / 0x100000000) & 0xFFFFFFFF, true);
+            ws.send(writeMsg(Cmd.HEARTBEAT, new Uint8Array(buf)));
+          }
         }, 15000);
       } else log('loginStatus', body || '登录失败');
       return;
@@ -353,14 +366,9 @@
   function sendJoinRoom(id) { send(Cmd.JOIN_ROOM, id); roomId = id; }
 
   document.getElementById('btnConnect').onclick = () => {
+    const pid = document.getElementById('playerId').value.trim();
+    if (!pid) { log('loginStatus', '请输入昵称'); return; }
     connect();
-    setTimeout(() => {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        const pid = document.getElementById('playerId').value.trim();
-        if (!pid) { log('loginStatus', '请输入昵称'); return; }
-        send(Cmd.LOGIN, pid);
-      }
-    }, 300);
   };
 
   document.getElementById('btnCreateRoom').onclick = () => {
