@@ -14,7 +14,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 这里不再单独安装 CMake，使用 ubuntu-latest 自带的 cmake
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libyaml-cpp-dev libssl-dev
 
       - name: Configure
         run: |
