@@ -26,6 +26,16 @@ inline std::string trim(const std::string& s) {
     return s.substr(start, end - start);
 }
 
+inline std::string remove_quotes(const std::string& s) {
+    if (s.size() >= 2) {
+        if ((s[0] == '"' && s[s.size()-1] == '"') ||
+            (s[0] == '\'' && s[s.size()-1] == '\'')) {
+            return s.substr(1, s.size() - 2);
+        }
+    }
+    return s;
+}
+
 } // anonymous namespace
 
 bool Config::load_from_file(const std::string& path) {
@@ -37,6 +47,7 @@ bool Config::load_from_file(const std::string& path) {
 bool Config::load_from_files(const std::vector<std::string>& paths) {
     // 重置 KV，但保留构造时设置的默认字段值
     kv_.clear();
+    components_.clear();
 
     for (const auto& p : paths) {
         if (p.empty()) continue;
@@ -71,18 +82,23 @@ bool Config::load_from_files(const std::vector<std::string>& paths) {
             }
 
             if (!key.empty()) {
-                kv_[key] = value;
+                kv_[key] = remove_quotes(value);
             }
         }
     }
 
     // 根据 KV 更新内部字段
     apply_kv_to_fields();
+    // 解析组件配置
+    parse_components();
     // 环境变量最终覆盖
     apply_env_overrides();
 
-    CHWELL_LOG_INFO("Config: effective listen_port=" << listen_port_
+    CHWELL_LOG_INFO("Config: server_name=" << server_name()
+                    << ", bus_id=" << bus_id()
+                    << ", listen_port=" << listen_port_
                     << ", worker_threads=" << worker_threads_);
+    CHWELL_LOG_INFO("Config: loaded " << components_.size() << " component configs");
     return true;
 }
 
@@ -105,6 +121,21 @@ int Config::get_int(const std::string& key, int default_value) const {
     } catch (...) {
         return default_value;
     }
+}
+
+bool Config::get_bool(const std::string& key, bool default_value) const {
+    auto it = kv_.find(key);
+    if (it == kv_.end()) {
+        return default_value;
+    }
+    const std::string& v = it->second;
+    if (v == "true" || v == "1" || v == "yes" || v == "on") {
+        return true;
+    }
+    if (v == "false" || v == "0" || v == "no" || v == "off") {
+        return false;
+    }
+    return default_value;
 }
 
 void Config::set(const std::string& key, const std::string& value) {
@@ -138,6 +169,70 @@ void Config::apply_env_overrides() {
         } catch (...) {
         }
     }
+}
+
+void Config::parse_components() {
+    // 解析组件配置，格式：
+    // component.name = "ComponentName"
+    // component.name.enabled = true
+    // component.name.priority = 10
+    // component.name.param_key = param_value
+    
+    std::unordered_map<std::string, ComponentConfig> comp_map;
+    
+    for (const auto& kv : kv_) {
+        if (kv.first.find("component.") == 0) {
+            // 解析 component.xxx.yyy
+            std::string rest = kv.first.substr(10); // 去掉 "component."
+            std::size_t dot_pos = rest.find('.');
+            
+            if (dot_pos != std::string::npos) {
+                std::string comp_name = rest.substr(0, dot_pos);
+                std::string prop = rest.substr(dot_pos + 1);
+                
+                if (prop == "enabled") {
+                    comp_map[comp_name].name = comp_name;
+                    comp_map[comp_name].enabled = get_bool(kv.first, true);
+                } else if (prop == "priority") {
+                    comp_map[comp_name].name = comp_name;
+                    comp_map[comp_name].priority = get_int(kv.first, 100);
+                } else {
+                    // 组件参数
+                    comp_map[comp_name].name = comp_name;
+                    comp_map[comp_name].params[prop] = kv.second;
+                }
+            }
+        }
+    }
+    
+    // 转换为 vector
+    components_.clear();
+    for (const auto& kv : comp_map) {
+        if (kv.second.name.empty()) continue;
+        components_.push_back(kv.second);
+    }
+    
+    CHWELL_LOG_INFO("Config: parsed " << components_.size() << " component configs");
+}
+
+bool Config::is_component_enabled(const std::string& name) const {
+    for (const auto& comp : components_) {
+        if (comp.name == name) {
+            return comp.enabled;
+        }
+    }
+    // 默认启用
+    return true;
+}
+
+int Config::get_component_priority(const std::string& name) const {
+    for (const auto& comp : components_) {
+        if (comp.name == name) {
+            return comp.priority;
+        }
+    }
+    // 默认优先级
+    return 100;
 }
 
 } // namespace core

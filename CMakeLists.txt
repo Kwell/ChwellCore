@@ -105,6 +105,7 @@ add_library(chwell_core
     src/net/connection_pool.cpp
     src/cluster/node.cpp
     src/service/service.cpp
+    src/service/plugin.cpp
     src/protocol/message.cpp
     src/protocol/parser.cpp
     src/service/protocol_router.cpp
