@@ -79,6 +79,8 @@ public:
         std::string prefix = table_name_ + ":";
         auto keys = storage_->keys(prefix);
         if (keys.empty()) {
+            CHWELL_LOG_WARN("ORM find_all: keys() returned empty for prefix '"
+                            << prefix << "' — storage backend may not implement keys()");
             return result;
         }
         auto responses = storage_->mget(keys);

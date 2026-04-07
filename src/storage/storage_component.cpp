@@ -5,13 +5,24 @@ namespace chwell {
 namespace storage {
 
 StorageComponent::StorageComponent(std::unique_ptr<StorageInterface> storage)
-    : storage_(std::move(storage)) {}
+    : storage_(std::move(storage)) {
+    if (!storage_) {
+        throw std::runtime_error("StorageComponent: storage is nullptr");
+    }
+}
 
 StorageComponent::StorageComponent(const StorageConfig& config)
-    : storage_(StorageFactory::create(config)) {}
+    : StorageComponent(StorageFactory::create(config)) {}
 
 StorageComponent::StorageComponent(const std::string& yaml_path)
-    : storage_(StorageFactory::create_from_yaml(yaml_path)) {}
+    : StorageComponent(StorageFactory::create_from_yaml(yaml_path)) {}
+
+bool StorageComponent::Shut() {
+    if (storage_) {
+        storage_->disconnect();
+    }
+    return true;
+}
 
 StorageComponent::~StorageComponent() {
     if (storage_) {

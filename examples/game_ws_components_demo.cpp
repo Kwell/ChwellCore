@@ -12,8 +12,9 @@
 
 using namespace chwell;
 
-// 示例：WebSocket + 游戏组件服务器
+// 示例：WebSocket（实际为原始 TCP）+ 游戏组件服务器
 // 展示如何使用 WsServer + Service + 游戏组件（Login, Chat, Room, Heartbeat）
+// 注意：WsServer 并非真正的 WebSocket 服务器，仅封装了原始 TCP 连接
 
 int main(int argc, char* argv[]) {
     // 设置日志级别

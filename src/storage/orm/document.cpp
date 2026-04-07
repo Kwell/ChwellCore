@@ -22,7 +22,10 @@ std::int64_t Document::get_int64(const std::string& key,
                                   std::int64_t default_val) const {
     auto it = data_.find(key);
     if (it == data_.end()) return default_val;
-    return static_cast<std::int64_t>(std::strtoll(it->second.c_str(), nullptr, 10));
+    char* end = nullptr;
+    auto v = std::strtoll(it->second.c_str(), &end, 10);
+    if (end == it->second.c_str() || *end != '\0') return default_val;
+    return v;
 }
 
 int Document::get_int(const std::string& key, int default_val) const {
@@ -32,7 +35,10 @@ int Document::get_int(const std::string& key, int default_val) const {
 double Document::get_double(const std::string& key, double default_val) const {
     auto it = data_.find(key);
     if (it == data_.end()) return default_val;
-    return std::strtod(it->second.c_str(), nullptr);
+    char* end = nullptr;
+    auto v = std::strtod(it->second.c_str(), &end);
+    if (end == it->second.c_str() || *end != '\0') return default_val;
+    return v;
 }
 
 bool Document::get_bool(const std::string& key, bool default_val) const {

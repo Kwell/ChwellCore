@@ -49,6 +49,16 @@ void TcpServer::stop() {
     if (wake_pipe_[0] >= 0) { close(wake_pipe_[0]); wake_pipe_[0] = -1; }
     if (wake_pipe_[1] >= 0) { close(wake_pipe_[1]); wake_pipe_[1] = -1; }
 
+    // Close all active connections to trigger disconnect callbacks
+    std::vector<TcpConnectionPtr> conns;
+    {
+        std::lock_guard<std::mutex> lock(connections_mutex_);
+        conns.assign(connections_.begin(), connections_.end());
+    }
+    for (auto& conn : conns) {
+        conn->close();
+    }
+
     {
         std::lock_guard<std::mutex> lock(connections_mutex_);
         CHWELL_LOG_INFO("TcpServer stopped, remaining connections: " << connections_.size());
@@ -113,7 +123,7 @@ void TcpServer::accept_loop() {
                 connection_cb_(conn);
             }
 
-            io_service_.post([conn, this]() {
+            io_service_.post([conn]() {
                 CHWELL_LOG_DEBUG("Starting connection read loop");
                 conn->start();
             });

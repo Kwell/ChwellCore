@@ -6,6 +6,7 @@
 #include <type_traits>
 #include <algorithm>
 #include <chrono>
+#include <atomic>
 
 #include "chwell/core/thread_pool.h"
 #include "chwell/core/logger.h"
@@ -33,7 +34,8 @@ public:
         : server_(io_service_, listen_port),
           thread_pool_(worker_threads),
           worker_threads_(worker_threads),
-          running_(false) {
+          running_(false),
+          init_stage_(0) {
         server_.set_connection_callback([](const net::TcpConnectionPtr& conn) {
             (void)conn;
             CHWELL_LOG_INFO("New connection");
@@ -153,25 +155,44 @@ public:
     
     void start() {
         // 完整的生命周期流程
+        // Track which stages completed for proper teardown on failure
+        // init_stage_: 0=none, 1=Init, 2=PostInit, 3=CheckConfig, 4=PreUpdate
+        auto teardown = [this](int stage) {
+            if (stage >= 4) { /* PreUpdate has no separate shut */ }
+            if (stage >= 3) { /* CheckConfig has no separate shut */ }
+            if (stage >= 2) { /* PostInit has no separate shut */ }
+            if (stage >= 1) {
+                // Init succeeded, call Shut on all components
+                Shut();
+            }
+        };
+
         if (!Init()) {
             CHWELL_LOG_ERROR("Service Init failed, aborting...");
             return;
         }
+        init_stage_ = 1;
         
         if (!PostInit()) {
             CHWELL_LOG_ERROR("Service PostInit failed, aborting...");
+            teardown(init_stage_);
             return;
         }
+        init_stage_ = 2;
         
         if (!CheckConfig()) {
             CHWELL_LOG_ERROR("Service CheckConfig failed, aborting...");
+            teardown(init_stage_);
             return;
         }
+        init_stage_ = 3;
         
         if (!PreUpdate()) {
             CHWELL_LOG_ERROR("Service PreUpdate failed, aborting...");
+            teardown(init_stage_);
             return;
         }
+        init_stage_ = 4;
         
         // 启动网络
         server_.start_accept();
@@ -189,24 +210,23 @@ public:
     }
 
     void stop() {
-        if (!running_) return;
+        // Idempotent: only one thread proceeds
+        if (!running_.exchange(false)) return;
         
         CHWELL_LOG_INFO("Service stopping...");
         
-        // 阶段6: 关闭前清理
-        PreShut();
-        
-        // 停止网络
+        // First stop accepting new connections and io_service
         server_.stop();
         io_service_.stop();
         
-        // 阶段7: 关闭
+        // Then call PreShut → Shut on components
+        PreShut();
         Shut();
         
-        // 卸载插件
+        // Unload plugins
         plugin_manager_.UninstallAll(*this);
         
-        running_ = false;
+        init_stage_ = 0;
         CHWELL_LOG_INFO("Service stopped");
     }
     
@@ -230,6 +250,13 @@ public:
     
     // ========== 主循环更新 ==========
     
+    // IMPORTANT: You MUST call Update() from your own game loop, e.g.:
+    //   while (service.is_running()) { service.Update(); std::this_thread::sleep_for(16ms); }
+    // OR add a timer-driven update loop, e.g.:
+    //   asio::steady_timer timer(io_service);
+    //   timer.expires_after(std::chrono::milliseconds(16));
+    //   timer.async_wait([&](auto ec) { if (!ec) { service.Update(); timer.expires_after(16ms); timer.async_wait(/*...*/); } });
+    // Without calling Update(), component logic (tick, timers, etc.) will never run.
     void Update() {
         if (!running_) return;
         
@@ -272,7 +299,8 @@ private:
     std::vector<std::unique_ptr<Component>> components_;
     
     PluginManager plugin_manager_;
-    bool running_;
+    std::atomic<bool> running_;
+    int init_stage_; // Tracks which init stages completed (0-4)
     std::chrono::steady_clock::time_point last_update_time_;
 };
 

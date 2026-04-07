@@ -293,36 +293,42 @@ void ConnectionPool::return_connection(PooledConnection& conn) {
     if (!conn.connection) {
         return;
     }
-    
-    std::lock_guard<std::mutex> lock(mutex_);
-    
-    for (auto& c : connections_) {
-        if (c->connection.get() == conn.connection.get()) {
-            c->in_use = false;
-            c->last_used_time = PooledConnection::current_time_ms();
-            
-            if (!c->is_valid) {
-                c->connection->close();
-            }
-            break;
-        }
-    }
-    
-    conn.connection.reset();
-    conn.is_valid = false;
-    
-    if (!waiting_callbacks_.empty()) {
-        PooledConnection idle_conn;
-        if (try_get_idle(idle_conn)) {
-            auto cb = waiting_callbacks_.front();
-            waiting_callbacks_.pop();
-            if (cb) {
-                cb(idle_conn);
+
+    PooledConnection idle_conn;
+    std::function<void(const PooledConnection&)> pending_cb;
+
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        for (auto& c : connections_) {
+            if (c->connection.get() == conn.connection.get()) {
+                c->in_use = false;
+                c->last_used_time = PooledConnection::current_time_ms();
+
+                if (!c->is_valid) {
+                    c->connection->close();
+                }
+                break;
             }
         }
+
+        conn.connection.reset();
+        conn.is_valid = false;
+
+        if (!waiting_callbacks_.empty()) {
+            if (try_get_idle(idle_conn)) {
+                pending_cb = std::move(waiting_callbacks_.front());
+                waiting_callbacks_.pop();
+            }
+        }
+
+        cv_.notify_one();
     }
-    
-    cv_.notify_one();
+
+    // Invoke callback outside the lock to avoid deadlock if callback calls get_connection()
+    if (pending_cb) {
+        pending_cb(idle_conn);
+    }
 }
 
 int ConnectionPool::total_connections() const {

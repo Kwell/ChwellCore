@@ -118,8 +118,8 @@ private:
     // 将任务添加到合适的层级
     void add_task_to_wheel(std::shared_ptr<TimerTask> task);
     
-    // 处理单个槽的任务
-    void process_slot(int layer, int slot);
+    // 处理单个槽的任务（收集到期任务到due_tasks，不执行回调）
+    void process_slot(int layer, int slot, std::vector<std::shared_ptr<TimerTask>>& due_tasks);
     
     // 级联处理（从上层降到下层）
     void cascade(int layer);

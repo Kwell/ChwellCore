@@ -23,7 +23,7 @@ std::unique_ptr<StorageInterface> StorageFactory::create(
         std::unique_ptr<MysqlStorage> storage(new MysqlStorage(config));
         if (storage->connect()) {
             CHWELL_LOG_INFO("StorageFactory: created type=mysql");
-            return std::unique_ptr<StorageInterface>(storage.release());
+            return storage;
         }
         CHWELL_LOG_ERROR("StorageFactory: MySQL connect failed");
         return nullptr;
@@ -32,7 +32,7 @@ std::unique_ptr<StorageInterface> StorageFactory::create(
         std::unique_ptr<MongodbStorage> storage(new MongodbStorage(config));
         if (storage->connect()) {
             CHWELL_LOG_INFO("StorageFactory: created type=mongodb");
-            return std::unique_ptr<StorageInterface>(storage.release());
+            return storage;
         }
         CHWELL_LOG_ERROR("StorageFactory: MongoDB connect failed");
         return nullptr;

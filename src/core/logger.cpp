@@ -22,24 +22,24 @@ Logger::Logger() : current_level_(LogLevel::Info), use_color_(false) {
 }
 
 void Logger::set_level(LogLevel level) {
-    std::lock_guard<std::mutex> lock(mutex_);
     current_level_ = level;
 }
 
 void Logger::log(LogLevel level, const std::string& msg) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (static_cast<int>(level) < static_cast<int>(current_level_)) {
+    if (static_cast<int>(level) < static_cast<int>(current_level_.load())) {
         return;
     }
+
+    std::lock_guard<std::mutex> lock(mutex_);
 
     std::ostream& out = stream_for(level);
     out << now_string();
 
-    if (use_color_) {
+    if (use_color_.load()) {
         out << " " << level_color(level);
     }
     out << " [" << level_to_string(level) << "] ";
-    if (use_color_) {
+    if (use_color_.load()) {
         out << color_reset();
     }
     out << msg << std::endl;
@@ -67,8 +67,9 @@ std::string Logger::now_string() {
     localtime_s(&timeinfo, &t);
     std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &timeinfo);
 #else
-    std::tm* timeinfo = std::localtime(&t);
-    std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", timeinfo);
+    struct tm tm_buf;
+    localtime_r(&t, &tm_buf);
+    std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &tm_buf);
 #endif
 
     std::ostringstream oss;

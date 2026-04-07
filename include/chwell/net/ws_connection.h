@@ -1,3 +1,22 @@
+// ============================================================================
+// WARNING: This is a raw TCP wrapper, NOT a WebSocket implementation.
+// It does NOT implement RFC 6455 (WebSocket Protocol). There is no HTTP
+// upgrade handshake, no opcode framing, no mask/unmask, no ping/pong, and
+// no close status codes. The name "WsRawConnection" exists for historical
+// reasons and backward compatibility — it should be treated as a raw TCP
+// stream.
+//
+// Additionally, this class provides NO message boundary handling. It delivers
+// raw bytes as they arrive from the kernel TCP buffer. The upper layer MUST
+// implement its own framing protocol (e.g. length-prefix, delimiter, or a
+// proper WebSocket library) if message semantics are needed.
+//
+// Thread safety notes:
+// - Callbacks (message_cb_, close_cb_) must be set BEFORE calling start().
+//   They are not protected by any lock and should not be changed while the
+//   read loop is running.
+// ============================================================================
+
 #pragma once
 
 #include <memory>
@@ -11,16 +30,16 @@
 namespace chwell {
 namespace net {
 
-class WsConnection;
+class WsRawConnection;
 
-typedef std::shared_ptr<WsConnection> WsConnectionPtr;
+typedef std::shared_ptr<WsRawConnection> WsConnectionPtr;
 typedef std::function<void(const WsConnectionPtr&, const std::string&)> WsMessageCallback;
 typedef std::function<void(const WsConnectionPtr&)> WsConnectionCallback;
 
-// 非完整实现的 WebSocket 连接封装骨架
-class WsConnection : public std::enable_shared_from_this<WsConnection> {
+// 非完整实现的 WebSocket 连接封装骨架（实际为原始 TCP 流）
+class WsRawConnection : public std::enable_shared_from_this<WsRawConnection> {
 public:
-    explicit WsConnection(TcpSocket socket);
+    explicit WsRawConnection(TcpSocket socket);
 
     void start();
     void send_text(const std::string& text);

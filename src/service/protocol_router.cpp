@@ -9,24 +9,28 @@ void ProtocolRouterComponent::on_message(const net::TcpConnectionPtr& conn,
                                          std::string_view data) {
     CHWELL_LOG_DEBUG("ProtocolRouter received " << data.size() << " bytes");
 
-    // 获取或创建该连接的解析器
-    auto& parser = parsers_[conn.get()];
+    // 在写锁下 feed 数据到解析器并获取结果
+    std::vector<protocol::Message> messages;
+    {
+        std::unique_lock lock(parsers_mutex_);
+        messages = parsers_[conn.get()].feed(data);
+    }
 
-    // 解析消息
-    std::vector<protocol::Message> messages = parser.feed(data);
     CHWELL_LOG_DEBUG("Parsed " << messages.size() << " message(s)");
 
-    // 对每个解析出的消息进行路由
+    // 对每个解析出的消息进行路由（共享读锁访问 handlers）
     for (const auto& msg : messages) {
         CHWELL_LOG_DEBUG("Routing message cmd=0x" << std::hex << msg.cmd << std::dec);
 
+        std::shared_lock hlock(handlers_mutex_);
         auto it = handlers_.find(msg.cmd);
         if (it != handlers_.end()) {
-            // 找到对应的处理器，调用它
             CHWELL_LOG_DEBUG("Calling handler for cmd=0x" << std::hex << msg.cmd << std::dec);
-            it->second(conn, msg);
+            // 在读锁下调用 handler，避免死锁风险
+            auto handler = it->second;
+            hlock.unlock();
+            handler(conn, msg);
         } else {
-            // 没有注册的处理器，记录警告
             CHWELL_LOG_WARN("No handler registered for cmd: 0x" << std::hex << msg.cmd << std::dec
                           << " (" << msg.cmd << ")");
         }
@@ -35,7 +39,7 @@ void ProtocolRouterComponent::on_message(const net::TcpConnectionPtr& conn,
 
 void ProtocolRouterComponent::on_disconnect(const net::TcpConnectionPtr& conn) {
     CHWELL_LOG_DEBUG("ProtocolRouter cleanup for disconnected connection");
-    // 清理该连接的解析器
+    std::unique_lock lock(parsers_mutex_);
     parsers_.erase(conn.get());
 }
 

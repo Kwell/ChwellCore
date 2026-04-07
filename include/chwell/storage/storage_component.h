@@ -35,6 +35,9 @@ public:
     StorageInterface* storage() { return storage_.get(); }
     const StorageInterface* storage() const { return storage_.get(); }
 
+    // Component 生命周期
+    bool Shut() override;
+
     // 便捷方法：直接委托给 storage_
     StorageResult get(const std::string& key) {
         return storage_ ? storage_->get(key) : StorageResult::failure("storage not initialized");

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <shared_mutex>
 #include <cstdint>
 #include <string_view>
 #include <functional>
@@ -34,6 +35,7 @@ public:
 
     // 注册一个 cmd 的处理器
     void register_handler(std::uint16_t cmd, MessageHandler handler) {
+        std::unique_lock lock(handlers_mutex_);
         handlers_[cmd] = handler;
     }
 
@@ -50,7 +52,10 @@ public:
 private:
     // 为每个连接维护一个解析器（处理粘包/拆包）
     std::unordered_map<const net::TcpConnection*, protocol::Parser> parsers_;
+    mutable std::shared_mutex parsers_mutex_;
+
     std::unordered_map<std::uint16_t, MessageHandler> handlers_;
+    mutable std::shared_mutex handlers_mutex_;
 };
 
 } // namespace service

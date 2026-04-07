@@ -1,6 +1,7 @@
 #include "chwell/net/tcp_connection.h"
 #include "chwell/core/logger.h"
 #include <cerrno>
+#include <netinet/tcp.h>
 
 namespace chwell {
 namespace net {
@@ -11,29 +12,19 @@ TcpConnection::TcpConnection(TcpSocket socket)
 }
 
 void TcpConnection::start() {
+    // P0 #3: set a 30-second send timeout so send() cannot block forever
+    // on a slow/malicious peer (prevents thread-pool exhaustion).
+    struct timeval tv;
+    tv.tv_sec  = 30;
+    tv.tv_usec = 0;
+    ::setsockopt(socket_.native_handle(), SOL_SOCKET, SO_SNDTIMEO,
+                 &tv, sizeof(tv));
+
     CHWELL_LOG_DEBUG("TcpConnection read loop starting");
     run_read_loop();
 }
 
 void TcpConnection::run_read_loop() {
-    struct CloseGuard {
-        TcpConnection& conn;
-        bool active{true};
-
-        explicit CloseGuard(TcpConnection& c) noexcept
-            : conn(c) {}
-
-        ~CloseGuard() noexcept {
-            if (!active) {
-                return;
-            }
-            conn.closed_ = true;
-            if (conn.close_cb_) {
-                conn.close_cb_(conn.shared_from_this());
-            }
-        }
-    } guard(*this);
-
     while (!closed_ && socket_.is_open()) {
         ssize_t n = socket_.read(read_buffer_.data(), read_buffer_.size());
         if (n <= 0) {
@@ -50,7 +41,7 @@ void TcpConnection::run_read_loop() {
         }
     }
 
-    guard.active = false;
+    // P0 #1: call close_cb_ exactly once – no CloseGuard needed.
     closed_ = true;
     if (close_cb_) {
         close_cb_(shared_from_this());
@@ -83,8 +74,14 @@ void TcpConnection::send(std::string_view data) {
 }
 
 void TcpConnection::close() {
+    // P0 #2: double-check with send_mutex_ to avoid racing with send().
     if (closed_) {
         CHWELL_LOG_DEBUG("Connection already closed");
+        return;
+    }
+    std::lock_guard<std::mutex> lock(send_mutex_);
+    if (closed_) {
+        CHWELL_LOG_DEBUG("Connection already closed (after lock)");
         return;
     }
     CHWELL_LOG_INFO("Closing connection");

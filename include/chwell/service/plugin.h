@@ -134,6 +134,7 @@ public:
 
 private:
     std::vector<std::unique_ptr<IPlugin>> plugins_;
+    bool installed_ = false;
 };
 
 } // namespace service

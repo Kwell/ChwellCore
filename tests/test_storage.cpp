@@ -322,21 +322,19 @@ TEST(StorageComponentTest, ConstructFromConfig) {
 }
 
 TEST(StorageComponentTest, NullStorageGuardOnGet) {
-    // 构造空 component（不传 storage）
-    storage::StorageComponent comp(
-        std::unique_ptr<storage::StorageInterface>(nullptr));
-
-    auto r = comp.get("k");
-    EXPECT_FALSE(r.ok);
-    EXPECT_FALSE(r.error_msg.empty());
+    // 构造空 component（不传 storage）应该抛异常
+    EXPECT_THROW(
+        storage::StorageComponent comp(
+            std::unique_ptr<storage::StorageInterface>(nullptr)),
+        std::runtime_error);
 }
 
 TEST(StorageComponentTest, NullStorageGuardOnRepository) {
-    storage::StorageComponent comp(
-        std::unique_ptr<storage::StorageInterface>(nullptr));
-
-    // repository() 应抛出而非崩溃
-    EXPECT_THROW(comp.repository<DummyOrmEntity>("tbl"), std::runtime_error);
+    // 构造空 component 应该抛异常（在构造时就捕获）
+    EXPECT_THROW(
+        storage::StorageComponent comp(
+            std::unique_ptr<storage::StorageInterface>(nullptr)),
+        std::runtime_error);
 }
 
 // ===========================================================================

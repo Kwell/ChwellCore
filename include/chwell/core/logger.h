@@ -6,6 +6,7 @@
 #include <sstream>
 #include <chrono>
 #include <ctime>
+#include <atomic>
 
 namespace chwell {
 namespace core {
@@ -44,8 +45,8 @@ private:
     std::string color_reset() const;
     std::ostream& stream_for(LogLevel level);
 
-    LogLevel current_level_;
-    bool use_color_;
+    std::atomic<LogLevel> current_level_;
+    std::atomic<bool> use_color_;
     std::mutex mutex_;
 };
 
@@ -74,4 +75,3 @@ private:
     _chwell_ss << x; \
     ::chwell::core::Logger::instance().error(_chwell_ss.str()); \
 } while (0)
-

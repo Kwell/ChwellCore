@@ -10,6 +10,9 @@ UdpServer::UdpServer(IoService& io_service, unsigned short port)
     fd_ = socket(AF_INET, SOCK_DGRAM, 0);
     if (fd_ < 0) return;
 
+    int opt = 1;
+    setsockopt(fd_, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = INADDR_ANY;
@@ -45,10 +48,10 @@ void UdpServer::stop() {
 }
 
 void UdpServer::recv_loop() {
-    sockaddr_in remote_addr{};
-    socklen_t addr_len = sizeof(remote_addr);
-
     while (!stopped_ && fd_ >= 0) {
+        sockaddr_in remote_addr{};
+        socklen_t addr_len = sizeof(remote_addr);
+
         ssize_t n = recvfrom(fd_, buffer_.data(), buffer_.size(), 0,
                             reinterpret_cast<sockaddr*>(&remote_addr), &addr_len);
         if (n <= 0) {

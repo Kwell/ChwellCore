@@ -3,6 +3,7 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <shared_mutex>
 
 namespace chwell {
 namespace core {
@@ -39,8 +40,14 @@ public:
 
     // ========== 基础字段 ==========
     
-    int listen_port() const { return listen_port_; }
-    int worker_threads() const { return worker_threads_; }
+    int listen_port() const {
+        std::shared_lock lock(mutex_);
+        return listen_port_;
+    }
+    int worker_threads() const {
+        std::shared_lock lock(mutex_);
+        return worker_threads_;
+    }
     
     // ========== 服务配置 ==========
     
@@ -56,12 +63,22 @@ public:
     
     bool get_bool(const std::string& key, bool default_value) const;
 
+    std::string get_string_unlocked(const std::string& key,
+                           const std::string& default_value = std::string()) const;
+
+    int get_int_unlocked(const std::string& key, int default_value) const;
+    
+    bool get_bool_unlocked(const std::string& key, bool default_value) const;
+
     void set(const std::string& key, const std::string& value);
 
     // ========== 组件配置 ==========
     
     // 获取组件配置列表
-    const std::vector<ComponentConfig>& components() const { return components_; }
+    const std::vector<ComponentConfig>& components() const {
+        std::shared_lock lock(mutex_);
+        return components_;
+    }
     
     // 检查组件是否启用
     bool is_component_enabled(const std::string& name) const;
@@ -83,8 +100,10 @@ private:
     
     // 组件配置列表
     std::vector<ComponentConfig> components_;
+
+    // 线程安全
+    mutable std::shared_mutex mutex_;
 };
 
 } // namespace core
 } // namespace chwell
-

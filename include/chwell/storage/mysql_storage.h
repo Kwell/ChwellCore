@@ -2,6 +2,9 @@
 
 #include "chwell/storage/storage_interface.h"
 #include "chwell/storage/storage_types.h"
+#include <shared_mutex>
+#include <string>
+#include <cctype>
 
 namespace chwell {
 namespace storage {
@@ -25,9 +28,22 @@ public:
     // 按前缀列举 key，支持 Repository::find_all()
     virtual std::vector<std::string> keys(const std::string& prefix = "") override;
 
+    // 校验表名只允许 [a-zA-Z0-9_]，不合法时回退到 "kv"
+    static std::string sanitize_table_name(const std::string& name) {
+        if (name.empty()) return "kv";
+        for (char c : name) {
+            if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_') return "kv";
+        }
+        return name;
+    }
+
 private:
+    // 尝试重连，成功返回 true；失败返回 false
+    bool ensure_connected();
+
     StorageConfig config_;
     void* conn_{nullptr};  // MYSQL* 不暴露到头文件，避免依赖 mysql.h
+    mutable std::shared_mutex conn_mutex_;
 };
 
 }  // namespace storage

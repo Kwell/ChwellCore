@@ -6,6 +6,7 @@
 #include <sstream>
 #include <cctype>
 #include <vector>
+#include <shared_mutex>
 
 namespace chwell {
 namespace core {
@@ -45,9 +46,13 @@ bool Config::load_from_file(const std::string& path) {
 }
 
 bool Config::load_from_files(const std::vector<std::string>& paths) {
+    std::unique_lock lock(mutex_);
+
     // 重置 KV，但保留构造时设置的默认字段值
     kv_.clear();
     components_.clear();
+
+    bool any_loaded = false;
 
     for (const auto& p : paths) {
         if (p.empty()) continue;
@@ -56,6 +61,7 @@ bool Config::load_from_files(const std::vector<std::string>& paths) {
             CHWELL_LOG_DEBUG("Config: file not found, skip: " << p);
             continue;
         }
+        any_loaded = true;
         CHWELL_LOG_INFO("Config: loading file: " << p);
         std::string line;
         while (std::getline(in, line)) {
@@ -87,6 +93,10 @@ bool Config::load_from_files(const std::vector<std::string>& paths) {
         }
     }
 
+    if (!any_loaded) {
+        return false;
+    }
+
     // 根据 KV 更新内部字段
     apply_kv_to_fields();
     // 解析组件配置
@@ -104,6 +114,7 @@ bool Config::load_from_files(const std::vector<std::string>& paths) {
 
 std::string Config::get_string(const std::string& key,
                                const std::string& default_value) const {
+    std::shared_lock lock(mutex_);
     auto it = kv_.find(key);
     if (it != kv_.end()) {
         return it->second;
@@ -112,6 +123,7 @@ std::string Config::get_string(const std::string& key,
 }
 
 int Config::get_int(const std::string& key, int default_value) const {
+    std::shared_lock lock(mutex_);
     auto it = kv_.find(key);
     if (it == kv_.end()) {
         return default_value;
@@ -124,6 +136,7 @@ int Config::get_int(const std::string& key, int default_value) const {
 }
 
 bool Config::get_bool(const std::string& key, bool default_value) const {
+    std::shared_lock lock(mutex_);
     auto it = kv_.find(key);
     if (it == kv_.end()) {
         return default_value;
@@ -139,14 +152,52 @@ bool Config::get_bool(const std::string& key, bool default_value) const {
 }
 
 void Config::set(const std::string& key, const std::string& value) {
+    std::unique_lock lock(mutex_);
     if (key.empty()) return;
     kv_[key] = value;
     apply_kv_to_fields();
+    parse_components();
+}
+
+std::string Config::get_string_unlocked(const std::string& key,
+                               const std::string& default_value) const {
+    auto it = kv_.find(key);
+    if (it != kv_.end()) {
+        return it->second;
+    }
+    return default_value;
+}
+
+int Config::get_int_unlocked(const std::string& key, int default_value) const {
+    auto it = kv_.find(key);
+    if (it == kv_.end()) {
+        return default_value;
+    }
+    try {
+        return std::stoi(it->second);
+    } catch (...) {
+        return default_value;
+    }
+}
+
+bool Config::get_bool_unlocked(const std::string& key, bool default_value) const {
+    auto it = kv_.find(key);
+    if (it == kv_.end()) {
+        return default_value;
+    }
+    const std::string& v = it->second;
+    if (v == "true" || v == "1" || v == "yes" || v == "on") {
+        return true;
+    }
+    if (v == "false" || v == "0" || v == "no" || v == "off") {
+        return false;
+    }
+    return default_value;
 }
 
 void Config::apply_kv_to_fields() {
-    listen_port_ = get_int("listen_port", listen_port_);
-    worker_threads_ = get_int("worker_threads", worker_threads_);
+    listen_port_ = get_int_unlocked("listen_port", listen_port_);
+    worker_threads_ = get_int_unlocked("worker_threads", worker_threads_);
 }
 
 void Config::apply_env_overrides() {
@@ -192,10 +243,10 @@ void Config::parse_components() {
                 
                 if (prop == "enabled") {
                     comp_map[comp_name].name = comp_name;
-                    comp_map[comp_name].enabled = get_bool(kv.first, true);
+                    comp_map[comp_name].enabled = get_bool_unlocked(kv.first, true);
                 } else if (prop == "priority") {
                     comp_map[comp_name].name = comp_name;
-                    comp_map[comp_name].priority = get_int(kv.first, 100);
+                    comp_map[comp_name].priority = get_int_unlocked(kv.first, 100);
                 } else {
                     // 组件参数
                     comp_map[comp_name].name = comp_name;
@@ -216,6 +267,7 @@ void Config::parse_components() {
 }
 
 bool Config::is_component_enabled(const std::string& name) const {
+    std::shared_lock lock(mutex_);
     for (const auto& comp : components_) {
         if (comp.name == name) {
             return comp.enabled;
@@ -226,6 +278,7 @@ bool Config::is_component_enabled(const std::string& name) const {
 }
 
 int Config::get_component_priority(const std::string& name) const {
+    std::shared_lock lock(mutex_);
     for (const auto& comp : components_) {
         if (comp.name == name) {
             return comp.priority;
@@ -237,4 +290,3 @@ int Config::get_component_priority(const std::string& name) const {
 
 } // namespace core
 } // namespace chwell
-

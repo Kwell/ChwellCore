@@ -7,6 +7,10 @@ void MemoryStorage::prune_expired() {
     auto now = std::chrono::duration_cast<std::chrono::seconds>(
                    std::chrono::system_clock::now().time_since_epoch())
                    .count();
+    if (now - last_prune_time_ < kPruneIntervalSec) {
+        return;
+    }
+    last_prune_time_ = now;
     for (auto it = data_.begin(); it != data_.end();) {
         if (it->second.expire_at > 0 && it->second.expire_at < now) {
             it = data_.erase(it);

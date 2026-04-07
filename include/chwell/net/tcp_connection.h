@@ -26,8 +26,17 @@ public:
     void start();
     void send(const std::vector<char>& data);
     void send(std::string_view data);
+    /// Gracefully shut down the connection.
+    /// NOTE (limitation): close() does NOT join the read-loop thread.
+    ///   The SO_SNDTIMEO set in start() plus shutdown() ensure the
+    ///   read-loop exits promptly on its own.  Callers must not
+    ///   destroy the TcpConnection until the close_cb_ has fired.
     void close();
 
+    // ── 回调设置 ──────────────────────────────────────────────
+    // ⚠️ Thread-safety: callbacks MUST be set BEFORE calling start()
+    //    and MUST NOT be changed afterwards.  Only the read-loop thread
+    //    (and send(), which is serialized by send_mutex_) invokes them.
     void set_message_callback(const MessageCallback& cb) { message_cb_ = cb; }
     void set_close_callback(const ConnectionCallback& cb) { close_cb_ = cb; }
 

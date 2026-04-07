@@ -11,7 +11,7 @@ namespace net {
 
 // 前向声明
 class TcpConnection;
-class WsConnection;
+class WsRawConnection;
 
 typedef std::shared_ptr<TcpConnection> TcpConnectionPtr;
 typedef std::shared_ptr<WsConnection> WsConnectionPtr;

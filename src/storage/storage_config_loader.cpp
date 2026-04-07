@@ -32,6 +32,20 @@ static bool parse_yaml(const YAML::Node& root, StorageConfig& out_config) {
         if (m["password"]) out_config.password = m["password"].as<std::string>();
         if (m["charset"]) out_config.extra["charset"] = m["charset"].as<std::string>();
         if (m["table"]) out_config.extra["table"] = m["table"].as<std::string>();
+
+        // 验证 MySQL 必填字段
+        if (out_config.host.empty()) {
+            CHWELL_LOG_ERROR("StorageConfigLoader: mysql 'host' is required");
+            return false;
+        }
+        if (out_config.database.empty()) {
+            CHWELL_LOG_ERROR("StorageConfigLoader: mysql 'database' is required");
+            return false;
+        }
+        if (out_config.user.empty()) {
+            CHWELL_LOG_ERROR("StorageConfigLoader: mysql 'user' is required");
+            return false;
+        }
     } else if ((out_config.type == "mongodb" || out_config.type == "mongo") &&
                storage["mongodb"]) {
         const YAML::Node& m = storage["mongodb"];

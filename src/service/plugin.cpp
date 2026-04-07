@@ -7,6 +7,11 @@ namespace chwell {
 namespace service {
 
 bool PluginManager::InstallAll(Service& service) {
+    if (installed_) {
+        CHWELL_LOG_WARN("PluginManager: InstallAll() already called, skipping");
+        return true;
+    }
+
     // 按优先级排序
     std::sort(plugins_.begin(), plugins_.end(),
         [](const std::unique_ptr<IPlugin>& a, const std::unique_ptr<IPlugin>& b) {
@@ -29,6 +34,7 @@ bool PluginManager::InstallAll(Service& service) {
         CHWELL_LOG_INFO("PluginManager: " << plugin->GetName() << " installed successfully");
     }
     
+    installed_ = true;
     CHWELL_LOG_INFO("PluginManager: all plugins installed");
     return true;
 }
@@ -50,6 +56,7 @@ bool PluginManager::UninstallAll(Service& service) {
     }
     
     plugins_.clear();
+    installed_ = false;
     CHWELL_LOG_INFO("PluginManager: all plugins uninstalled");
     return true;
 }

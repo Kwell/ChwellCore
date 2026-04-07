@@ -39,6 +39,8 @@ private:
     };
     std::unordered_map<std::string, Entry> data_;
     mutable std::mutex mutex_;
+    std::int64_t last_prune_time_{0};
+    static constexpr std::int64_t kPruneIntervalSec = 1; // Only prune at most once per second
 };
 
 }  // namespace storage

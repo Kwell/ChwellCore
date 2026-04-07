@@ -1,3 +1,12 @@
+// ============================================================================
+// WARNING: WsServer is NOT a real WebSocket server. It accepts raw TCP
+// connections and delegates their read loops to the IoService thread pool.
+// Because run_read_loop() blocks on each socket read, every accepted
+// connection consumes one thread-pool thread for its entire lifetime.
+// For high-concurrency scenarios, consider using non-blocking I/O with
+// epoll/kqueue or a proper WebSocket library.
+// ============================================================================
+
 #pragma once
 
 #include <mutex>

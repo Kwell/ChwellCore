@@ -165,7 +165,7 @@ void TimerWheel::add_task_to_wheel(std::shared_ptr<TimerTask> task) {
     last_wheel.slots[slot].tasks.push_back(task);
 }
 
-void TimerWheel::process_slot(int layer, int slot) {
+void TimerWheel::process_slot(int layer, int slot, std::vector<std::shared_ptr<TimerTask>>& due_tasks) {
     Wheel& wheel = wheels_[layer];
     auto& tasks = wheel.slots[slot].tasks;
     
@@ -186,35 +186,9 @@ void TimerWheel::process_slot(int layer, int slot) {
             continue;
         }
         
-        // 到期执行
-        TimerCallback callback = task->callback;
-        
-        if (task->interval > 0) {
-            // 重复定时器，重新添加
-            task->expire_time = current_time_ms() + task->interval;
-            auto new_task = std::make_shared<TimerTask>(*task);
-            add_task_to_wheel(new_task);
-            
-            // 更新map中的指针
-            {
-                std::lock_guard<std::mutex> lock(mutex_);
-                task_map_[task->id] = new_task;
-            }
-        }
-        
-        // 从列表中移除
+        // 到期 - 从列表中移除并收集
+        due_tasks.push_back(task);
         it = tasks.erase(it);
-        
-        // 执行回调（注意：不要在锁内执行）
-        if (callback) {
-            try {
-                callback();
-            } catch (const std::exception& e) {
-                CHWELL_LOG_ERROR("Timer callback exception: " << e.what());
-            } catch (...) {
-                CHWELL_LOG_ERROR("Timer callback unknown exception");
-            }
-        }
     }
 }
 
@@ -248,42 +222,70 @@ void TimerWheel::cascade(int layer) {
 }
 
 void TimerWheel::tick() {
-    // 处理第0层当前槽
-    process_slot(0, wheels_[0].current_slot);
+    std::vector<std::shared_ptr<TimerTask>> due_tasks;
     
-    // 推进第0层
-    wheels_[0].current_slot = (wheels_[0].current_slot + 1) % wheels_[0].wheel_size;
-    
-    // 检查是否需要级联
-    if (wheels_[0].current_slot == 0) {
-        // 第0层转完一圈，级联第1层
-        cascade(1);
-        wheels_[1].current_slot = (wheels_[1].current_slot + 1) % wheels_[1].wheel_size;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
         
-        if (wheels_[1].current_slot == 0 && wheels_.size() > 2) {
-            cascade(2);
-            wheels_[2].current_slot = (wheels_[2].current_slot + 1) % wheels_[2].wheel_size;
+        // 处理第0层当前槽，收集到期任务
+        process_slot(0, wheels_[0].current_slot, due_tasks);
+        
+        // 推进第0层
+        wheels_[0].current_slot = (wheels_[0].current_slot + 1) % wheels_[0].wheel_size;
+        
+        // 检查是否需要级联
+        if (wheels_[0].current_slot == 0) {
+            // 第0层转完一圈，级联第1层
+            cascade(1);
+            wheels_[1].current_slot = (wheels_[1].current_slot + 1) % wheels_[1].wheel_size;
             
-            if (wheels_[2].current_slot == 0 && wheels_.size() > 3) {
-                cascade(3);
-                wheels_[3].current_slot = (wheels_[3].current_slot + 1) % wheels_[3].wheel_size;
+            if (wheels_[1].current_slot == 0 && wheels_.size() > 2) {
+                cascade(2);
+                wheels_[2].current_slot = (wheels_[2].current_slot + 1) % wheels_[2].wheel_size;
+                
+                if (wheels_[2].current_slot == 0 && wheels_.size() > 3) {
+                    cascade(3);
+                    wheels_[3].current_slot = (wheels_[3].current_slot + 1) % wheels_[3].wheel_size;
+                }
+            }
+        }
+    }
+    
+    // 在锁外执行回调
+    for (auto& task : due_tasks) {
+        if (task->callback) {
+            try {
+                task->callback();
+            } catch (const std::exception& e) {
+                CHWELL_LOG_ERROR("Timer callback exception: " << e.what());
+            } catch (...) {
+                CHWELL_LOG_ERROR("Timer callback unknown exception");
+            }
+        }
+        
+        // 重复定时器重新添加
+        if (task->interval > 0 && !task->cancelled) {
+            task->expire_time = current_time_ms() + task->interval;
+            auto new_task = std::make_shared<TimerTask>(*task);
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                add_task_to_wheel(new_task);
+                task_map_[task->id] = new_task;
             }
         }
     }
 }
 
 void TimerWheel::run_loop() {
+    auto next_tick = std::chrono::steady_clock::now();
     while (running_) {
-        auto start = std::chrono::steady_clock::now();
+        next_tick += std::chrono::milliseconds(wheels_[0].tick_ms);
         
         tick();
         
-        auto elapsed = std::chrono::steady_clock::now() - start;
-        auto sleep_time = std::chrono::milliseconds(wheels_[0].tick_ms) - elapsed;
-        
-        if (sleep_time.count() > 0) {
-            std::this_thread::sleep_for(sleep_time);
-        }
+        std::this_thread::sleep_until(next_tick);
+        // If we overslept, next_tick will be in the past,
+        // so the next iteration will skip sleep and catch up
     }
 }
 

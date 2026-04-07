@@ -62,6 +62,9 @@ public:
         return std::type_index(typeid(EventT));
     }
     
+    // 获取回调副本（用于安全地在锁外执行）
+    Callback get_callback() const { return callback_; }
+    
 private:
     Callback callback_;
 };
@@ -134,23 +137,27 @@ public:
             event.set_timestamp(current_time_ms());
         }
         
-        std::vector<std::unique_ptr<EventHandlerBase>*> handlers;
+        // 复制回调函数本身（而非指针），避免悬垂指针
+        std::vector<std::function<void(const EventT&)>> callbacks;
         
         {
             std::lock_guard<std::mutex> lock(mutex_);
             auto it = subscribers_.find(std::type_index(typeid(EventT)));
             if (it != subscribers_.end()) {
                 for (const auto& sub : it->second) {
-                    handlers.push_back(&sub->handler);
+                    auto* handler = static_cast<EventHandler<EventT>*>(sub->handler.get());
+                    if (handler) {
+                        callbacks.push_back(handler->get_callback()); // copy the std::function
+                    }
                 }
             }
         }
         
-        // 在锁外执行回调
-        for (auto* handler : handlers) {
+        // 在锁外执行回调 - 安全，因为我们复制了函数
+        for (auto& cb : callbacks) {
             if (event.cancelled()) break;
             try {
-                (*handler)->invoke(event);
+                cb(event);
             } catch (const std::exception& e) {
                 CHWELL_LOG_ERROR("Event handler exception: " << e.what());
             }

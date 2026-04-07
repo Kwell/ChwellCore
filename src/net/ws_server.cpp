@@ -71,7 +71,7 @@ void WsServer::accept_loop() {
                 continue;
             }
 
-            auto conn = std::make_shared<WsConnection>(std::move(socket));
+            auto conn = std::make_shared<WsRawConnection>(std::move(socket));
             conn->set_message_callback(message_cb_);
             conn->set_close_callback([this](const WsConnectionPtr& c) {
                 {
