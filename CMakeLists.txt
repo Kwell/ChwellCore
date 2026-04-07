@@ -284,6 +284,11 @@ if (CHWELL_BUILD_EXAMPLES)
     )
     target_link_libraries(example_protocol_server PRIVATE chwell_core)
 
+    add_executable(bench_runner
+        examples/bench_runner.cpp
+    )
+    target_link_libraries(bench_runner PRIVATE chwell_core)
+
     add_executable(example_http_server
         examples/http_server.cpp
     )

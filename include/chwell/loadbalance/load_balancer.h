@@ -9,6 +9,7 @@
 #include <memory>
 #include <random>
 #include <atomic>
+#include <shared_mutex>
 
 namespace chwell {
 namespace loadbalance {
@@ -70,12 +71,12 @@ public:
     virtual void update_instances(const std::vector<discovery::ServiceInstance>& instances) override;
 
     virtual void set_weight(const std::string& instance_id, int weight) override {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::unique_lock<std::shared_mutex> lock(mutex_);
         weights_[instance_id] = weight;
     }
 
     virtual int get_weight(const std::string& instance_id) const override {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::shared_lock<std::shared_mutex> lock(mutex_);
         auto it = weights_.find(instance_id);
         if (it != weights_.end()) {
             return it->second;
@@ -89,7 +90,7 @@ private:
     std::atomic<size_t> current_index_;
     std::vector<discovery::ServiceInstance> instances_;
     std::unordered_map<std::string, int> weights_;
-    mutable std::mutex mutex_;
+    mutable std::shared_mutex mutex_;
 };
 
 // ============================================
@@ -116,12 +117,12 @@ public:
     virtual void update_instances(const std::vector<discovery::ServiceInstance>& instances) override;
 
     virtual void set_weight(const std::string& instance_id, int weight) override {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::unique_lock<std::shared_mutex> lock(mutex_);
         weights_[instance_id] = weight;
     }
 
     virtual int get_weight(const std::string& instance_id) const override {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::shared_lock<std::shared_mutex> lock(mutex_);
         auto it = weights_.find(instance_id);
         if (it != weights_.end()) {
             return it->second;
@@ -135,39 +136,44 @@ private:
     std::mt19937 rng_;
     std::vector<discovery::ServiceInstance> instances_;
     std::unordered_map<std::string, int> weights_;
-    mutable std::mutex mutex_;
+    mutable std::shared_mutex mutex_;
 };
 
 // ============================================
-// 加权轮询负载均衡器
+// 加权轮询负载均衡器（优化版）
+// 使用结构体数组替代 unordered_map，缓存 total_weight，
+// select_instance 遍历连续内存数组，避免 map 查找开销。
 // ============================================
 
 class WeightedRoundRobinLoadBalancer : public LoadBalancer {
 public:
     WeightedRoundRobinLoadBalancer(std::shared_ptr<discovery::ServiceDiscovery> discovery)
-        : discovery_(discovery) {}
+        : discovery_(discovery), total_weight_(0), dirty_(true) {}
 
     virtual ~WeightedRoundRobinLoadBalancer() = default;
 
     virtual bool select_instance(const std::string& service_id, discovery::ServiceInstance& out) override;
 
     virtual void set_strategy(LoadBalanceStrategy strategy) override {
+        std::unique_lock<std::shared_mutex> lock(mutex_);
         strategy_ = strategy;
     }
 
     virtual LoadBalanceStrategy get_strategy() const override {
+        std::shared_lock<std::shared_mutex> lock(mutex_);
         return strategy_;
     }
 
     virtual void update_instances(const std::vector<discovery::ServiceInstance>& instances) override;
 
     virtual void set_weight(const std::string& instance_id, int weight) override {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::unique_lock<std::shared_mutex> lock(mutex_);
         weights_[instance_id] = weight;
+        dirty_ = true;
     }
 
     virtual int get_weight(const std::string& instance_id) const override {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::shared_lock<std::shared_mutex> lock(mutex_);
         auto it = weights_.find(instance_id);
         if (it != weights_.end()) {
             return it->second;
@@ -176,12 +182,29 @@ public:
     }
 
 private:
+    // 重建内部缓存数组（写锁已持有时调用）
+    void rebuild_cache();
+
+    // 加权实例条目，紧凑排列在连续内存中
+    struct WeightedEntry {
+        discovery::ServiceInstance instance;
+        int weight;          // 配置的权重
+        int current_weight;  // 平滑加权轮询的当前权重
+    };
+
     std::shared_ptr<discovery::ServiceDiscovery> discovery_;
     LoadBalanceStrategy strategy_ = LoadBalanceStrategy::WEIGHTED_ROUND_ROBIN;
+
+    // 配置层（写操作）
     std::vector<discovery::ServiceInstance> instances_;
-    std::unordered_map<std::string, int> weights_;          // 配置的权重
-    std::unordered_map<std::string, int> current_weights_; // 当前权重
-    mutable std::mutex mutex_;
+    std::unordered_map<std::string, int> weights_;
+
+    // 紧凑缓存层（读操作热点路径）
+    std::vector<WeightedEntry> cache_;   // 缓存数组，连续内存
+    int total_weight_;                    // 缓存的总权重
+    bool dirty_;                          // 标记需要重建缓存
+
+    mutable std::shared_mutex mutex_;
 };
 
 } // namespace loadbalance
