@@ -1,17 +1,17 @@
 #pragma once
 
-#include <string_view>
-#include <vector>
 #include <memory>
-#include <type_traits>
-#include <algorithm>
-#include <chrono>
-#include <atomic>
+#include <vector>
+#include <string_view>
+#include <functional>
+#include <unordered_map>
 
 #include "chwell/core/thread_pool.h"
 #include "chwell/core/logger.h"
 #include "chwell/net/posix_io.h"
 #include "chwell/net/tcp_server.h"
+#include "chwell/net/epoll_server.h"
+#include "chwell/net/epoll_bridge.h"
 #include "chwell/service/component.h"
 #include "chwell/service/plugin.h"
 
@@ -24,32 +24,80 @@ namespace service {
  * 支持：
  * - 组件的 7 阶段生命周期管理
  * - 插件系统（Plugin → Component）
+ * - 两种网络模式：legacy（阻塞 I/O + IoService）和 epoll（事件驱动）
  * 
  * 生命周期：
  * Init → PostInit → CheckConfig → PreUpdate → Update(循环) → PreShut → Shut
  */
 class Service {
 public:
-    Service(unsigned short listen_port, std::size_t worker_threads)
-        : server_(io_service_, listen_port),
+    Service(unsigned short listen_port, std::size_t worker_threads, bool use_epoll = false,
+            int reactor_threads = 1)
+        : use_epoll_(use_epoll),
           thread_pool_(worker_threads),
           worker_threads_(worker_threads),
           running_(false),
-          init_stage_(0) {
-        server_.set_connection_callback([](const net::TcpConnectionPtr& conn) {
-            (void)conn;
-            CHWELL_LOG_INFO("New connection");
-        });
+          init_stage_(0),
+          io_service_ptr_(std::make_unique<net::IoService>()),
+          io_service_(*io_service_ptr_) {
 
-        server_.set_disconnect_callback([this](const net::TcpConnectionPtr& conn) {
-            CHWELL_LOG_INFO("Connection closed");
-            dispatch_disconnect(conn);
-        });
+        if (use_epoll_) {
+            epoll_server_ = std::make_unique<net::EpollTcpServer>(listen_port, reactor_threads);
 
-        server_.set_message_callback([this](const net::TcpConnectionPtr& conn,
-                                            std::string_view data) {
-            dispatch_message(conn, data);
-        });
+            epoll_server_->set_connection_callback([this](const net::EpollTcpConnectionPtr& conn) {
+                CHWELL_LOG_INFO("New connection (epoll) fd=" << conn->native_handle());
+                // 创建 bridge，将 EpollTcpConnection 适配为 TcpConnectionPtr
+                auto bridge = std::make_shared<net::EpollTcpBridge>(conn);
+                int fd = conn->native_handle();
+                {
+                    std::lock_guard<std::mutex> lock(bridge_mutex_);
+                    bridge_map_[fd] = bridge;
+                }
+            });
+
+            epoll_server_->set_disconnect_callback([this](const net::EpollTcpConnectionPtr& conn) {
+                CHWELL_LOG_INFO("Connection closed (epoll) fd=" << conn->native_handle());
+                int fd = conn->native_handle();
+                net::TcpConnectionPtr bridge;
+                {
+                    std::lock_guard<std::mutex> lock(bridge_mutex_);
+                    auto it = bridge_map_.find(fd);
+                    if (it != bridge_map_.end()) {
+                        bridge = it->second;
+                        bridge_map_.erase(it);
+                    }
+                }
+                if (bridge) dispatch_disconnect(bridge);
+            });
+
+            epoll_server_->set_message_callback([this](const net::EpollTcpConnectionPtr& conn,
+                                                       std::string_view data) {
+                net::TcpConnectionPtr bridge;
+                {
+                    std::lock_guard<std::mutex> lock(bridge_mutex_);
+                    auto it = bridge_map_.find(conn->native_handle());
+                    if (it != bridge_map_.end()) bridge = it->second;
+                }
+                if (bridge) dispatch_message(bridge, data);
+            });
+        } else {
+            legacy_server_ = std::make_unique<net::TcpServer>(io_service_, listen_port);
+
+            legacy_server_->set_connection_callback([](const net::TcpConnectionPtr& conn) {
+                (void)conn;
+                CHWELL_LOG_INFO("New connection");
+            });
+
+            legacy_server_->set_disconnect_callback([this](const net::TcpConnectionPtr& conn) {
+                CHWELL_LOG_INFO("Connection closed");
+                dispatch_disconnect(conn);
+            });
+
+            legacy_server_->set_message_callback([this](const net::TcpConnectionPtr& conn,
+                                                        std::string_view data) {
+                dispatch_message(conn, data);
+            });
+        }
     }
 
     Service(const Service&) = delete;
@@ -92,11 +140,9 @@ public:
 
     // ========== 7 阶段生命周期管理 ==========
     
-    // 阶段1: 初始化所有组件
     bool Init() {
         CHWELL_LOG_INFO("Service Init: initializing components...");
         
-        // 按优先级排序
         std::sort(components_.begin(), components_.end(),
             [](const std::unique_ptr<Component>& a, const std::unique_ptr<Component>& b) {
                 return a->priority() < b->priority();
@@ -112,10 +158,8 @@ public:
         return true;
     }
     
-    // 阶段2: 后初始化（建立依赖关系）
     bool PostInit() {
         CHWELL_LOG_INFO("Service PostInit: establishing dependencies...");
-        
         for (auto& comp : components_) {
             if (!comp->PostInit()) {
                 CHWELL_LOG_ERROR("Component PostInit failed: " + comp->name());
@@ -125,10 +169,8 @@ public:
         return true;
     }
     
-    // 阶段3: 检查配置
     bool CheckConfig() {
         CHWELL_LOG_INFO("Service CheckConfig: validating configuration...");
-        
         for (auto& comp : components_) {
             if (!comp->CheckConfig()) {
                 CHWELL_LOG_ERROR("Component CheckConfig failed: " + comp->name());
@@ -138,10 +180,8 @@ public:
         return true;
     }
     
-    // 阶段4: 更新前准备
     bool PreUpdate() {
         CHWELL_LOG_INFO("Service PreUpdate: preparing for update loop...");
-        
         for (auto& comp : components_) {
             if (!comp->PreUpdate()) {
                 CHWELL_LOG_ERROR("Component PreUpdate failed: " + comp->name());
@@ -154,109 +194,66 @@ public:
     // ========== 启动和停止 ==========
     
     void start() {
-        // 完整的生命周期流程
-        // Track which stages completed for proper teardown on failure
-        // init_stage_: 0=none, 1=Init, 2=PostInit, 3=CheckConfig, 4=PreUpdate
-        auto teardown = [this](int stage) {
-            if (stage >= 4) { /* PreUpdate has no separate shut */ }
-            if (stage >= 3) { /* CheckConfig has no separate shut */ }
-            if (stage >= 2) { /* PostInit has no separate shut */ }
-            if (stage >= 1) {
-                // Init succeeded, call Shut on all components
-                Shut();
-            }
-        };
-
-        if (!Init()) {
-            CHWELL_LOG_ERROR("Service Init failed, aborting...");
-            return;
-        }
+        if (!Init()) { CHWELL_LOG_ERROR("Service Init failed, aborting..."); return; }
         init_stage_ = 1;
-        
-        if (!PostInit()) {
-            CHWELL_LOG_ERROR("Service PostInit failed, aborting...");
-            teardown(init_stage_);
-            return;
-        }
+        if (!PostInit()) { CHWELL_LOG_ERROR("Service PostInit failed, aborting..."); Shut(); return; }
         init_stage_ = 2;
-        
-        if (!CheckConfig()) {
-            CHWELL_LOG_ERROR("Service CheckConfig failed, aborting...");
-            teardown(init_stage_);
-            return;
-        }
+        if (!CheckConfig()) { CHWELL_LOG_ERROR("Service CheckConfig failed, aborting..."); Shut(); return; }
         init_stage_ = 3;
-        
-        if (!PreUpdate()) {
-            CHWELL_LOG_ERROR("Service PreUpdate failed, aborting...");
-            teardown(init_stage_);
-            return;
-        }
+        if (!PreUpdate()) { CHWELL_LOG_ERROR("Service PreUpdate failed, aborting..."); Shut(); return; }
         init_stage_ = 4;
         
         // 启动网络
-        server_.start_accept();
-
-        for (std::size_t i = 0; i < worker_threads_; ++i) {
-            thread_pool_.post([this]() {
-                io_service_.run();
-            });
+        if (use_epoll_) {
+            epoll_server_->start();
+        } else {
+            legacy_server_->start_accept();
+            for (std::size_t i = 0; i < worker_threads_; ++i) {
+                thread_pool_.post([this]() { io_service_.run(); });
+            }
         }
 
         running_ = true;
         last_update_time_ = std::chrono::steady_clock::now();
-        
-        CHWELL_LOG_INFO("Service started successfully");
+        CHWELL_LOG_INFO("Service started successfully"
+                        << (use_epoll_ ? " (epoll mode)" : " (legacy mode)"));
     }
 
     void stop() {
-        // Idempotent: only one thread proceeds
         if (!running_.exchange(false)) return;
         
         CHWELL_LOG_INFO("Service stopping...");
         
-        // First stop accepting new connections and io_service
-        server_.stop();
-        io_service_.stop();
+        if (use_epoll_) {
+            if (epoll_server_) epoll_server_->stop();
+        } else {
+            if (legacy_server_) legacy_server_->stop();
+            io_service_.stop();
+        }
         
-        // Then call PreShut → Shut on components
         PreShut();
         Shut();
-        
-        // Unload plugins
         plugin_manager_.UninstallAll(*this);
+        
+        {
+            std::lock_guard<std::mutex> lock(bridge_mutex_);
+            bridge_map_.clear();
+        }
         
         init_stage_ = 0;
         CHWELL_LOG_INFO("Service stopped");
     }
     
-    // 阶段6: 关闭前清理
     void PreShut() {
         CHWELL_LOG_INFO("Service PreShut: notifying components...");
-        
-        for (auto& comp : components_) {
-            comp->PreShut();
-        }
+        for (auto& comp : components_) comp->PreShut();
     }
     
-    // 阶段7: 关闭
     void Shut() {
         CHWELL_LOG_INFO("Service Shut: releasing resources...");
-        
-        for (auto& comp : components_) {
-            comp->Shut();
-        }
+        for (auto& comp : components_) comp->Shut();
     }
     
-    // ========== 主循环更新 ==========
-    
-    // IMPORTANT: You MUST call Update() from your own game loop, e.g.:
-    //   while (service.is_running()) { service.Update(); std::this_thread::sleep_for(16ms); }
-    // OR add a timer-driven update loop, e.g.:
-    //   asio::steady_timer timer(io_service);
-    //   timer.expires_after(std::chrono::milliseconds(16));
-    //   timer.async_wait([&](auto ec) { if (!ec) { service.Update(); timer.expires_after(16ms); timer.async_wait(/*...*/); } });
-    // Without calling Update(), component logic (tick, timers, etc.) will never run.
     void Update() {
         if (!running_) return;
         
@@ -265,42 +262,45 @@ public:
             now - last_update_time_).count();
         last_update_time_ = now;
         
-        // 调用所有组件的 Update
-        for (auto& comp : components_) {
-            comp->Update(delta_ms);
-        }
+        for (auto& comp : components_) comp->Update(delta_ms);
     }
 
     // ========== 访问器 ==========
     
     net::IoService& io_service() { return io_service_; }
-    net::TcpServer& tcp_server() { return server_; }
+    net::TcpServer* tcp_server() { return legacy_server_.get(); }
+    net::EpollTcpServer* epoll_server() { return epoll_server_.get(); }
     bool is_running() const { return running_; }
+    bool use_epoll() const { return use_epoll_; }
     PluginManager& plugin_manager() { return plugin_manager_; }
 
 private:
     void dispatch_message(const net::TcpConnectionPtr& conn,
                           std::string_view data) {
-        for (std::size_t i = 0; i < components_.size(); ++i) {
-            components_[i]->on_message(conn, data);
-        }
+        for (auto& comp : components_) comp->on_message(conn, data);
     }
 
     void dispatch_disconnect(const net::TcpConnectionPtr& conn) {
-        for (std::size_t i = 0; i < components_.size(); ++i) {
-            components_[i]->on_disconnect(conn);
-        }
+        for (auto& comp : components_) comp->on_disconnect(conn);
     }
 
-    net::IoService io_service_;
-    net::TcpServer server_;
+    bool use_epoll_;
+    net::IoService& io_service_;
+    std::unique_ptr<net::IoService> io_service_ptr_;
+    std::unique_ptr<net::TcpServer> legacy_server_;
+    std::unique_ptr<net::EpollTcpServer> epoll_server_;
+    
+    // epoll 模式下：fd → bridge 的映射
+    std::mutex bridge_mutex_;
+    std::unordered_map<int, net::TcpConnectionPtr> bridge_map_;
+
     core::ThreadPool thread_pool_;
     std::size_t worker_threads_;
     std::vector<std::unique_ptr<Component>> components_;
     
     PluginManager plugin_manager_;
     std::atomic<bool> running_;
-    int init_stage_; // Tracks which init stages completed (0-4)
+    int init_stage_;
     std::chrono::steady_clock::time_point last_update_time_;
 };
 

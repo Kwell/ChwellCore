@@ -29,7 +29,7 @@
 
 | 类别 | 功能 |
 |------|------|
-| **网络** | POSIX 非阻塞 I/O（`poll`），TCP / UDP / WebSocket / HTTP，TLS（OpenSSL 可选），连接池 |
+| **网络** | POSIX 非阻塞 I/O（`poll`），**Epoll 多 Reactor（高性能）**，TCP / UDP / WebSocket / HTTP，TLS（OpenSSL 可选），连接池 |
 | **协议** | 自定义二进制帧 `[cmd:2B][len:2B][body]`，Protobuf 帧，JSON 帧，流式粘包解析器 |
 | **服务层** | 组件化 `Service` 容器，按命令字路由，`SessionManager` 多维会话映射 |
 | **同步** | `FrameSyncRoom`（帧同步 + 快照），`StateSyncRoom`（K/V 状态 + 增量差异 + 订阅） |
@@ -41,6 +41,7 @@
 | **可靠性** | 熔断器（计数 / 失败率 / 混合策略），令牌桶 / 漏桶 / 固定窗口限流，Prometheus 指标 |
 | **Redis** | 同步 Redis 客户端，分布式锁（SETNX + 自动续租 + RAII 守卫）|
 | **Benchmark** | 内置 `BenchmarkSuite`，支持预热 + 多次采样 + 统计导出（CSV / JSON）|
+| **Epoll Reactor** | 多 Reactor 线程模型（Accept 分离），eventfd 唤醒，ET/LT 双模式，万级并发连接 |
 
 ---
 
@@ -67,6 +68,7 @@ cmake --build build -j$(nproc)
 cd build
 
 ./example_echo_server              # Echo 服务器（端口 9000）
+./epoll_echo_server               # Epoll 多 Reactor Echo 服务器（端口 8802）
 ./example_protocol_server          # 协议路由服务器
 ./example_http_server              # HTTP 服务器
 ./example_sync_demo                # 帧同步 + 状态同步演示
@@ -177,8 +179,12 @@ public:
 
 | 类 | 说明 |
 |----|------|
-| `TcpServer` | 监听端口，accept 新连接，管理连接生命周期 |
+| `TcpServer` | 监听端口，accept 新连接，管理连接生命周期（阻塞 I/O，适合低并发场景）|
 | `TcpConnection` | TCP 非阻塞读写缓冲与回调 |
+| **`EpollTcpServer`** | **Epoll 多 Reactor 服务器，Accept 线程分离 + N 个 Reactor 线程轮询分配，支持万级并发** |
+| **`EpollDemuxer`** | **单线程 epoll 事件循环，eventfd 线程安全唤醒，ET/LT 双模式** |
+| **`EpollTcpConnection`** | **基于 EpollDemuxer 的异步连接管理，消息/断线回调** |
+| **`EpollBridge`** | **旧接口到新 epoll 实现的适配层** |
 | `UdpSocket` | UDP 非阻塞收发；`bind_udp_port` 绑定本地端口 |
 | `UdpServer` | UDP 服务端封装 |
 | `WsServer` / `WsConnection` | WebSocket 握手（SHA-1）与文本 / 二进制帧收发 |
@@ -660,6 +666,10 @@ ChwellCore/
 │   ├── net/
 │   │   ├── posix_io.h            # POSIX socket/poll 封装
 │   │   ├── tcp_server.h / tcp_connection.h
+│   │   ├── epoll_demuxer.h       # Epoll 事件循环（eventfd 唤醒, ET/LT）
+│   │   ├── epoll_server.h        # 多 Reactor 服务器（Accept 分离 + 轮询）
+│   │   ├── epoll_connection.h    # 异步连接管理（EpollDemuxer 绑定）
+│   │   ├── epoll_bridge.h        # 旧接口适配层
 │   │   ├── udp_server.h / udp_socket.h / socket_base.h
 │   │   ├── ws_server.h / ws_connection.h   # 含 send_binary
 │   │   ├── http_server.h
@@ -740,6 +750,7 @@ ChwellCore/
 - 存储模块全面整治（MySQL 大值修复、MySQL/MongoDB keys() 修复、MongoDB 全局 init 修复）
 - 异步存储接口（`AsyncStorageInterface` + `AsyncStorageAdapter`，Future + Callback 两套 API）
 - 单元测试全覆盖（258 个测试用例）
+- **Epoll 多 Reactor 网络框架（高性能替代方案，万级并发连接支持）**
 
 ### 规划中
 
@@ -747,6 +758,49 @@ ChwellCore/
 - 更多游戏组件（好友、公会、排行榜）
 - 热更新支持
 - 更多集成测试场景
+
+---
+
+## Epoll Reactor 性能数据
+
+使用内置压测工具 `build/epoll_stress_test` 对 Epoll Echo Server 进行压力测试：
+
+```
+./build/epoll_stress_test <concurrency> <msg_size> <duration_s>
+```
+
+### 压测结果（Echo 场景，1024B 消息，10s）
+
+| 并发连接 | 连接耗时 | Send QPS | Recv QPS | 带宽 | Avg Latency |
+|---------|---------|---------|---------|------|-------------|
+| 100 | 213ms | 347,648 | 103,550 | 339 MB/s | ~1 ms |
+| 1,000 | 254ms | 740,286 | 94,471 | 684 MB/s | ~11 ms |
+| 5,000 | 341ms | 148,391 | 148,169 | 145 MB/s | ~34 ms |
+| 10,000 | 441ms | 125,802 | 109,313 | 122 MB/s | ~92 ms |
+
+### 架构对比
+
+```
+TcpServer（旧）              EpollTcpServer（新）
+┌──────────────┐            ┌──────────────────────┐
+│ Accept Thread │            │ Accept Thread (独立)  │
+├──────────────┤            ├──────────────────────┤
+│ Worker 1 ──→ Conn 1 │    │ Reactor 0 ──→ N 个 Conn │
+│ Worker 2 ──→ Conn 2 │    │ Reactor 1 ──→ N 个 Conn │
+│ Worker 3 ──→ Conn 3 │    │ Reactor 2 ──→ N 个 Conn │
+│ Worker 4 ──→ Conn 4 │    │ ...                     │
+│ ...                   │    │ 最多 ~65536 连接        │
+│ 最多 ~64 连接         │    │ 内存 ~1KB/连接          │
+│ 内存 ~8MB/连接        │    └──────────────────────┘
+└──────────────┘
+```
+
+| 指标 | TcpServer (poll) | EpollTcpServer (epoll) |
+|------|-----------------|----------------------|
+| I/O 模型 | 阻塞 + 每连接一线程 | 非阻塞 epoll 多路复用 |
+| 最大连接 | ~64（线程池限制） | ~65536+（fd 限制） |
+| 连接内存 | ~8MB/连接 | ~1KB/连接 |
+| 适用场景 | 内部工具、低并发 | 生产级高并发服务 |
 
 ---
 

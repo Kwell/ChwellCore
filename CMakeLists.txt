@@ -97,6 +97,8 @@ add_library(chwell_core
     src/net/posix_io.cpp
     src/net/tcp_server.cpp
     src/net/tcp_connection.cpp
+    src/net/epoll_connection.cpp
+    src/net/epoll_server.cpp
     src/net/udp_server.cpp
     src/net/udp_socket.cpp
     src/net/ws_connection.cpp

@@ -64,7 +64,7 @@ public:
     virtual void on_register(Service& /*svc*/) {}
 
     // 收到一条来自某连接的原始消息时的回调
-    // data 仅在回调返回前有效（与 TcpConnection 读缓冲一致）
+    // data 仅在回调返回前有效
     virtual void on_message(const net::TcpConnectionPtr& /*conn*/,
                             std::string_view /*data*/) {}
 
