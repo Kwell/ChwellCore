@@ -323,6 +323,18 @@ if (CHWELL_BUILD_EXAMPLES)
     )
     target_link_libraries(example_proto_frame_client PRIVATE chwell_core)
 
+    # Epoll 多 Reactor 压测工具
+    add_executable(epoll_stress_test
+        tests/epoll_stress_test.cpp
+    )
+    target_link_libraries(epoll_stress_test PRIVATE pthread)
+
+    # Epoll Echo 服务器示例
+    add_executable(epoll_echo_server
+        examples/epoll_echo_server.cpp
+    )
+    target_link_libraries(epoll_echo_server PRIVATE chwell_core)
+
     # H5 小游戏 demo：游戏服 + 游戏网关
     add_executable(example_game_server
         examples/game_server.cpp
