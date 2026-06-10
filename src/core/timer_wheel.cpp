@@ -292,12 +292,17 @@ void TimerWheel::tick() {
 
         // 重复定时器重新添加
         if (task->interval > 0 && !task->cancelled) {
+            // 🆕 重新计算 expire_time，基于当前时间而非上次到期时间
+            // 这样即使回调执行耗时较长，也不会导致重复定时器堆积
             task->expire_time = current_time_ms() + task->interval;
             auto new_task = std::make_shared<TimerTask>(*task);
+            // 重置无效的迭代器（add_task_to_wheel 会重新设置）
+            new_task->list_iter = {};
+            new_task->layer = -1;
+            new_task->slot = -1;
             {
-                std::lock_guard<std::mutex> lock(mutex_);
-                auto loc = add_task_to_wheel(new_task);
-                // 🆕 更新 task_map_ 中的定位信息
+                std::lock_guard<std::mutex> lock2(mutex_);
+                add_task_to_wheel(new_task);
                 task_map_[task->id] = new_task;
             }
         }

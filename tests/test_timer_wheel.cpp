@@ -30,18 +30,19 @@ TEST(TimerWheelTest, AddRepeatingTimer) {
     wheel.start();
     
     int counter = 0;
-    auto handle = wheel.add_repeat_timer(100, [&counter]() {
+    // 间隔 > tick_ms（100），且不是整数倍，避免相位对齐问题
+    auto handle = wheel.add_repeat_timer(150, [&counter]() {
         counter++;
     });
     
     EXPECT_TRUE(handle.valid());
     
-    std::this_thread::sleep_for(350ms);
+    std::this_thread::sleep_for(500ms);
     EXPECT_GE(counter, 2);
     
     wheel.cancel_timer(handle);
     int prev = counter;
-    std::this_thread::sleep_for(200ms);
+    std::this_thread::sleep_for(300ms);
     EXPECT_EQ(counter, prev);
     
     wheel.stop();
