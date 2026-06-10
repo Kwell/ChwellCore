@@ -6,6 +6,8 @@
 #include <thread>
 #include <atomic>
 #include <functional>
+#include <vector>
+#include <chrono>
 
 #include "chwell/net/epoll_demuxer.h"
 #include "chwell/net/epoll_connection.h"
@@ -36,6 +38,21 @@ public:
         return connections_.size();
     }
 
+    // ========== 安全限制（P0-2） ==========
+
+    // 设置最大连接数，默认 10000
+    void set_max_connections(size_t max_conn) { max_connections_ = max_conn; }
+    size_t max_connections() const { return max_connections_; }
+
+    // 设置空闲连接超时检查间隔（秒），0 表示不检查，默认 10 秒
+    void set_idle_check_interval(int seconds) { idle_check_interval_sec_ = seconds; }
+
+    // 手动清理空闲连接（也可由定时器周期调用）
+    void cleanup_idle_connections();
+
+    // 在新连接到达时顺便检查空闲连接
+    void maybe_cleanup_idle_connections();
+
 private:
     void on_new_connection(int client_fd);
     void on_connection_close(const EpollTcpConnectionPtr& conn);
@@ -61,6 +78,11 @@ private:
     MessageCallback message_cb_;
     ConnectionCallback connection_cb_;
     ConnectionCallback disconnect_cb_;
+
+    // ========== 安全限制 ==========
+    size_t max_connections_ = 10000;
+    int idle_check_interval_sec_ = 10;
+    std::chrono::steady_clock::time_point last_idle_check_time_;
 };
 
 } // namespace net

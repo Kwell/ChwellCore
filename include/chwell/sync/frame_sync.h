@@ -5,6 +5,7 @@
 #include "chwell/service/session_manager.h"
 #include "chwell/net/tcp_connection.h"
 #include "chwell/core/logger.h"
+#include "chwell/core/timer_wheel.h"
 #include <unordered_map>
 #include <unordered_set>
 #include <string>
@@ -12,6 +13,7 @@
 #include <cstdint>
 #include <queue>
 #include <mutex>
+#include <chrono>
 
 namespace chwell {
 namespace sync {
@@ -52,18 +54,30 @@ struct FrameSnapshot {
     std::vector<uint8_t> snapshot_data;
 };
 
-// 帧同步房间
+/**
+ * @brief 帧同步房间
+ *
+ * 改进（P0-3）：
+ * - 帧超时兜底：如果某个玩家未提交输入超过阈值，填充空输入并强制推进
+ * - 绝不让全网等一人
+ */
 class FrameSyncRoom {
 public:
     FrameSyncRoom(const std::string& room_id, uint32_t frame_rate = 30)
         : room_id_(room_id), frame_rate_(frame_rate),
-          current_frame_(0), running_(false) {}
+          current_frame_(0), running_(false),
+          frame_timeout_ms_(1000 / frame_rate * 2)  // 默认 2 帧时间超时
+    {
+        last_advance_time_ = std::chrono::steady_clock::now();
+    }
 
     // 加入房间
     void join_player(uint32_t player_id, const net::TcpConnectionPtr& conn) {
         std::lock_guard<std::mutex> lock(mutex_);
         players_[player_id] = conn;
         player_inputs_[player_id] = std::queue<FrameInput>();
+        // 🆕 初始化已提交帧集合
+        submitted_frames_[player_id] = std::unordered_set<uint32_t>();
         CHWELL_LOG_INFO("Player " + std::to_string(player_id) + " joined frame sync room " + room_id_);
     }
 
@@ -72,6 +86,7 @@ public:
         std::lock_guard<std::mutex> lock(mutex_);
         players_.erase(player_id);
         player_inputs_.erase(player_id);
+        submitted_frames_.erase(player_id);
         CHWELL_LOG_INFO("Player " + std::to_string(player_id) + " left frame sync room " + room_id_);
     }
 
@@ -79,7 +94,10 @@ public:
     void submit_input(uint32_t player_id, const FrameInput& input) {
         std::lock_guard<std::mutex> lock(mutex_);
         player_inputs_[player_id].push(input);
-        CHWELL_LOG_DEBUG("Player " + std::to_string(player_id) + " submitted input for frame " + std::to_string(input.frame_id));
+        // 🆕 记录已提交的帧
+        submitted_frames_[player_id].insert(input.frame_id);
+        CHWELL_LOG_DEBUG("Player " + std::to_string(player_id)
+                         + " submitted input for frame " + std::to_string(input.frame_id));
     }
 
     // 获取所有输入（用于游戏逻辑）
@@ -129,7 +147,7 @@ public:
     void advance_frame() {
         std::lock_guard<std::mutex> lock(mutex_);
         current_frame_++;
-        CHWELL_LOG_DEBUG("Advanced to frame " + std::to_string(current_frame_));
+        last_advance_time_ = std::chrono::steady_clock::now();
     }
 
     // 开始/停止同步
@@ -170,12 +188,68 @@ public:
     // 检查是否所有玩家都提交了输入
     bool all_inputs_ready(uint32_t frame_id) {
         std::lock_guard<std::mutex> lock(mutex_);
-        for (auto& pair : player_inputs_) {
-            if (pair.second.empty() || pair.second.front().frame_id != frame_id) {
+        for (auto& pair : submitted_frames_) {
+            if (pair.second.find(frame_id) == pair.second.end()) {
                 return false;
             }
         }
         return true;
+    }
+
+    // ========== 🆕 帧超时兜底（P0-3） ==========
+
+    // 设置帧超时（毫秒）
+    void set_frame_timeout(uint32_t timeout_ms) { frame_timeout_ms_ = timeout_ms; }
+    uint32_t frame_timeout_ms() const { return frame_timeout_ms_; }
+
+    /**
+     * @brief 检查并推进超时帧
+     *
+     * 如果当前帧等待超过 frame_timeout_ms_，为未提交的玩家填充空输入并强制推进。
+     * 由定时器周期调用（在 Logic Thread 中执行，无需额外加锁）。
+     *
+     * @return true 执行了超时推进，false 未超时
+     */
+    bool check_frame_timeout() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!running_ || player_inputs_.empty()) return false;
+
+        auto now = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now - last_advance_time_).count();
+
+        if (elapsed < static_cast<int64_t>(frame_timeout_ms_)) return false;
+
+        // 超时了，为未提交当前帧输入的玩家填充空输入
+        for (auto& pair : submitted_frames_) {
+            uint32_t player_id = pair.first;
+            auto& frames = pair.second;
+
+            if (frames.find(current_frame_) == frames.end()) {
+                // 该玩家未提交当前帧输入，填充空输入
+                FrameInput empty_input;
+                empty_input.frame_id = current_frame_;
+                empty_input.player_id = player_id;
+                empty_input.input_data.clear();
+                player_inputs_[player_id].push(empty_input);
+                frames.insert(current_frame_);
+
+                CHWELL_LOG_WARN("Frame timeout: filling empty input for player "
+                                + std::to_string(player_id)
+                                + " frame=" + std::to_string(current_frame_)
+                                + " room=" + room_id_);
+            }
+        }
+
+        // 强制推进
+        current_frame_++;
+        last_advance_time_ = now;
+        return true;
+    }
+
+    // 获取最近一次推进时间
+    std::chrono::steady_clock::time_point last_advance_time() const {
+        return last_advance_time_;
     }
 
 private:
@@ -188,9 +262,20 @@ private:
     std::unordered_map<uint32_t, net::TcpConnectionPtr> players_;
     std::unordered_map<uint32_t, std::queue<FrameInput>> player_inputs_;
     std::unordered_map<uint32_t, FrameSnapshot> snapshots_;
+    std::unordered_map<uint32_t, std::unordered_set<uint32_t>> submitted_frames_;  // 🆕 已提交帧集合
+
+    // 🆕 帧超时相关
+    uint32_t frame_timeout_ms_;                    // 帧超时阈值
+    std::chrono::steady_clock::time_point last_advance_time_;  // 最近一次推进时间
 };
 
-// 帧同步组件
+/**
+ * @brief 帧同步组件
+ *
+ * 改进（P0-3）：
+ * - PreUpdate 中启动帧超时检测定时器
+ * - Shut 中取消定时器
+ */
 class FrameSyncComponent : public service::Component {
 public:
     FrameSyncComponent(uint32_t frame_rate = 30) : frame_rate_(frame_rate) {}
@@ -199,6 +284,12 @@ public:
 
     // 注册协议处理器
     virtual void on_register(service::Service& svc) override;
+
+    // 🆕 启动帧超时检测定时器
+    virtual bool PreUpdate() override;
+
+    // 🆕 取消定时器
+    virtual bool Shut() override;
 
     // 处理帧输入
     void handle_frame_input(const net::TcpConnectionPtr& conn, const std::vector<char>& data);
@@ -243,7 +334,7 @@ private:
     // 从连接获取玩家 ID
     uint32_t get_player_id(const net::TcpConnectionPtr& conn);
 
-    // 获取连接所在的房间 ID
+    // 从连接获取所在的房间 ID
     std::string get_room_id(const net::TcpConnectionPtr& conn);
 
     // 维护连接到房间的映射
@@ -256,6 +347,9 @@ private:
     std::unordered_map<std::string, std::shared_ptr<FrameSyncRoom>> rooms_;
     std::unordered_map<net::TcpConnection*, ConnectionInfo> connections_;
     uint32_t frame_rate_;
+
+    // 🆕 帧超时检测定时器句柄
+    core::TimerHandle frame_timer_handle_;
 };
 
 } // namespace sync

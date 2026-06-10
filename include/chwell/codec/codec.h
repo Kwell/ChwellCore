@@ -3,6 +3,9 @@
 #include <vector>
 #include <string>
 #include <memory>
+#include <cstdint>
+
+#include "chwell/core/ring_buffer.h"
 
 namespace chwell {
 namespace codec {
@@ -20,66 +23,59 @@ public:
 
     // 重置解码器状态（例如连接断开时）
     virtual void reset() {}
+
+    // 设置最大包体长度（防半包攻击）
+    virtual void set_max_body_len(std::uint32_t max_bytes) { max_body_len_ = max_bytes; }
+    std::uint32_t max_body_len() const { return max_body_len_; }
+
+protected:
+    std::uint32_t max_body_len_ = 65536;  // 默认 64KB
 };
 
 // 长度头编解码器：| length (4 bytes, network byte order) | body (length bytes) |
+// 使用 RingBuffer 零拷贝缓冲区，消除 O(N) 内存搬移
 class LengthHeaderCodec : public Codec {
 public:
-    LengthHeaderCodec() : buffer_(), head_(0) {}
+    LengthHeaderCodec() : ring_(4096) {}
 
     virtual std::vector<char> encode(const std::string& message) override;
     virtual std::vector<std::string> decode(const std::vector<char>& data) override;
-    virtual void reset() override {
-        buffer_.clear();
-        head_ = 0;
-    }
+    virtual void reset() override { ring_.clear(); }
 
 private:
-    void compact_prefix();
-
-    std::vector<char> buffer_;
-    std::size_t head_;
+    core::RingBuffer ring_;
 };
 
 // JSON 编解码器：使用 4 字节长度前缀（网络字节序）成帧，与 LengthHeaderCodec 一致。
-// message 为 UTF-8 JSON 字符串，便于游戏逻辑中直接使用 JSON 文本。
+// 使用 RingBuffer 零拷贝缓冲区
 class JsonCodec : public Codec {
 public:
-    JsonCodec() : buffer_(), head_(0) {}
+    JsonCodec() : ring_(4096) {}
 
     virtual std::vector<char> encode(const std::string& message) override;
     virtual std::vector<std::string> decode(const std::vector<char>& data) override;
-    virtual void reset() override {
-        buffer_.clear();
-        head_ = 0;
-    }
+    virtual void reset() override { ring_.clear(); }
 
 private:
-    void compact_prefix();
-
-    std::vector<char> buffer_;
-    std::size_t head_;
+    core::RingBuffer ring_;
 };
 
 // Protobuf 编解码器：varint32 长度前缀流式格式
 // [len(varint32)][protobuf bytes][len(varint32)][protobuf bytes]...
-// message 为单条 protobuf 消息的二进制序列化结果（如 msg.SerializeAsString()）。
+// 使用 RingBuffer 零拷贝缓冲区
 class ProtobufCodec : public Codec {
 public:
-    ProtobufCodec() : buffer_(), head_(0) {}
+    ProtobufCodec() : ring_(4096) {}
 
     virtual std::vector<char> encode(const std::string& message) override;
     virtual std::vector<std::string> decode(const std::vector<char>& data) override;
-    virtual void reset() override {
-        buffer_.clear();
-        head_ = 0;
-    }
+    virtual void reset() override { ring_.clear(); }
 
 private:
-    void compact_prefix();
+    // 从 RingBuffer 解析 varint32
+    bool parse_varint32(std::uint32_t& len);
 
-    std::vector<char> buffer_;
-    std::size_t head_;
+    core::RingBuffer ring_;
 };
 
 } // namespace codec

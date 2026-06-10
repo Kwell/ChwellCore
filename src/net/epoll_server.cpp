@@ -53,6 +53,8 @@ EpollTcpServer::EpollTcpServer(unsigned short port, int reactor_threads)
         rt.demuxer = std::make_unique<EpollDemuxer>(1024);
         reactors_.push_back(std::move(rt));
     }
+
+    last_idle_check_time_ = std::chrono::steady_clock::now();
 }
 
 EpollTcpServer::~EpollTcpServer() {
@@ -99,7 +101,8 @@ void EpollTcpServer::start() {
     });
 
     CHWELL_LOG_INFO("EpollTcpServer listening on 0.0.0.0:" << port_
-                    << " (reactors=" << reactors_.size() << ")");
+                    << " (reactors=" << reactors_.size()
+                    << ", max_connections=" << max_connections_ << ")");
 }
 
 void EpollTcpServer::stop() {
@@ -129,6 +132,15 @@ void EpollTcpServer::stop() {
 }
 
 void EpollTcpServer::on_new_connection(int client_fd) {
+    // 🆕 连接数上限检查（P0-2 半包攻击防护）
+    size_t current_count = connection_count();
+    if (current_count >= max_connections_) {
+        CHWELL_LOG_WARN("Max connections reached (" << max_connections_
+                        << "), rejecting fd=" << client_fd);
+        ::close(client_fd);
+        return;
+    }
+
     size_t idx = next_reactor_.fetch_add(1) % reactors_.size();
     EpollDemuxer* demuxer = reactors_[idx].demuxer.get();
 
@@ -154,6 +166,9 @@ void EpollTcpServer::on_new_connection(int client_fd) {
                     << ", total=" << connection_count());
 
     if (connection_cb_) connection_cb_(conn);
+
+    // 🆕 空闲连接检查
+    maybe_cleanup_idle_connections();
 }
 
 void EpollTcpServer::on_connection_close(const EpollTcpConnectionPtr& conn) {
@@ -169,6 +184,44 @@ void EpollTcpServer::remove_connection(const EpollTcpConnectionPtr& conn) {
         remaining = connections_.size();
     }
     CHWELL_LOG_INFO("EpollTcpServer: connection closed, remaining=" << remaining);
+}
+
+void EpollTcpServer::cleanup_idle_connections() {
+    auto now = std::chrono::steady_clock::now();
+    std::vector<EpollTcpConnectionPtr> to_close;
+
+    {
+        std::lock_guard<std::mutex> lock(conn_mutex_);
+        for (auto& conn : connections_) {
+            if (conn->is_idle_timeout()) {
+                to_close.push_back(conn);
+            }
+        }
+    }
+
+    for (auto& conn : to_close) {
+        CHWELL_LOG_WARN("Closing idle connection fd=" << conn->native_handle()
+                        << ", idle_timeout=" << conn->idle_timeout_sec() << "s");
+        conn->close();
+    }
+
+    if (!to_close.empty()) {
+        CHWELL_LOG_INFO("Cleaned up " << to_close.size() << " idle connections");
+    }
+}
+
+// 空闲检查：在新连接到达时顺便检查，避免额外的定时器线程
+void EpollTcpServer::maybe_cleanup_idle_connections() {
+    if (idle_check_interval_sec_ <= 0) return;
+
+    auto now = std::chrono::steady_clock::now();
+    auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+        now - last_idle_check_time_).count();
+
+    if (elapsed >= static_cast<int64_t>(idle_check_interval_sec_)) {
+        last_idle_check_time_ = now;
+        cleanup_idle_connections();
+    }
 }
 
 } // namespace net

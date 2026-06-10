@@ -13,6 +13,7 @@ EpollTcpConnection::EpollTcpConnection(int fd, EpollDemuxer* demuxer)
     if (fd_ >= 0) {
         set_nonblocking(fd_);
     }
+    last_active_time_ = std::chrono::steady_clock::now();
     CHWELL_LOG_DEBUG("EpollTcpConnection created, fd=" << fd_);
 }
 
@@ -40,8 +41,6 @@ void EpollTcpConnection::start() {
     auto self = shared_from_this();
     bool ok = demuxer_->add(fd_, IoEvent::Read | IoEvent::RdHangup,
         [self](int fd, IoEvent events) {
-            CHWELL_LOG_DEBUG("EpollTcpConnection fd=" << fd
-                            << " event: " << (unsigned)events);
             if (has_event(events, IoEvent::Error)) {
                 self->handle_error_event();
                 return;
@@ -73,8 +72,22 @@ void EpollTcpConnection::send(std::string_view data) {
 
     {
         std::lock_guard<std::mutex> lock(write_mutex_);
+
+        // 🆕 写队列上限检查（P0-2 半包攻击防护）
+        if (write_queue_bytes_ + data.size() > max_write_queue_) {
+            CHWELL_LOG_WARN("Write queue overflow on fd=" << fd_
+                            << ", queue_bytes=" << write_queue_bytes_
+                            << "+" << data.size()
+                            << " > max=" << max_write_queue_);
+            close();
+            return;
+        }
+
         write_queue_.emplace_back(data.begin(), data.end());
+        write_queue_bytes_ += data.size();
     }
+
+    update_last_active();
 
     if (!writing_.exchange(true)) {
         update_epoll_events();
@@ -95,6 +108,21 @@ void EpollTcpConnection::do_read() {
         ssize_t n = ::read(fd_, read_buffer_.data(), read_buffer_.size());
         CHWELL_LOG_DEBUG("EpollTcpConnection::do_read fd=" << fd_ << " n=" << n);
         if (n > 0) {
+            // 🆕 读缓冲区上限检查
+            {
+                std::lock_guard<std::mutex> lock(stats_mutex_);
+                total_read_bytes_ += static_cast<size_t>(n);
+                if (total_read_bytes_ > max_read_buffer_) {
+                    CHWELL_LOG_WARN("Read buffer overflow on fd=" << fd_
+                                    << ", total_read=" << total_read_bytes_
+                                    << " > max=" << max_read_buffer_);
+                    close();
+                    return;
+                }
+            }
+
+            update_last_active();
+
             if (message_cb_) {
                 message_cb_(shared_from_this(),
                             std::string_view(read_buffer_.data(), static_cast<size_t>(n)));
@@ -123,6 +151,7 @@ void EpollTcpConnection::do_write() {
         }
         buf = std::move(write_queue_.front());
         write_queue_.pop_front();
+        write_queue_bytes_ -= buf.size();
     }
 
     const char* ptr = buf.data();
@@ -133,10 +162,17 @@ void EpollTcpConnection::do_write() {
         if (n > 0) {
             ptr += n;
             remaining -= static_cast<size_t>(n);
+            {
+                std::lock_guard<std::mutex> lock(stats_mutex_);
+                total_written_bytes_ += static_cast<size_t>(n);
+            }
+            update_last_active();
         } else if (n < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 std::lock_guard<std::mutex> lock(write_mutex_);
+                size_t leftover = buf.size() - (ptr - buf.data());
                 write_queue_.push_front(std::vector<char>(ptr, ptr + remaining));
+                write_queue_bytes_ += leftover;
                 return;
             }
             if (errno == EINTR) continue;
@@ -180,6 +216,11 @@ void EpollTcpConnection::close() {
 void EpollTcpConnection::cleanup() {
     if (fd_ >= 0) { ::close(fd_); fd_ = -1; }
     closed_ = true;
+}
+
+void EpollTcpConnection::update_last_active() {
+    std::lock_guard<std::mutex> lock(stats_mutex_);
+    last_active_time_ = std::chrono::steady_clock::now();
 }
 
 } // namespace net
