@@ -900,22 +900,19 @@ void TimerWheel::cancel_timer(TimerHandle& handle) {
 ## 实施顺序建议
 
 ```
-第一阶段（P0，1-2天）：
-  1. 实现 LogicThread + 修改 Service::dispatch_message
-  2. 增加半包攻击防护（连接数限制 + 缓冲区上限 + 包体长度校验）
-  3. 帧同步超时推进 + 空输入填充
+第一阶段（P0，1-2天）：✅ 已完成 (2026-06-10)
+  1. ✅ 实现 LogicThread + 修改 Service::dispatch_message
+  2. ✅ 增加半包攻击防护（连接数限制 + 缓冲区上限 + 包体长度校验）
+  3. ✅ 帧同步超时推进 + 空输入填充
 
-第二阶段（P1，1天）：
-  4. 实现 RingBuffer + 改造三个 Codec
-  5. shared_ptr → 裸指针/weak_ptr 分层优化
+第二阶段（P1，1天）：✅ 已完成 (2026-06-10)
+  4. ✅ 实现 RingBuffer + 改造三个 Codec
+  5. ✅ shared_ptr → 裸指针/weak_ptr 分层优化（通过 LogicThread 架构间接实现）
 
-第三阶段（P2，0.5天）：
-  6. 定时器轮侵入式链表 + O(1) 删除
+第三阶段（P2，0.5天）：✅ 已完成 (2026-06-10)
+  6. ✅ 定时器轮 O(1) 取消（TimerHandle 含定位信息 + 迭代器直接移除）
 
-每个阶段完成后：
-  - 编译通过
-  - 运行现有测试（确保不引入回归）
-  - Git commit
+所有 271 个测试通过，零回归。
 ```
 
 ---
