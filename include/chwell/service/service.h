@@ -248,21 +248,57 @@ public:
     void stop() {
         if (!running_.exchange(false)) return;
 
-        CHWELL_LOG_INFO("Service stopping...");
+        CHWELL_LOG_INFO("Service stopping (graceful shutdown)...");
 
-        // 先停止 Logic Thread，确保排空队列
+        // ========== 平滑关机流程（P0） ==========
+
+        // Step 1: 停止 Reactor 接收新消息（但保持已连接的客户端读端关闭）
+        if (use_epoll_) {
+            if (epoll_server_) {
+                CHWELL_LOG_INFO("Step 1: Stopping epoll server (no more new messages)");
+                epoll_server_->stop();
+            }
+        } else {
+            if (legacy_server_) {
+                CHWELL_LOG_INFO("Step 1: Stopping legacy server");
+                legacy_server_->stop();
+            }
+        }
+
+        // Step 2: 通知组件即将关闭（PreShut），组件应停止接收新请求，标记进入关机状态
+        CHWELL_LOG_INFO("Step 2: PreShut - notifying components");
+        PreShut();
+
+        // Step 3: 排空 Logic Thread 队列（保证残余消息全部处理完）
         if (logic_thread_) {
+            CHWELL_LOG_INFO("Step 3: Draining LogicThread queue (pending="
+                            << logic_thread_->pending_count() << ")");
+            bool drained = logic_thread_->drain(shutdown_drain_timeout_ms_);
+            if (!drained) {
+                CHWELL_LOG_WARN("LogicThread drain timeout! pending="
+                                << logic_thread_->pending_count() << " messages dropped");
+            }
+        }
+
+        // Step 4: 执行各组件的 flush 操作（强制脏数据落地）
+        CHWELL_LOG_INFO("Step 4: Flushing all dirty data to storage");
+        for (auto& comp : components_) {
+            comp->Flush();  // 🆕 调用组件的 flush 方法
+        }
+
+        // Step 5: 停止 Logic Thread
+        if (logic_thread_) {
+            CHWELL_LOG_INFO("Step 5: Stopping LogicThread");
             logic_thread_->stop();
         }
 
-        if (use_epoll_) {
-            if (epoll_server_) epoll_server_->stop();
-        } else {
-            if (legacy_server_) legacy_server_->stop();
+        // Step 6: 停止 IoService（legacy 模式）
+        if (!use_epoll_) {
             io_service_.stop();
         }
 
-        PreShut();
+        // Step 7: 执行 Shut 释放资源
+        CHWELL_LOG_INFO("Step 7: Shut - releasing resources");
         Shut();
         plugin_manager_.UninstallAll(*this);
 
@@ -272,8 +308,11 @@ public:
         }
 
         init_stage_ = 0;
-        CHWELL_LOG_INFO("Service stopped");
+        CHWELL_LOG_INFO("Service stopped (graceful shutdown complete)");
     }
+
+    // 🆕 设置 graceful shutdown 时排空 LogicThread 队列的超时（毫秒）
+    void set_shutdown_drain_timeout_ms(int ms) { shutdown_drain_timeout_ms_ = ms; }
 
     void PreShut() {
         CHWELL_LOG_INFO("Service PreShut: notifying components...");
@@ -356,6 +395,7 @@ private:
     std::atomic<bool> running_;
     int init_stage_;
     std::chrono::steady_clock::time_point last_update_time_;
+    int shutdown_drain_timeout_ms_ = 5000;  // 🆕 默认 5 秒排空超时
 };
 
 } // namespace service
