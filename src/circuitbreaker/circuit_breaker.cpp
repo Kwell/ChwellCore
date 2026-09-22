@@ -155,8 +155,13 @@ bool DefaultCircuitBreaker::should_trip() const {
             return get_failure_rate() >= config_.failure_rate_threshold;
 
         case TripStrategy::FAILURE_COUNT_OR_RATE:
-            return (failures >= config_.failure_threshold) ||
-                   (total > 0 && get_failure_rate() >= config_.failure_rate_threshold);
+            if (failures >= config_.failure_threshold) {
+                return true;
+            }
+            if (total < static_cast<uint64_t>(config_.failure_threshold)) {
+                return false;
+            }
+            return get_failure_rate() >= config_.failure_rate_threshold;
 
         default:
             return false;
