@@ -1,12 +1,18 @@
 #include "chwell/net/ws_connection.h"
 #include "chwell/core/logger.h"
 #include <cerrno>
+#include <sys/socket.h>
 
 namespace chwell {
 namespace net {
 
 WsRawConnection::WsRawConnection(TcpSocket socket)
     : socket_(std::move(socket)), read_buffer_(4096) {
+    // 设置发送超时，防止慢客户端导致线程永久阻塞
+    struct timeval tv;
+    tv.tv_sec = 30;
+    tv.tv_usec = 0;
+    ::setsockopt(socket_.native_handle(), SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 }
 
 void WsRawConnection::start() {

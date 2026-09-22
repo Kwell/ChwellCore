@@ -211,10 +211,14 @@ public:
         return true;
     }
 
-    // 创建快照
+    // 创建快照（加锁版本，供外部调用）
     StateSnapshot create_snapshot(const std::string& entity_id) {
         std::lock_guard<std::mutex> lock(mutex_);
+        return create_snapshot_unlocked(entity_id);
+    }
 
+    // 创建快照（不加锁版本，供已持锁的内部方法调用，避免重入死锁）
+    StateSnapshot create_snapshot_unlocked(const std::string& entity_id) {
         StateSnapshot snapshot;
         snapshot.entity_id = entity_id;
 
@@ -240,9 +244,9 @@ public:
         // 保存连接映射
         connection_map_[conn.get()] = conn;
 
-        // 发送当前状态快照
+        // 发送当前状态快照（调用 _unlocked 版本，避免重入 mutex_ 导致死锁）
         if (snapshot_callback_) {
-            StateSnapshot snapshot = create_snapshot(entity_id);
+            StateSnapshot snapshot = create_snapshot_unlocked(entity_id);
             snapshot_callback_(conn, snapshot);
         }
     }
@@ -254,6 +258,25 @@ public:
         auto it = subscribers_.find(entity_id);
         if (it != subscribers_.end()) {
             it->second.erase(conn.get());
+        }
+
+        // 同时清理 connection_map_ 中的反向映射
+        auto cmap_it = connection_map_.find(conn.get());
+        if (cmap_it != connection_map_.end()) {
+            connection_map_.erase(cmap_it);
+        }
+    }
+
+    // 移除连接的所有订阅（连接断开时调用，避免悬空指针）
+    void remove_subscriber(net::TcpConnection* raw_conn) {
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        // 从 connection_map_ 中移除（释放 shared_ptr 引用）
+        connection_map_.erase(raw_conn);
+
+        // 遍历所有实体的订阅者集合，移除该连接
+        for (auto& pair : subscribers_) {
+            pair.second.erase(raw_conn);
         }
     }
 
@@ -339,6 +362,12 @@ public:
 
     // 销毁房间
     void destroy_room(const std::string& room_id);
+
+    // 连接加入房间（建立 connection -> room_id 映射，否则组件无法工作）
+    void join_room(const net::TcpConnectionPtr& conn, const std::string& room_id);
+
+    // 连接离开房间
+    void leave_room(const net::TcpConnectionPtr& conn);
 
     // 更新状态
     void update_state(const std::string& room_id, const StateUpdate& update);

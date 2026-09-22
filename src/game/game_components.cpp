@@ -42,7 +42,7 @@ static bool decode_string(const char* data, size_t size, size_t& offset, std::st
 static bool decode_int64(const char* data, size_t size, size_t& offset, int64_t& out) {
     if (offset + 8 > size) return false;
 
-    // 读取 int64（小端）
+    // 读取 int64（小端），与既有线上协议保持兼容
     int64_t value = 0;
     for (int i = 0; i < 8; i++) {
         value |= (static_cast<uint64_t>(static_cast<uint8_t>(data[offset + i])) << (i * 8));
@@ -56,6 +56,7 @@ static bool decode_int64(const char* data, size_t size, size_t& offset, int64_t&
 static std::string encode_int64(int64_t value) {
     std::string result;
     result.resize(8);
+    // 小端编码，与既有线上协议保持兼容
     for (int i = 0; i < 8; i++) {
         result[i] = static_cast<char>((value >> (i * 8)) & 0xFF);
     }
@@ -113,7 +114,7 @@ void LoginComponent::handle_login(const net::TcpConnectionPtr& conn, const std::
         return;
     }
 
-    CHWELL_LOG_INFO("Login request: player_id=" + player_id + ", token=" + token);
+    CHWELL_LOG_INFO("Login request: player_id=" + player_id);
 
     // 验证 player_id
     if (player_id.empty()) {
@@ -127,6 +128,18 @@ void LoginComponent::handle_login(const net::TcpConnectionPtr& conn, const std::
         CHWELL_LOG_ERROR("Token cannot be empty");
         send_error_response(conn, error_code::INVALID_TOKEN, "Token cannot be empty");
         return;
+    }
+
+    // 调用 token 验证器（如果设置了）
+    // 未设置验证器时仅检查非空，生产环境必须设置验证器
+    if (token_validator_) {
+        if (!token_validator_(player_id, token)) {
+            CHWELL_LOG_WARN("Token validation failed for player: " + player_id);
+            send_error_response(conn, error_code::INVALID_TOKEN, "Token validation failed");
+            return;
+        }
+    } else {
+        CHWELL_LOG_WARN("No token validator set, accepting any non-empty token (INSECURE)");
     }
 
     // 获取 SessionManager 并登录
@@ -315,6 +328,8 @@ void RoomComponent::handle_join_room(const net::TcpConnectionPtr& conn, const st
 }
 
 void RoomComponent::join_room(const net::TcpConnectionPtr& conn, const std::string& room_id) {
+    std::lock_guard<std::mutex> lock(rooms_mutex_);
+
     // 查找或创建房间
     auto it = rooms_.find(room_id);
     std::shared_ptr<Room> room;
@@ -347,29 +362,35 @@ void RoomComponent::leave_room(const net::TcpConnectionPtr& conn) {
         }
     }
 
-    // 从所有房间中移除连接
-    for (auto& pair : rooms_) {
-        auto& room = pair.second;
-        room->connections.erase(conn.get());
-    }
+    {
+        std::lock_guard<std::mutex> lock(rooms_mutex_);
 
-    // 清理连接映射
-    connections_map_.erase(conn.get());
+        // 从所有房间中移除连接
+        for (auto& pair : rooms_) {
+            auto& room = pair.second;
+            room->connections.erase(conn.get());
+        }
 
-    // 清理空房间
-    auto it = rooms_.begin();
-    while (it != rooms_.end()) {
-        if (it->second->connections.empty()) {
-            CHWELL_LOG_INFO("Room deleted: " + it->first);
-            it = rooms_.erase(it);
-        } else {
-            ++it;
+        // 清理连接映射
+        connections_map_.erase(conn.get());
+
+        // 清理空房间
+        auto it = rooms_.begin();
+        while (it != rooms_.end()) {
+            if (it->second->connections.empty()) {
+                CHWELL_LOG_INFO("Room deleted: " + it->first);
+                it = rooms_.erase(it);
+            } else {
+                ++it;
+            }
         }
     }
 }
 
 std::vector<net::TcpConnectionPtr> RoomComponent::get_connections_in_room(const std::string& room_id) {
     std::vector<net::TcpConnectionPtr> result;
+
+    std::lock_guard<std::mutex> lock(rooms_mutex_);
 
     auto it = rooms_.find(room_id);
     if (it != rooms_.end()) {

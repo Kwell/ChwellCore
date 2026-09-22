@@ -255,8 +255,14 @@ void benchmark_tcp_send_receive() {
     }
     const char msg[] = "ping";
     char buf[8];
-    ::send(sv[0], msg, sizeof(msg) - 1, 0);
-    ::recv(sv[1], buf, sizeof(buf), MSG_DONTWAIT);
+    ssize_t sent = ::send(sv[0], msg, sizeof(msg) - 1, 0);
+    if (sent < 0) {
+        CHWELL_LOG_WARN("benchmark_tcp_send_receive: send failed");
+    }
+    ssize_t received = ::recv(sv[1], buf, sizeof(buf), MSG_DONTWAIT);
+    if (received < 0) {
+        CHWELL_LOG_WARN("benchmark_tcp_send_receive: recv failed");
+    }
     ::close(sv[0]);
     ::close(sv[1]);
 }

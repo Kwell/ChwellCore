@@ -151,10 +151,12 @@ void PlayerMoveComponent::send_player_position(const net::TcpConnectionPtr& conn
 }
 
 void PlayerMoveComponent::update_player_position(const std::string& player_id, const PlayerPosition& pos) {
+    std::lock_guard<std::mutex> lock(positions_mutex_);
     player_positions_[player_id] = pos;
 }
 
 bool PlayerMoveComponent::get_player_position(const std::string& player_id, PlayerPosition& out) {
+    std::lock_guard<std::mutex> lock(positions_mutex_);
     auto it = player_positions_.find(player_id);
     if (it != player_positions_.end()) {
         out = it->second;
@@ -168,6 +170,7 @@ void PlayerMoveComponent::on_disconnect(const net::TcpConnectionPtr& conn) {
     std::string player_id = get_player_id(conn);
     if (!player_id.empty()) {
         // 清理玩家位置
+        std::lock_guard<std::mutex> lock(positions_mutex_);
         player_positions_.erase(player_id);
         CHWELL_LOG_INFO("Player position removed: " + player_id);
     }

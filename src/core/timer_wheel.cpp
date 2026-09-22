@@ -116,16 +116,11 @@ void TimerWheel::cancel_timer(TimerHandle& handle) {
             if (task && !task->cancelled) {
                 task->cancelled = true;
 
-                // 🆕 用迭代器 O(1) 移除（如果迭代器仍有效）
-                // std::list 的迭代器在插入/删除其他元素时不会失效
-                // 但如果 task 已经被 process_slot 移走了，迭代器就无效了
-                // 安全做法：遍历该槽查找（最坏 O(N) 但 N 通常很小）
-                for (auto it = tasks_list.begin(); it != tasks_list.end(); ++it) {
-                    if ((*it)->id == handle.id()) {
-                        tasks_list.erase(it);
-                        break;
-                    }
-                }
+                // O(1) 移除：使用 task 中存储的 list_iter 直接 erase
+                // std::list 迭代器在其他元素插入/删除时不会失效
+                // task->list_iter 在 add_task_to_wheel 中被设置
+                // 如果 task 已被 process_slot/cascade 移走，list_iter 会被更新
+                tasks_list.erase(task->list_iter);
             }
             task_map_.erase(map_it);
         }
@@ -242,10 +237,13 @@ void TimerWheel::cascade(int layer) {
 
         int64_t delay = task->expire_time - current_time_ms();
         if (delay <= 0) {
+            // 任务已到期：加入下一个待处理 slot（current_slot 已在本 tick 处理过）
+            // 加入 (current_slot + 1) 确保在下一个 tick 被处理，而非等待整轮
+            int next_slot = (wheels_[0].current_slot + 1) % wheels_[0].wheel_size;
             task->layer = 0;
-            task->slot = wheels_[0].current_slot;
-            wheels_[0].slots[wheels_[0].current_slot].tasks.push_back(task);
-            task->list_iter = std::prev(wheels_[0].slots[wheels_[0].current_slot].tasks.end());
+            task->slot = next_slot;
+            wheels_[0].slots[next_slot].tasks.push_back(task);
+            task->list_iter = std::prev(wheels_[0].slots[next_slot].tasks.end());
         } else {
             add_task_to_wheel(task);
         }
@@ -262,19 +260,14 @@ void TimerWheel::tick() {
 
         wheels_[0].current_slot = (wheels_[0].current_slot + 1) % wheels_[0].wheel_size;
 
-        if (wheels_[0].current_slot == 0) {
-            cascade(1);
-            wheels_[1].current_slot = (wheels_[1].current_slot + 1) % wheels_[1].wheel_size;
+        // 级联：当低层轮转满一圈时，从上层轮下推任务
+        // 使用循环代替硬编码 4 层，支持任意 layers 参数
+        for (size_t layer = 1; layer < wheels_.size(); ++layer) {
+            if (wheels_[layer - 1].current_slot != 0) break;
 
-            if (wheels_[1].current_slot == 0 && wheels_.size() > 2) {
-                cascade(2);
-                wheels_[2].current_slot = (wheels_[2].current_slot + 1) % wheels_[2].wheel_size;
-
-                if (wheels_[2].current_slot == 0 && wheels_.size() > 3) {
-                    cascade(3);
-                    wheels_[3].current_slot = (wheels_[3].current_slot + 1) % wheels_[3].wheel_size;
-                }
-            }
+            cascade(static_cast<int>(layer));
+            wheels_[layer].current_slot =
+                (wheels_[layer].current_slot + 1) % wheels_[layer].wheel_size;
         }
     }
 

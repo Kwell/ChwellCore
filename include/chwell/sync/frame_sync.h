@@ -13,7 +13,9 @@
 #include <cstdint>
 #include <queue>
 #include <mutex>
+#include <atomic>
 #include <chrono>
+#include <map>
 
 namespace chwell {
 namespace sync {
@@ -123,6 +125,7 @@ public:
         std::lock_guard<std::mutex> lock(mutex_);
         snapshots_[snapshot.frame_id] = snapshot;
         // 只保留最近的 10 个快照
+        // 使用 std::map 按 frame_id 排序，begin() 即为最小（最旧）的帧
         while (snapshots_.size() > 10) {
             snapshots_.erase(snapshots_.begin());
         }
@@ -140,20 +143,22 @@ public:
         return false;
     }
 
-    // 获取当前帧
-    uint32_t current_frame() const { return current_frame_; }
+    // 获取当前帧（原子读取，无需加锁）
+    uint32_t current_frame() const {
+        return current_frame_.load(std::memory_order_acquire);
+    }
 
     // 推进帧
     void advance_frame() {
         std::lock_guard<std::mutex> lock(mutex_);
-        current_frame_++;
+        current_frame_.fetch_add(1, std::memory_order_release);
         last_advance_time_ = std::chrono::steady_clock::now();
     }
 
-    // 开始/停止同步
-    void start_sync() { running_ = true; }
-    void stop_sync() { running_ = false; }
-    bool is_running() const { return running_; }
+    // 开始/停止同步（原子写入）
+    void start_sync() { running_.store(true, std::memory_order_release); }
+    void stop_sync() { running_.store(false, std::memory_order_release); }
+    bool is_running() const { return running_.load(std::memory_order_acquire); }
 
     // 获取房间 ID
     const std::string& room_id() const { return room_id_; }
@@ -198,9 +203,13 @@ public:
 
     // ========== 🆕 帧超时兜底（P0-3） ==========
 
-    // 设置帧超时（毫秒）
-    void set_frame_timeout(uint32_t timeout_ms) { frame_timeout_ms_ = timeout_ms; }
-    uint32_t frame_timeout_ms() const { return frame_timeout_ms_; }
+    // 设置帧超时（毫秒，原子写入）
+    void set_frame_timeout(uint32_t timeout_ms) {
+        frame_timeout_ms_.store(timeout_ms, std::memory_order_release);
+    }
+    uint32_t frame_timeout_ms() const {
+        return frame_timeout_ms_.load(std::memory_order_acquire);
+    }
 
     /**
      * @brief 检查并推进超时帧
@@ -212,37 +221,39 @@ public:
      */
     bool check_frame_timeout() {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (!running_ || player_inputs_.empty()) return false;
+        if (!running_.load(std::memory_order_acquire) || player_inputs_.empty()) return false;
 
         auto now = std::chrono::steady_clock::now();
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
             now - last_advance_time_).count();
 
-        if (elapsed < static_cast<int64_t>(frame_timeout_ms_)) return false;
+        if (elapsed < static_cast<int64_t>(frame_timeout_ms_.load(std::memory_order_acquire)))
+            return false;
 
         // 超时了，为未提交当前帧输入的玩家填充空输入
+        uint32_t cur_frame = current_frame_.load(std::memory_order_relaxed);
         for (auto& pair : submitted_frames_) {
             uint32_t player_id = pair.first;
             auto& frames = pair.second;
 
-            if (frames.find(current_frame_) == frames.end()) {
+            if (frames.find(cur_frame) == frames.end()) {
                 // 该玩家未提交当前帧输入，填充空输入
                 FrameInput empty_input;
-                empty_input.frame_id = current_frame_;
+                empty_input.frame_id = cur_frame;
                 empty_input.player_id = player_id;
                 empty_input.input_data.clear();
                 player_inputs_[player_id].push(empty_input);
-                frames.insert(current_frame_);
+                frames.insert(cur_frame);
 
                 CHWELL_LOG_WARN("Frame timeout: filling empty input for player "
                                 + std::to_string(player_id)
-                                + " frame=" + std::to_string(current_frame_)
+                                + " frame=" + std::to_string(cur_frame)
                                 + " room=" + room_id_);
             }
         }
 
         // 强制推进
-        current_frame_++;
+        current_frame_.fetch_add(1, std::memory_order_release);
         last_advance_time_ = now;
         return true;
     }
@@ -255,18 +266,18 @@ public:
 private:
     std::string room_id_;
     uint32_t frame_rate_;
-    uint32_t current_frame_;
-    bool running_;
+    std::atomic<uint32_t> current_frame_;   // 原子类型，支持无锁读取
+    std::atomic<bool> running_;             // 原子类型，支持无锁读取
 
     mutable std::mutex mutex_;
     std::unordered_map<uint32_t, net::TcpConnectionPtr> players_;
     std::unordered_map<uint32_t, std::queue<FrameInput>> player_inputs_;
-    std::unordered_map<uint32_t, FrameSnapshot> snapshots_;
-    std::unordered_map<uint32_t, std::unordered_set<uint32_t>> submitted_frames_;  // 🆕 已提交帧集合
+    std::map<uint32_t, FrameSnapshot> snapshots_;  // 改用 std::map 按 frame_id 排序
+    std::unordered_map<uint32_t, std::unordered_set<uint32_t>> submitted_frames_;
 
-    // 🆕 帧超时相关
-    uint32_t frame_timeout_ms_;                    // 帧超时阈值
-    std::chrono::steady_clock::time_point last_advance_time_;  // 最近一次推进时间
+    // 帧超时相关
+    std::atomic<uint32_t> frame_timeout_ms_;       // 原子类型，支持无锁读取
+    std::chrono::steady_clock::time_point last_advance_time_;
 };
 
 /**

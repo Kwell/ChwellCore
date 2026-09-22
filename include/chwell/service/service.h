@@ -6,6 +6,7 @@
 #include <functional>
 #include <unordered_map>
 #include <atomic>
+#include <algorithm>
 
 #include "chwell/core/thread_pool.h"
 #include "chwell/core/logger.h"

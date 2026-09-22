@@ -23,11 +23,20 @@ public:
         std::string request_data;
         request_data.reserve(8192);
 
+        // 限制请求总大小（含头部），防止慢速攻击和内存耗尽
+        static const std::size_t MAX_REQUEST_SIZE = 16 * 1024 * 1024;  // 16MB
+
         while (socket_.is_open()) {
             ssize_t n = socket_.read(buffer_.data(), buffer_.size());
             if (n <= 0) break;
 
             request_data.append(buffer_.data(), static_cast<std::size_t>(n));
+
+            // 检查请求总大小上限
+            if (request_data.size() > MAX_REQUEST_SIZE) {
+                CHWELL_LOG_WARN("HttpSession request too large, closing");
+                break;
+            }
 
             std::size_t pos = request_data.find("\r\n\r\n");
             if (pos == std::string::npos) continue;
@@ -107,6 +116,12 @@ private:
         std::string content_length_str = req.header("Content-Length");
         if (!content_length_str.empty()) {
             int len = std::atoi(content_length_str.c_str());
+            // 限制请求体大小，防止恶意大包导致内存耗尽
+            static const int MAX_BODY_SIZE = 10 * 1024 * 1024;  // 10MB
+            if (len > MAX_BODY_SIZE) {
+                CHWELL_LOG_WARN("HttpSession body too large: " << len);
+                return false;  // 解析失败，调用方会关闭连接
+            }
             std::size_t body_start = header_end + 4;
             if (len > 0 && body_start + static_cast<std::size_t>(len) <= data.size()) {
                 req.body = data.substr(body_start, static_cast<std::size_t>(len));

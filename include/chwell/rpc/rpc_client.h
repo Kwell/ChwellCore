@@ -90,7 +90,9 @@ private:
     std::condition_variable cleanup_cv_;
 
     // Receive buffer for handling multiple messages per TCP read
+    // 受 recv_mutex_ 保护，on_message 和 cleanup 线程可能并发访问
     std::vector<char> recv_buffer_;
+    std::mutex recv_mutex_;
 
     std::shared_ptr<circuitbreaker::CircuitBreaker> circuit_breaker_;
     std::shared_ptr<ratelimit::RateLimiter> rate_limiter_;

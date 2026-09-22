@@ -8,6 +8,7 @@
 #include <unordered_set>
 #include <string>
 #include <memory>
+#include <mutex>
 
 namespace chwell {
 namespace game {
@@ -51,8 +52,15 @@ public:
     // 发送登录响应
     void send_login_response(const net::TcpConnectionPtr& conn, bool ok, const std::string& message);
 
+    // 设置 token 验证回调
+    // 回调返回 true 表示 token 有效，false 表示无效
+    // 未设置回调时，仅检查 token 非空（不安全，仅用于开发）
+    typedef std::function<bool(const std::string& player_id, const std::string& token)> TokenValidator;
+    void set_token_validator(TokenValidator validator) { token_validator_ = std::move(validator); }
+
 private:
     service::Service* service_ = nullptr;
+    TokenValidator token_validator_;
 };
 
 // 聊天组件
@@ -111,6 +119,7 @@ private:
         std::unordered_set<net::TcpConnection*> connections;
     };
 
+    mutable std::mutex rooms_mutex_;  // 保护 rooms_ 和 connections_map_
     std::unordered_map<std::string, std::shared_ptr<Room>> rooms_;
 
     // 连接映射：raw_ptr -> shared_ptr

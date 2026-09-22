@@ -6,6 +6,7 @@
 #include <vector>
 #include <memory>
 #include <mutex>
+#include <atomic>
 #include <any>
 #include <typeindex>
 #include <algorithm>
@@ -93,8 +94,8 @@ public:
         static_assert(std::is_base_of<Event, EventT>::value, "EventT must derive from Event");
         
         std::lock_guard<std::mutex> lock(mutex_);
-        
-        HandlerId id = next_id_++;
+
+        HandlerId id = next_id_.fetch_add(1, std::memory_order_relaxed);
         auto handler = std::make_unique<EventHandler<EventT>>(std::move(callback));
         auto subscriber = std::make_unique<Subscriber>(id, priority, std::move(handler));
         
@@ -198,7 +199,7 @@ private:
     
     mutable std::mutex mutex_;
     std::unordered_map<std::type_index, std::vector<std::unique_ptr<Subscriber>>> subscribers_;
-    HandlerId next_id_;
+    std::atomic<HandlerId> next_id_;  // 原子类型，支持多线程并发 subscribe
 };
 
 // 常用事件定义

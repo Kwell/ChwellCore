@@ -43,12 +43,17 @@ bool MysqlStorage::connect() {
 
     conn_ = mysql;
 
+    // 读取表名并消毒（防止 SQL 注入），消毒后存储到 table_ 供后续方法复用
     std::string table = "kv";
     it = config_.extra.find("table");
     if (it != config_.extra.end()) table = it->second;
+    table_ = sanitize_table_name(table);
+    if (table_ != table) {
+        CHWELL_LOG_WARN("MysqlStorage: table name sanitized from '" + table + "' to '" + table_ + "'");
+    }
 
     std::string create_sql =
-        "CREATE TABLE IF NOT EXISTS `" + table + "` ("
+        "CREATE TABLE IF NOT EXISTS `" + table_ + "` ("
         "`k` VARCHAR(512) PRIMARY KEY, "
         "`v` MEDIUMTEXT NOT NULL, "
         "`expire_at` BIGINT DEFAULT 0"
@@ -74,6 +79,8 @@ bool MysqlStorage::connect() {
 
 void MysqlStorage::disconnect() {
 #if defined(CHWELL_USE_MYSQL)
+    // 加锁保护，确保没有其他线程正在使用连接
+    std::lock_guard<std::shared_mutex> lock(conn_mutex_);
     if (conn_) {
         mysql_close(static_cast<MYSQL*>(conn_));
         conn_ = nullptr;
@@ -85,15 +92,14 @@ StorageResult MysqlStorage::get(const std::string& key) {
 #if defined(CHWELL_USE_MYSQL)
     if (!conn_) return StorageResult::failure("not connected");
 
-    std::string table = "kv";
-    auto it = config_.extra.find("table");
-    if (it != config_.extra.end()) table = it->second;
+    // 加锁保护 MySQL 连接（MYSQL* 非线程安全）
+    std::lock_guard<std::shared_mutex> lock(conn_mutex_);
 
     MYSQL* mysql = static_cast<MYSQL*>(conn_);
     MYSQL_STMT* stmt = mysql_stmt_init(mysql);
     if (!stmt) return StorageResult::failure(mysql_error(mysql));
 
-    std::string sql = "SELECT v FROM `" + table +
+    std::string sql = "SELECT v FROM `" + table_ +
                      "` WHERE k=? AND (expire_at=0 OR expire_at>UNIX_TIMESTAMP())";
     if (mysql_stmt_prepare(stmt, sql.c_str(), static_cast<unsigned long>(sql.size())) != 0) {
         StorageResult r = StorageResult::failure(mysql_stmt_error(stmt));
@@ -155,15 +161,14 @@ StorageResult MysqlStorage::put(const std::string& key, const std::string& value
 #if defined(CHWELL_USE_MYSQL)
     if (!conn_) return StorageResult::failure("not connected");
 
-    std::string table = "kv";
-    auto it = config_.extra.find("table");
-    if (it != config_.extra.end()) table = it->second;
+    // 加锁保护 MySQL 连接（MYSQL* 非线程安全）
+    std::lock_guard<std::shared_mutex> lock(conn_mutex_);
 
     MYSQL* mysql = static_cast<MYSQL*>(conn_);
     MYSQL_STMT* stmt = mysql_stmt_init(mysql);
     if (!stmt) return StorageResult::failure(mysql_error(mysql));
 
-    std::string sql = "REPLACE INTO `" + table + "` (k, v, expire_at) VALUES (?, ?, ?)";
+    std::string sql = "REPLACE INTO `" + table_ + "` (k, v, expire_at) VALUES (?, ?, ?)";
     if (mysql_stmt_prepare(stmt, sql.c_str(), static_cast<unsigned long>(sql.size())) != 0) {
         StorageResult r = StorageResult::failure(mysql_stmt_error(stmt));
         mysql_stmt_close(stmt);
@@ -209,15 +214,14 @@ StorageResult MysqlStorage::remove(const std::string& key) {
 #if defined(CHWELL_USE_MYSQL)
     if (!conn_) return StorageResult::failure("not connected");
 
-    std::string table = "kv";
-    auto it = config_.extra.find("table");
-    if (it != config_.extra.end()) table = it->second;
+    // 加锁保护 MySQL 连接（MYSQL* 非线程安全）
+    std::lock_guard<std::shared_mutex> lock(conn_mutex_);
 
     MYSQL* mysql = static_cast<MYSQL*>(conn_);
     MYSQL_STMT* stmt = mysql_stmt_init(mysql);
     if (!stmt) return StorageResult::failure(mysql_error(mysql));
 
-    std::string sql = "DELETE FROM `" + table + "` WHERE k=?";
+    std::string sql = "DELETE FROM `" + table_ + "` WHERE k=?";
     if (mysql_stmt_prepare(stmt, sql.c_str(), static_cast<unsigned long>(sql.size())) != 0) {
         StorageResult r = StorageResult::failure(mysql_stmt_error(stmt));
         mysql_stmt_close(stmt);
@@ -251,16 +255,15 @@ bool MysqlStorage::exists(const std::string& key) {
 #if defined(CHWELL_USE_MYSQL)
     if (!conn_) return false;
 
-    std::string table = "kv";
-    auto it = config_.extra.find("table");
-    if (it != config_.extra.end()) table = it->second;
+    // 加锁保护 MySQL 连接（MYSQL* 非线程安全）
+    std::lock_guard<std::shared_mutex> lock(conn_mutex_);
 
     MYSQL* mysql = static_cast<MYSQL*>(conn_);
     MYSQL_STMT* stmt = mysql_stmt_init(mysql);
     if (!stmt) return false;
 
     std::string sql =
-        "SELECT 1 FROM `" + table +
+        "SELECT 1 FROM `" + table_ +
         "` WHERE k=? AND (expire_at=0 OR expire_at>UNIX_TIMESTAMP()) LIMIT 1";
     if (mysql_stmt_prepare(stmt, sql.c_str(),
                            static_cast<unsigned long>(sql.size())) != 0) {
@@ -304,15 +307,14 @@ std::vector<std::string> MysqlStorage::keys(const std::string& prefix) {
 #if defined(CHWELL_USE_MYSQL)
     if (!conn_) return {};
 
-    std::string table = "kv";
-    auto it = config_.extra.find("table");
-    if (it != config_.extra.end()) table = it->second;
+    // 加锁保护 MySQL 连接（MYSQL* 非线程安全）
+    std::lock_guard<std::shared_mutex> lock(conn_mutex_);
 
     MYSQL* mysql = static_cast<MYSQL*>(conn_);
     MYSQL_STMT* stmt = mysql_stmt_init(mysql);
     if (!stmt) return {};
 
-    std::string sql = "SELECT k FROM `" + table +
+    std::string sql = "SELECT k FROM `" + table_ +
                       "` WHERE (expire_at=0 OR expire_at>UNIX_TIMESTAMP())";
     bool has_prefix = !prefix.empty();
     if (has_prefix) {
@@ -360,8 +362,27 @@ std::vector<std::string> MysqlStorage::keys(const std::string& prefix) {
     mysql_stmt_bind_result(stmt, &res);
 
     std::vector<std::string> result;
-    while (mysql_stmt_fetch(stmt) == 0) {
-        result.emplace_back(key_buf, key_len);
+    // 处理 MYSQL_DATA_TRUNCATED（返回值 100）：键长度超过 512 字节时
+    // 使用 mysql_stmt_fetch_column 获取完整数据，避免长键被静默丢弃
+    while (true) {
+        int rc = mysql_stmt_fetch(stmt);
+        if (rc == 1) break;  // 错误
+        if (rc == MYSQL_NO_DATA) break;  // 无数据
+
+        if (rc == MYSQL_DATA_TRUNCATED || key_len > sizeof(key_buf)) {
+            // 键被截断，分配足够大的缓冲区重新获取
+            std::vector<char> big_buf(key_len + 1);
+            MYSQL_BIND col_bind;
+            std::memset(&col_bind, 0, sizeof(col_bind));
+            col_bind.buffer_type   = MYSQL_TYPE_STRING;
+            col_bind.buffer        = big_buf.data();
+            col_bind.buffer_length = big_buf.size();
+            col_bind.length        = &key_len;
+            mysql_stmt_fetch_column(stmt, &col_bind, 0, 0);
+            result.emplace_back(big_buf.data(), key_len);
+        } else {
+            result.emplace_back(key_buf, key_len);
+        }
     }
     mysql_stmt_close(stmt);
     return result;

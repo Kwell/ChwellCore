@@ -43,7 +43,8 @@ private:
 
     StorageConfig config_;
     void* conn_{nullptr};  // MYSQL* 不暴露到头文件，避免依赖 mysql.h
-    mutable std::shared_mutex conn_mutex_;
+    std::string table_{"kv"};  // 消毒后的表名，connect() 时一次性设置
+    mutable std::shared_mutex conn_mutex_;  // 保护 conn_ 的多线程访问
 };
 
 }  // namespace storage

@@ -104,8 +104,8 @@ bool Config::load_from_files(const std::vector<std::string>& paths) {
     // 环境变量最终覆盖
     apply_env_overrides();
 
-    CHWELL_LOG_INFO("Config: server_name=" << server_name()
-                    << ", bus_id=" << bus_id()
+    CHWELL_LOG_INFO("Config: server_name=" << server_name_unlocked()
+                    << ", bus_id=" << bus_id_unlocked()
                     << ", listen_port=" << listen_port_
                     << ", worker_threads=" << worker_threads_);
     CHWELL_LOG_INFO("Config: loaded " << components_.size() << " component configs");

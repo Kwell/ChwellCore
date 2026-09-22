@@ -15,14 +15,20 @@ RedisClient::~RedisClient() {
 }
 
 bool RedisClient::connect() {
-    // 内存模拟实现，始终返回 true
-    CHWELL_LOG_INFO("RedisClient (memory mock) connected");
+    // ⚠️ 当前为内存模拟实现，非真实 Redis 连接
+    // 数据不跨进程共享，不适用于多实例部署的分布式场景
+    // 生产环境需替换为真实 Redis 协议（RESP）实现或 hiredis 库
+    CHWELL_LOG_WARN("RedisClient: using IN-MEMORY MOCK, no real Redis connection. "
+                    "Data is NOT shared across instances. "
+                    "Distributed locks and pub/sub will NOT work in multi-instance deployments.");
+    connected_ = true;
     return true;
 }
 
 void RedisClient::disconnect() {
     std::lock_guard<std::mutex> lock(mutex_);
     CHWELL_LOG_INFO("RedisClient (memory mock) disconnected");
+    connected_ = false;
     data_.clear();
     expires_.clear();
     hashes_.clear();
@@ -32,7 +38,7 @@ void RedisClient::disconnect() {
 }
 
 bool RedisClient::is_connected() const {
-    return true;
+    return connected_;
 }
 
 RedisReply RedisClient::execute(const std::vector<std::string>& args) {
@@ -79,6 +85,8 @@ RedisReply RedisClient::execute(const std::vector<std::string>& args) {
         reply.str = "OK";
     }
     else if (cmd == "SETNX" && args.size() >= 3) {
+        // 先检查过期清理，避免已过期但未清理的键导致 SETNX 错误返回 0
+        check_expire(args[1]);
         if (data_.find(args[1]) == data_.end()) {
             data_[args[1]] = args[2];
             reply.type = ReplyType::INTEGER;
@@ -398,6 +406,62 @@ bool RedisClient::setex(const std::string& key, int seconds, const std::string& 
 bool RedisClient::setnx(const std::string& key, const std::string& value) {
     auto r = execute({"SETNX", key, value});
     return r.is_integer() && r.integer == 1;
+}
+
+// 原子 SET NX EX：不存在则设置并带过期（单条命令，避免 SETNX+EXPIRE 两步竞态）
+bool RedisClient::set_nx_ex(const std::string& key, const std::string& value, int seconds) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    // 先检查过期清理
+    auto exp_it = expires_.find(key);
+    if (exp_it != expires_.end()) {
+        auto now = std::chrono::steady_clock::now().time_since_epoch().count() / 1000000000;
+        if (now >= exp_it->second) {
+            data_.erase(key);
+            expires_.erase(exp_it);
+        }
+    }
+    // 仅当 key 不存在时设置
+    if (data_.find(key) == data_.end()) {
+        data_[key] = value;
+        auto now = std::chrono::steady_clock::now().time_since_epoch().count() / 1000000000;
+        expires_[key] = now + seconds;
+        return true;
+    }
+    return false;
+}
+
+// 原子 CAS+DEL：仅当值匹配时才删除（避免删除他人的锁）
+bool RedisClient::compare_and_del(const std::string& key, const std::string& expected) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    // 先检查过期清理
+    auto exp_it = expires_.find(key);
+    if (exp_it != expires_.end()) {
+        auto now = std::chrono::steady_clock::now().time_since_epoch().count() / 1000000000;
+        if (now >= exp_it->second) {
+            data_.erase(key);
+            expires_.erase(exp_it);
+            return false; // 已过期，视为不存在
+        }
+    }
+    auto it = data_.find(key);
+    if (it != data_.end() && it->second == expected) {
+        data_.erase(it);
+        expires_.erase(key);
+        return true;
+    }
+    return false;
+}
+
+// 原子 CAS+EXPIRE：仅当值匹配时才续期（避免续期他人的锁）
+bool RedisClient::compare_and_expire(const std::string& key, const std::string& expected, int seconds) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = data_.find(key);
+    if (it != data_.end() && it->second == expected) {
+        auto now = std::chrono::steady_clock::now().time_since_epoch().count() / 1000000000;
+        expires_[key] = now + seconds;
+        return true;
+    }
+    return false;
 }
 
 std::string RedisClient::get(const std::string& key) {

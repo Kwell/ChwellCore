@@ -61,6 +61,7 @@ static std::string encode_uint32(uint32_t value) {
 static bool decode_uint64(const char* data, size_t size, size_t& offset, uint64_t& out) {
     if (offset + 8 > size) return false;
 
+    // 小端序解码，与既有线上协议保持兼容
     uint64_t value = 0;
     for (int i = 0; i < 8; i++) {
         value |= (static_cast<uint64_t>(static_cast<uint8_t>(data[offset + i])) << (i * 8));
@@ -74,6 +75,7 @@ static bool decode_uint64(const char* data, size_t size, size_t& offset, uint64_
 static std::string encode_uint64(uint64_t value) {
     std::string result;
     result.resize(8);
+    // 小端序编码，与既有线上协议保持兼容
     for (int i = 0; i < 8; i++) {
         result[i] = static_cast<char>((value >> (i * 8)) & 0xFF);
     }
@@ -358,6 +360,43 @@ void StateSyncComponent::destroy_room(const std::string& room_id) {
     }
 }
 
+void StateSyncComponent::join_room(const net::TcpConnectionPtr& conn, const std::string& room_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // 确保房间存在
+    if (rooms_.find(room_id) == rooms_.end()) {
+        auto room = std::make_shared<StateSyncRoom>(room_id);
+        room->set_diff_callback([this](const net::TcpConnectionPtr& conn, const StateDiff& diff) {
+            this->send_state_diff(conn, diff);
+        });
+        room->set_snapshot_callback([this](const net::TcpConnectionPtr& conn, const StateSnapshot& snapshot) {
+            this->send_state_snapshot(conn, snapshot);
+        });
+        rooms_[room_id] = room;
+        CHWELL_LOG_INFO("Auto-created state sync room: " + room_id);
+    }
+
+    connections_[conn.get()] = room_id;
+    CHWELL_LOG_INFO("Connection joined room: " + room_id);
+}
+
+void StateSyncComponent::leave_room(const net::TcpConnectionPtr& conn) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    auto it = connections_.find(conn.get());
+    if (it != connections_.end()) {
+        std::string room_id = it->second;
+        connections_.erase(it);
+
+        // 从房间中移除该连接的所有订阅
+        auto room_it = rooms_.find(room_id);
+        if (room_it != rooms_.end()) {
+            room_it->second->remove_subscriber(conn.get());
+        }
+        CHWELL_LOG_INFO("Connection left room: " + room_id);
+    }
+}
+
 void StateSyncComponent::update_state(const std::string& room_id, const StateUpdate& update) {
     std::lock_guard<std::mutex> lock(mutex_);
 
@@ -409,11 +448,11 @@ void StateSyncComponent::on_disconnect(const net::TcpConnectionPtr& conn) {
         std::string room_id = it->second;
         connections_.erase(it);
 
-        // 从房间中移除所有订阅
+        // 从房间中移除该连接的所有订阅，避免悬空指针
         auto room_it = rooms_.find(room_id);
         if (room_it != rooms_.end()) {
-            // 这里需要遍历所有实体，移除该连接的订阅
-            // 暂时简化处理
+            room_it->second->remove_subscriber(conn.get());
+            CHWELL_LOG_INFO("Removed disconnected connection's subscriptions from room: " + room_id);
         }
     }
 }
@@ -459,7 +498,7 @@ void StateSyncComponent::send_state_diff(const net::TcpConnectionPtr& conn, cons
         body += encode_state_value(change.second);
     }
 
-    // timestamp（8字节，小端）
+    // timestamp（8字节，小端，与既有线上协议兼容）
     body += encode_uint64(diff.timestamp);
 
     protocol::Message msg(state_cmd::S2C_STATE_DIFF, std::vector<char>(body.begin(), body.end()));
@@ -492,7 +531,7 @@ void StateSyncComponent::send_state_snapshot(const net::TcpConnectionPtr& conn, 
         body += encode_state_value(pair.second);
     }
 
-    // timestamp（8字节，小端）
+    // timestamp（8字节，小端，与既有线上协议兼容）
     body += encode_uint64(snapshot.timestamp);
 
     protocol::Message msg(state_cmd::S2C_STATE_SNAPSHOT, std::vector<char>(body.begin(), body.end()));

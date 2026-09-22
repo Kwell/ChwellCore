@@ -138,15 +138,16 @@ public:
     bool post(const TcpConnectionPtr& conn, std::string_view data) {
         std::lock_guard<std::mutex> lock(post_mutex_);
 
-        size_t next = (write_idx_ + 1) % queue_capacity_;
+        size_t w = write_idx_.load(std::memory_order_relaxed);
+        size_t next = (w + 1) % queue_capacity_;
         if (next == read_idx_.load(std::memory_order_acquire)) {
             CHWELL_LOG_WARN("LogicThread queue full, dropping message from fd="
                             << (conn ? conn->native_handle() : -1));
             return false;
         }
 
-        queue_[write_idx_] = LogicMessage::make_message(conn, data);
-        write_idx_ = next;
+        queue_[w] = LogicMessage::make_message(conn, data);
+        write_idx_.store(next, std::memory_order_release);
 
         notify();
         return true;
@@ -156,13 +157,14 @@ public:
     bool post_disconnect(const TcpConnectionPtr& conn) {
         std::lock_guard<std::mutex> lock(post_mutex_);
 
-        size_t next = (write_idx_ + 1) % queue_capacity_;
+        size_t w = write_idx_.load(std::memory_order_relaxed);
+        size_t next = (w + 1) % queue_capacity_;
         if (next == read_idx_.load(std::memory_order_acquire)) {
             return false;
         }
 
-        queue_[write_idx_] = LogicMessage::make_disconnect(conn);
-        write_idx_ = next;
+        queue_[w] = LogicMessage::make_disconnect(conn);
+        write_idx_.store(next, std::memory_order_release);
 
         notify();
         return true;
@@ -189,14 +191,15 @@ public:
 
         std::lock_guard<std::mutex> lock(post_mutex_);
 
-        size_t next = (write_idx_ + 1) % queue_capacity_;
+        size_t w = write_idx_.load(std::memory_order_relaxed);
+        size_t next = (w + 1) % queue_capacity_;
         if (next == read_idx_.load(std::memory_order_acquire)) {
             CHWELL_LOG_WARN("LogicThread queue full, dropping task");
             return false;
         }
 
-        queue_[write_idx_] = LogicMessage::make_task(std::move(task));
-        write_idx_ = next;
+        queue_[w] = LogicMessage::make_task(std::move(task));
+        write_idx_.store(next, std::memory_order_release);
 
         notify();
         return true;
@@ -247,7 +250,7 @@ public:
 
     // 队列中等待处理的消息数（近似值）
     size_t pending_count() const {
-        size_t w = write_idx_;
+        size_t w = write_idx_.load(std::memory_order_acquire);
         size_t r = read_idx_.load(std::memory_order_relaxed);
         return (w >= r) ? (w - r) : (queue_capacity_ - r + w);
     }
@@ -270,7 +273,7 @@ private:
 
             while (processed < max_batch_) {
                 size_t r = read_idx_.load(std::memory_order_relaxed);
-                if (r == write_idx_) break;
+                if (r == write_idx_.load(std::memory_order_acquire)) break;
 
                 LogicMessage& msg = queue_[r];
 
@@ -350,7 +353,7 @@ private:
         size_t drained = 0;
         while (true) {
             size_t r = read_idx_.load(std::memory_order_relaxed);
-            if (r == write_idx_) break;
+            if (r == write_idx_.load(std::memory_order_acquire)) break;
 
             LogicMessage& msg = queue_[r];
             TcpConnectionPtr conn;
@@ -381,7 +384,7 @@ private:
 
     size_t queue_capacity_;
     LogicMessage* queue_;
-    size_t write_idx_;
+    std::atomic<size_t> write_idx_;   // 原子类型，避免消费者无锁读取时的数据竞争
     std::atomic<size_t> read_idx_;
 
     std::mutex post_mutex_;

@@ -16,13 +16,17 @@ BattleReport BattleSystem::execute(
     uint64_t attacker_id, const std::string& attacker_name,
     const std::vector<General>& attacker_generals,
     int attacker_troops,
-    
+
     uint64_t defender_id, const std::string& defender_name,
     const std::vector<General>& defender_generals,
     int defender_troops,
-    
+
     bool is_siege) {
-    
+
+    // 加锁保护 rng_，防止多线程并发战斗时数据竞争
+    // mt19937 的 operator() 不是线程安全的
+    std::lock_guard<std::mutex> rng_lock(rng_mutex_);
+
     BattleReport report;
     report.report_id = static_cast<uint64_t>(std::chrono::system_clock::now().time_since_epoch().count());
     report.timestamp = report.report_id;
@@ -229,9 +233,12 @@ bool BattleFormula::check_critical(int attacker_force, int defender_speed) {
     // 简化：武力比速度高越多，暴击率越高
     int total = attacker_force + defender_speed;
     if (total <= 0) return false;
-    
+
     int chance = attacker_force * 30 / total;
-    return (rand() % 100) < chance;
+    // 使用 thread_local mt19937 替代非线程安全的 rand()
+    thread_local std::mt19937 gen(std::random_device{}());
+    std::uniform_int_distribution<int> dist(0, 99);
+    return dist(gen) < chance;
 }
 
 int BattleFormula::critical_multiplier() {
@@ -242,9 +249,12 @@ bool BattleFormula::check_dodge(int defender_speed, int attacker_force) {
     // 闪避率 = 速度 / (速度 + 敌方武力) * 0.2
     int total = defender_speed + attacker_force;
     if (total <= 0) return false;
-    
+
     int chance = defender_speed * 20 / total;
-    return (rand() % 100) < chance;
+    // 使用 thread_local mt19937 替代非线程安全的 rand()
+    thread_local std::mt19937 gen(std::random_device{}());
+    std::uniform_int_distribution<int> dist(0, 99);
+    return dist(gen) < chance;
 }
 
 double BattleFormula::damage_reduction(int defender_command) {

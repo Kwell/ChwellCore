@@ -2,12 +2,13 @@
 
 #include "chwell/storage/storage_interface.h"
 #include "chwell/storage/storage_types.h"
+#include <shared_mutex>
 
 namespace chwell {
 namespace storage {
 
-// MongoDB 存储实现：占位接口，需链接 mongocxx 后实现
-// 上层逻辑通过 StorageInterface 使用，不关心底层是 MongoDB
+// MongoDB 存储实现：条件编译，CHWELL_USE_MONGODB=ON 时链接 libmongoc
+// 未开启时所有操作返回 failure("not built with MongoDB support")
 class MongodbStorage : public StorageInterface {
 public:
     explicit MongodbStorage(const StorageConfig& config);
@@ -25,8 +26,9 @@ public:
 
 private:
     StorageConfig config_;
-    void* client_{nullptr};   // mongocxx::client* 占位
-    void* collection_{nullptr};  // mongocxx::collection* 占位
+    void* client_{nullptr};       // mongoc_client_t*
+    void* collection_{nullptr};   // mongoc_collection_t*
+    mutable std::shared_mutex conn_mutex_;  // 保护并发访问
 };
 
 }  // namespace storage

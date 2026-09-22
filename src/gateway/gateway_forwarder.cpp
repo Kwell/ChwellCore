@@ -13,6 +13,8 @@
 #include <unistd.h>
 #include <sstream>
 #include <cstdint>
+#include <fcntl.h>
+#include <poll.h>
 
 namespace chwell {
 namespace gateway {
@@ -98,6 +100,10 @@ net::TcpConnectionPtr GatewayForwarderComponent::do_connect(
         return nullptr;
     }
 
+    // 设置非阻塞模式，配合 poll 实现带超时的连接
+    int flags = fcntl(fd, F_GETFL, 0);
+    fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port);
@@ -107,12 +113,40 @@ net::TcpConnectionPtr GatewayForwarderComponent::do_connect(
         return nullptr;
     }
 
-    if (::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
-        CHWELL_LOG_ERROR("Gateway: connect to backend " + host + ":"
-                         + std::to_string(port) + " failed: " + strerror(errno));
-        close(fd);
-        return nullptr;
+    int ret = ::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
+    if (ret < 0) {
+        if (errno != EINPROGRESS) {
+            CHWELL_LOG_ERROR("Gateway: connect to backend " + host + ":"
+                             + std::to_string(port) + " failed: " + strerror(errno));
+            close(fd);
+            return nullptr;
+        }
+
+        // 使用 poll 等待连接完成，超时 5 秒
+        struct pollfd pfd;
+        pfd.fd = fd;
+        pfd.events = POLLOUT;
+        int poll_ret = poll(&pfd, 1, 5000);
+        if (poll_ret <= 0) {
+            CHWELL_LOG_ERROR("Gateway: connect to backend " + host + ":"
+                             + std::to_string(port) + " timeout");
+            close(fd);
+            return nullptr;
+        }
+
+        // 检查连接是否成功
+        int sock_err = 0;
+        socklen_t err_len = sizeof(sock_err);
+        if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &sock_err, &err_len) < 0 || sock_err != 0) {
+            CHWELL_LOG_ERROR("Gateway: connect to backend " + host + ":"
+                             + std::to_string(port) + " failed: " + strerror(sock_err));
+            close(fd);
+            return nullptr;
+        }
     }
+
+    // 恢复阻塞模式
+    fcntl(fd, F_SETFL, flags);
 
     net::TcpSocket socket(fd);
     net::TcpConnectionPtr backend = std::make_shared<net::TcpConnection>(std::move(socket));

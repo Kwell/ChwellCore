@@ -40,7 +40,7 @@ void EpollTcpConnection::start() {
 
     auto self = shared_from_this();
     bool ok = demuxer_->add(fd_, IoEvent::Read | IoEvent::RdHangup,
-        [self](int fd, IoEvent events) {
+        [self](int /*fd*/, IoEvent events) {
             if (has_event(events, IoEvent::Error)) {
                 self->handle_error_event();
                 return;
@@ -108,13 +108,16 @@ void EpollTcpConnection::do_read() {
         ssize_t n = ::read(fd_, read_buffer_.data(), read_buffer_.size());
         CHWELL_LOG_DEBUG("EpollTcpConnection::do_read fd=" << fd_ << " n=" << n);
         if (n > 0) {
-            // 🆕 读缓冲区上限检查
+            // 单次读取大小检查（防止异常大包，正常受 read_buffer_ 8KB 限制）
             {
                 std::lock_guard<std::mutex> lock(stats_mutex_);
                 total_read_bytes_ += static_cast<size_t>(n);
-                if (total_read_bytes_ > max_read_buffer_) {
-                    CHWELL_LOG_WARN("Read buffer overflow on fd=" << fd_
-                                    << ", total_read=" << total_read_bytes_
+                // 仅检查单次读取大小是否超限，不检查累计值
+                // 累计值 total_read_bytes_ 仅作为统计指标，不用于断连
+                // （数据已立即派发给 message_cb_，无内部缓冲累积）
+                if (static_cast<size_t>(n) > max_read_buffer_) {
+                    CHWELL_LOG_WARN("Single read too large on fd=" << fd_
+                                    << ", read_size=" << n
                                     << " > max=" << max_read_buffer_);
                     close();
                     return;

@@ -15,6 +15,13 @@ namespace net {
 EpollTcpServer::EpollTcpServer(unsigned short port, int reactor_threads)
     : port_(port) {
 
+    // 参数验证：reactor_threads 必须 >= 1，否则后续 next_reactor_ % reactors_.size() 除零崩溃
+    if (reactor_threads < 1) {
+        CHWELL_LOG_WARN("EpollTcpServer: reactor_threads=" << reactor_threads
+                        << ", clamped to 1");
+        reactor_threads = 1;
+    }
+
     listen_fd_ = ::socket(AF_INET, SOCK_STREAM, 0);
     if (listen_fd_ < 0) {
         CHWELL_LOG_ERROR("EpollTcpServer: socket() failed: " + std::string(std::strerror(errno)));
@@ -187,7 +194,6 @@ void EpollTcpServer::remove_connection(const EpollTcpConnectionPtr& conn) {
 }
 
 void EpollTcpServer::cleanup_idle_connections() {
-    auto now = std::chrono::steady_clock::now();
     std::vector<EpollTcpConnectionPtr> to_close;
 
     {

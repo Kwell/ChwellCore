@@ -76,30 +76,42 @@ public:
     // 获取对象（返回智能指针，自动归还）
     std::unique_ptr<T, std::function<void(T*)>> acquire() {
         std::unique_ptr<T> obj;
-        
+
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            
+
             if (!pool_.empty()) {
                 obj = std::move(pool_.top());
                 pool_.pop();
             } else if (created_count_ < config_.max_size) {
-                // 创建新对象
-                obj = factory_.create();
-                if (obj) {
-                    ++created_count_;
-                }
+                // 预占名额（在锁内递增计数），实际创建在锁外执行
+                // 避免 factory_.create() 耗时操作阻塞其他线程
+                ++created_count_;
+                // 标记需要在锁外创建
+                // obj 保持为空，下方处理
+            } else {
+                // 池已耗尽
+                ++borrowed_count_;
+                CHWELL_LOG_WARN("ObjectPool exhausted, created=" << created_count_
+                              << ", max=" << config_.max_size);
+                return std::unique_ptr<T, std::function<void(T*)>>(nullptr, nullptr);
             }
         }
-        
+
+        // 在锁外创建对象（避免持锁时间过长）
         if (!obj) {
-            CHWELL_LOG_WARN("ObjectPool exhausted, created=" << created_count_ 
-                          << ", max=" << config_.max_size);
-            return std::unique_ptr<T, std::function<void(T*)>>(nullptr, nullptr);
+            obj = factory_.create();
+            if (!obj) {
+                // 创建失败，回滚计数
+                std::lock_guard<std::mutex> lock(mutex_);
+                --created_count_;
+                ++borrowed_count_;
+                return std::unique_ptr<T, std::function<void(T*)>>(nullptr, nullptr);
+            }
         }
-        
+
         ++borrowed_count_;
-        
+
         // 返回带自定义删除器的智能指针
         return std::unique_ptr<T, std::function<void(T*)>>(
             obj.release(),

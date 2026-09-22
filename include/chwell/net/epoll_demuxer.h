@@ -130,7 +130,7 @@ public:
         }
 
         struct epoll_event ev{};
-        ev.events = static_cast<uint32_t>(events) | (edge_trigger ? EPOLLET : 0);
+        ev.events = static_cast<uint32_t>(events) | (edge_trigger ? static_cast<uint32_t>(EPOLLET) : 0u);
         ev.data.fd = fd;
         return ::epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, fd, &ev) >= 0;
     }
@@ -150,7 +150,7 @@ public:
         }
 
         struct epoll_event ev{};
-        ev.events = static_cast<uint32_t>(events) | (et ? EPOLLET : 0);
+        ev.events = static_cast<uint32_t>(events) | (et ? static_cast<uint32_t>(EPOLLET) : 0u);
         ev.data.fd = fd;
         return ::epoll_ctl(epoll_fd_, EPOLL_CTL_MOD, fd, &ev) >= 0;
     }

@@ -13,7 +13,10 @@ namespace {
 inline std::vector<char>& encode_buffer() {
     thread_local std::vector<char> buf;
     buf.clear();
-    buf.reserve(4096);
+    // 仅在首次或容量不足时 reserve，避免每次调用都 reserve
+    if (buf.capacity() < 4096) {
+        buf.reserve(4096);
+    }
     return buf;
 }
 
@@ -46,7 +49,8 @@ std::vector<char> LengthHeaderCodec::encode(const std::string& message) {
         std::memcpy(buf.data() + 4, message.data(), message.size());
     }
 
-    return std::move(buf);
+    // 返回副本而非 std::move(buf)，保留 thread_local buffer 的 capacity
+    return buf;
 }
 
 std::vector<std::string> LengthHeaderCodec::decode(const std::vector<char>& data) {
@@ -103,7 +107,8 @@ std::vector<char> JsonCodec::encode(const std::string& message) {
         std::memcpy(buf.data() + 4, message.data(), message.size());
     }
 
-    return std::move(buf);
+    // 返回副本而非 std::move(buf)，保留 thread_local buffer 的 capacity
+    return buf;
 }
 
 std::vector<std::string> JsonCodec::decode(const std::vector<char>& data) {
@@ -156,7 +161,8 @@ std::vector<char> ProtobufCodec::encode(const std::string& message) {
         buf.insert(buf.end(), message.begin(), message.end());
     }
 
-    return std::move(buf);
+    // 返回副本而非 std::move(buf)，保留 thread_local buffer 的 capacity
+    return buf;
 }
 
 bool ProtobufCodec::parse_varint32(std::uint32_t& len) {

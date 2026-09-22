@@ -605,32 +605,37 @@ bool CrossListAoi::update_entity(uint64_t entity_id, int new_x, int new_y) {
 
 std::vector<Entity> CrossListAoi::get_entities_in_view(uint64_t watcher_id) const {
     std::lock_guard<std::mutex> lock(mutex_);
-    
+
     auto it = nodes_.find(watcher_id);
     if (it == nodes_.end()) {
         return {};
     }
-    
-    return get_entities_in_view(it->second->entity.x, it->second->entity.y);
+
+    return get_entities_in_view_unlocked(it->second->entity.x, it->second->entity.y);
 }
 
 std::vector<Entity> CrossListAoi::get_entities_in_view(int x, int y) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return get_entities_in_view_unlocked(x, y);
+}
+
+std::vector<Entity> CrossListAoi::get_entities_in_view_unlocked(int x, int y) const {
     std::vector<Entity> result;
-    
+
     int min_x = x - config_.view_range;
     int max_x = x + config_.view_range;
     int min_y = y - config_.view_range;
     int max_y = y + config_.view_range;
-    
+
     // 遍历 X 链表
     for (Node* curr = head_x_; curr; curr = curr->next_x) {
         if (curr->entity.x > max_x) break;
-        if (curr->entity.x >= min_x && 
+        if (curr->entity.x >= min_x &&
             curr->entity.y >= min_y && curr->entity.y <= max_y) {
             result.push_back(curr->entity);
         }
     }
-    
+
     return result;
 }
 
