@@ -69,13 +69,20 @@ public:
 
     virtual std::vector<char> encode(const std::string& message) override;
     virtual std::vector<std::string> decode(const std::vector<char>& data) override;
-    virtual void reset() override { ring_.clear(); }
+    virtual void reset() override {
+        ring_.clear();
+        has_pending_ = false;
+        pending_len_ = 0;
+    }
 
 private:
     // 从 RingBuffer 解析 varint32
     bool parse_varint32(std::uint32_t& len);
 
     core::RingBuffer ring_;
+    // varint 已消费但 body 未到齐时暂存长度，避免把 body 误解析为新帧
+    bool has_pending_ = false;
+    std::uint32_t pending_len_ = 0;
 };
 
 } // namespace codec

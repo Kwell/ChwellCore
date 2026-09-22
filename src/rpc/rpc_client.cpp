@@ -171,30 +171,36 @@ bool RpcClient::call_sync(std::uint16_t cmd, const std::vector<char>& request_da
         return false;
     }
 
-    std::mutex sync_mutex;
-    std::condition_variable sync_cv;
-    bool done = false;
-    bool success = false;
+    // 用 shared_ptr 持有等待状态：超时返回后迟到的回调仍可安全写入，避免栈对象 UAF
+    struct SyncWait {
+        std::mutex mutex;
+        std::condition_variable cv;
+        bool done = false;
+        bool success = false;
+        protocol::Message response;
+    };
+    auto wait = std::make_shared<SyncWait>();
 
     call(cmd, request_data,
-         [&](bool ok, const protocol::Message& resp) {
-             std::lock_guard<std::mutex> lock(sync_mutex);
-             success = ok;
-             response = resp;
-             done = true;
-             sync_cv.notify_one();
+         [wait](bool ok, const protocol::Message& resp) {
+             std::lock_guard<std::mutex> lock(wait->mutex);
+             wait->success = ok;
+             wait->response = resp;
+             wait->done = true;
+             wait->cv.notify_one();
          },
          timeout_seconds);
 
-    std::unique_lock<std::mutex> lock(sync_mutex);
-    bool signaled = sync_cv.wait_for(lock,
-                                      std::chrono::seconds(timeout_seconds + 1),
-                                      [&done]() { return done; });
+    std::unique_lock<std::mutex> lock(wait->mutex);
+    bool signaled = wait->cv.wait_for(lock,
+                                       std::chrono::seconds(timeout_seconds + 1),
+                                       [&wait]() { return wait->done; });
     if (!signaled) {
         CHWELL_LOG_WARN("RPC call_sync timed out waiting for response");
         return false;
     }
-    return success;
+    response = wait->response;
+    return wait->success;
 }
 
 void RpcClient::on_message(const net::TcpConnectionPtr& conn, std::string_view data) {

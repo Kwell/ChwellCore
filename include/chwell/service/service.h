@@ -376,8 +376,9 @@ private:
     }
 
     bool use_epoll_;
-    net::IoService& io_service_;
+    // 必须先声明 unique_ptr 再绑定引用（C++ 按声明顺序初始化）
     std::unique_ptr<net::IoService> io_service_ptr_;
+    net::IoService& io_service_;
     std::unique_ptr<net::TcpServer> legacy_server_;
     std::unique_ptr<net::EpollTcpServer> epoll_server_;
 

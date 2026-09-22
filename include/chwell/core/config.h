@@ -79,7 +79,8 @@ public:
     // ========== 组件配置 ==========
     
     // 获取组件配置列表
-    const std::vector<ComponentConfig>& components() const {
+    // 返回副本：引用在解锁后失效，存在数据竞争/悬垂风险
+    std::vector<ComponentConfig> components() const {
         std::shared_lock lock(mutex_);
         return components_;
     }

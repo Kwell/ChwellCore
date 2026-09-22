@@ -62,6 +62,12 @@ void ProtocolRouterComponent::on_disconnect(const net::TcpConnectionPtr& conn) {
 void ProtocolRouterComponent::send_message(const net::TcpConnectionPtr& conn,
                                            const protocol::Message& msg) {
     std::vector<char> data = protocol::serialize(msg);
+    if (data.empty()) {
+        // serialize 拒绝超长 body（>65535），避免发出截断帧破坏流
+        CHWELL_LOG_ERROR("send_message dropped: serialize failed (body too large?) cmd=0x"
+                         << std::hex << msg.cmd << std::dec);
+        return;
+    }
     CHWELL_LOG_DEBUG("Sending message cmd=0x" << std::hex << msg.cmd << std::dec
                   << " size=" << data.size() << " bytes");
     conn->send(data);

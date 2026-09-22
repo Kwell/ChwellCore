@@ -61,7 +61,13 @@ void ThreadPool::worker_loop() {
         }
 
         if (task) {
-            task();
+            try {
+                task();
+            } catch (const std::exception& e) {
+                // 业务异常不得炸掉工作线程（否则线程入口展开会 terminate）
+                (void)e;
+            } catch (...) {
+            }
         }
     }
 }

@@ -44,7 +44,11 @@ std::vector<char> serialize(const Message& msg) {
     std::uint16_t cmd_net = core::host_to_net16(msg.cmd);
     std::memcpy(buf.data(), &cmd_net, 2);
 
-    // len (2 bytes, network byte order)
+    // len (2 bytes, network byte order). Protocol max body is 65535.
+    if (msg.body.size() > 0xFFFFu) {
+        // 不可静默截断，否则会破坏帧边界；返回空表示序列化失败
+        return {};
+    }
     std::uint16_t len_net = core::host_to_net16(static_cast<std::uint16_t>(msg.body.size()));
     std::memcpy(buf.data() + 2, &len_net, 2);
 

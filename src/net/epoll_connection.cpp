@@ -50,6 +50,9 @@ void EpollTcpConnection::start() {
                 self->close();
                 return;
             }
+            if (has_event(events, IoEvent::Write)) {
+                self->handle_write_event();
+            }
             if (has_event(events, IoEvent::Read)) {
                 self->handle_read_event();
             }
@@ -207,13 +210,15 @@ void EpollTcpConnection::close() {
     if (closed_.exchange(true)) return;
     CHWELL_LOG_INFO("EpollTcpConnection closing, fd=" << fd_);
 
-    if (demuxer_ && fd_ >= 0) demuxer_->remove(fd_);
-    if (fd_ >= 0) {
-        ::shutdown(fd_, SHUT_RDWR);
-        ::close(fd_);
-        fd_ = -1;
+    int old_fd = fd_;
+    if (demuxer_ && old_fd >= 0) demuxer_->remove(old_fd);
+    if (old_fd >= 0) {
+        ::shutdown(old_fd, SHUT_RDWR);
+        ::close(old_fd);
     }
+    // 回调前保持 native_handle 可用，供 Service::bridge_map_ 按 fd 清理会话
     if (close_cb_) close_cb_(shared_from_this());
+    fd_ = -1;
 }
 
 void EpollTcpConnection::cleanup() {
