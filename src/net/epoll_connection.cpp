@@ -40,7 +40,7 @@ void EpollTcpConnection::start() {
 
     auto self = shared_from_this();
     bool ok = demuxer_->add(fd_, IoEvent::Read | IoEvent::RdHangup,
-        [self](int fd, IoEvent events) {
+        [self](int /*fd*/, IoEvent events) {
             if (has_event(events, IoEvent::Error)) {
                 self->handle_error_event();
                 return;
@@ -49,6 +49,9 @@ void EpollTcpConnection::start() {
                 self->handle_read_event();
                 self->close();
                 return;
+            }
+            if (has_event(events, IoEvent::Write)) {
+                self->handle_write_event();
             }
             if (has_event(events, IoEvent::Read)) {
                 self->handle_read_event();
@@ -108,13 +111,16 @@ void EpollTcpConnection::do_read() {
         ssize_t n = ::read(fd_, read_buffer_.data(), read_buffer_.size());
         CHWELL_LOG_DEBUG("EpollTcpConnection::do_read fd=" << fd_ << " n=" << n);
         if (n > 0) {
-            // 🆕 读缓冲区上限检查
+            // 单次读取大小检查（防止异常大包，正常受 read_buffer_ 8KB 限制）
             {
                 std::lock_guard<std::mutex> lock(stats_mutex_);
                 total_read_bytes_ += static_cast<size_t>(n);
-                if (total_read_bytes_ > max_read_buffer_) {
-                    CHWELL_LOG_WARN("Read buffer overflow on fd=" << fd_
-                                    << ", total_read=" << total_read_bytes_
+                // 仅检查单次读取大小是否超限，不检查累计值
+                // 累计值 total_read_bytes_ 仅作为统计指标，不用于断连
+                // （数据已立即派发给 message_cb_，无内部缓冲累积）
+                if (static_cast<size_t>(n) > max_read_buffer_) {
+                    CHWELL_LOG_WARN("Single read too large on fd=" << fd_
+                                    << ", read_size=" << n
                                     << " > max=" << max_read_buffer_);
                     close();
                     return;
@@ -204,13 +210,15 @@ void EpollTcpConnection::close() {
     if (closed_.exchange(true)) return;
     CHWELL_LOG_INFO("EpollTcpConnection closing, fd=" << fd_);
 
-    if (demuxer_ && fd_ >= 0) demuxer_->remove(fd_);
-    if (fd_ >= 0) {
-        ::shutdown(fd_, SHUT_RDWR);
-        ::close(fd_);
-        fd_ = -1;
+    int old_fd = fd_;
+    if (demuxer_ && old_fd >= 0) demuxer_->remove(old_fd);
+    if (old_fd >= 0) {
+        ::shutdown(old_fd, SHUT_RDWR);
+        ::close(old_fd);
     }
+    // 回调前保持 native_handle 可用，供 Service::bridge_map_ 按 fd 清理会话
     if (close_cb_) close_cb_(shared_from_this());
+    fd_ = -1;
 }
 
 void EpollTcpConnection::cleanup() {

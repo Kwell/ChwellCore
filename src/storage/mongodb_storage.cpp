@@ -89,6 +89,7 @@ bool MongodbStorage::connect() {
 
 void MongodbStorage::disconnect() {
 #if defined(CHWELL_USE_MONGODB)
+    std::lock_guard<std::shared_mutex> lock(conn_mutex_);
     if (collection_) {
         mongoc_collection_destroy(static_cast<mongoc_collection_t*>(collection_));
         collection_ = nullptr;
@@ -104,6 +105,9 @@ void MongodbStorage::disconnect() {
 StorageResult MongodbStorage::get(const std::string& key) {
 #if defined(CHWELL_USE_MONGODB)
     if (!collection_) return StorageResult::failure("not connected");
+
+    // 加锁保护并发访问
+    std::shared_lock<std::shared_mutex> lock(conn_mutex_);
 
     mongoc_collection_t* coll = static_cast<mongoc_collection_t*>(collection_);
     bson_t* query = bson_new();
@@ -141,7 +145,8 @@ StorageResult MongodbStorage::get(const std::string& key) {
                        std::chrono::system_clock::now().time_since_epoch())
                        .count();
         if (expire_at < now) {
-            remove(key);
+            // 不在 get() 中调用 remove()，避免读操作中产生写副作用
+            // 过期键会在下次 put/keys 扫描或独立清理任务中被移除
             bson_destroy(doc);
             return StorageResult::failure("key expired");
         }
@@ -160,6 +165,8 @@ StorageResult MongodbStorage::put(const std::string& key, const std::string& val
                                     std::int64_t expire_at) {
 #if defined(CHWELL_USE_MONGODB)
     if (!collection_) return StorageResult::failure("not connected");
+
+    std::lock_guard<std::shared_mutex> lock(conn_mutex_);
 
     mongoc_collection_t* coll = static_cast<mongoc_collection_t*>(collection_);
     bson_t* doc = bson_new();
@@ -195,6 +202,8 @@ StorageResult MongodbStorage::remove(const std::string& key) {
 #if defined(CHWELL_USE_MONGODB)
     if (!collection_) return StorageResult::failure("not connected");
 
+    std::lock_guard<std::shared_mutex> lock(conn_mutex_);
+
     mongoc_collection_t* coll = static_cast<mongoc_collection_t*>(collection_);
     bson_t* query = bson_new();
     BSON_APPEND_UTF8(query, "_id", key.c_str());
@@ -216,6 +225,8 @@ StorageResult MongodbStorage::remove(const std::string& key) {
 bool MongodbStorage::exists(const std::string& key) {
 #if defined(CHWELL_USE_MONGODB)
     if (!collection_) return false;
+
+    std::shared_lock<std::shared_mutex> lock(conn_mutex_);
 
     mongoc_collection_t* coll = static_cast<mongoc_collection_t*>(collection_);
     bson_t* query = bson_new();
@@ -269,6 +280,8 @@ bool MongodbStorage::exists(const std::string& key) {
 std::vector<std::string> MongodbStorage::keys(const std::string& prefix) {
 #if defined(CHWELL_USE_MONGODB)
     if (!collection_) return {};
+
+    std::shared_lock<std::shared_mutex> lock(conn_mutex_);
 
     mongoc_collection_t* coll = static_cast<mongoc_collection_t*>(collection_);
     bson_t* query = bson_new();

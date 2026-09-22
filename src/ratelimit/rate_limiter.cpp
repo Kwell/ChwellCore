@@ -18,17 +18,20 @@ RateLimitResult TokenBucketRateLimiter::check(const std::string& key) {
 bool TokenBucketRateLimiter::consume(const std::string& key, int count) {
     std::lock_guard<std::mutex> lock(mutex_);
 
+    int64_t now = current_timestamp_ms();
     auto it = buckets_.find(key);
     if (it == buckets_.end()) {
         // 创建新桶
         Bucket bucket;
         bucket.tokens = capacity_;
-        bucket.last_refill_time_ms = current_timestamp_ms();
+        bucket.last_refill_time_ms = now;
+        bucket.last_access_time_ms = now;
         buckets_[key] = bucket;
         it = buckets_.find(key);
     }
 
     Bucket& bucket = it->second;
+    bucket.last_access_time_ms = now;  // 更新访问时间
 
     // 补充令牌
     refill_tokens(bucket);
@@ -84,6 +87,19 @@ void TokenBucketRateLimiter::refill_tokens(Bucket& bucket) {
         double tokens_to_add = (elapsed_ms / 1000.0) * refill_rate_per_second_;
         bucket.tokens = std::min(capacity_, static_cast<int64_t>(bucket.tokens + static_cast<int64_t>(tokens_to_add)));
         bucket.last_refill_time_ms = now;
+    }
+}
+
+void TokenBucketRateLimiter::cleanup_idle(int64_t max_idle_ms) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    int64_t now = current_timestamp_ms();
+
+    for (auto it = buckets_.begin(); it != buckets_.end(); ) {
+        if (now - it->second.last_access_time_ms > max_idle_ms) {
+            it = buckets_.erase(it);
+        } else {
+            ++it;
+        }
     }
 }
 

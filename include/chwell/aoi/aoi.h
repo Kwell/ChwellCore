@@ -201,6 +201,9 @@ private:
     void insert_to_x_list(Node* node);
     void insert_to_y_list(Node* node);
     void remove_from_lists(Node* node);
+
+    // 无锁版本（调用方须持有 mutex_）
+    std::vector<Entity> get_entities_in_view_unlocked(int x, int y) const;
     
     Config config_;
     mutable std::mutex mutex_;

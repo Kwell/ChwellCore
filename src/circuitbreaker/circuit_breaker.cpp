@@ -31,23 +31,27 @@ CircuitBreakerResult DefaultCircuitBreaker::execute(std::function<void()> func) 
     auto start_time = std::chrono::system_clock::now();
 
     try {
-        // 执行函数
+        // 执行函数（在锁外执行，避免持锁时间过长）
         func();
 
         auto end_time = std::chrono::system_clock::now();
         result.duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             end_time - start_time).count();
 
-        result.success = true;
-        result.state = get_state();
+        // 加锁保证计数器和状态的一致性
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            result.success = true;
+            success_count_++;
+            result.state = state_.load(std::memory_order_relaxed);
 
-        // 成功调用
-        success_count_++;
-
-        // 如果在半开状态，成功后回到关闭状态
-        if (result.state == CircuitState::HALF_OPEN) {
-            state_.store(CircuitState::CLOSED, std::memory_order_relaxed);
-            CHWELL_LOG_INFO("Circuit breaker " + name_ + " recovered to CLOSED state");
+            // 如果在半开状态，成功后回到关闭状态
+            if (result.state == CircuitState::HALF_OPEN) {
+                state_.store(CircuitState::CLOSED, std::memory_order_relaxed);
+                half_open_count_.store(0, std::memory_order_relaxed);
+                result.state = CircuitState::CLOSED;
+                CHWELL_LOG_INFO("Circuit breaker " + name_ + " recovered to CLOSED state");
+            }
         }
 
         return result;
@@ -58,16 +62,19 @@ CircuitBreakerResult DefaultCircuitBreaker::execute(std::function<void()> func) 
 
         result.reason = std::string("Exception: ") + e.what();
         result.success = false;
-        result.state = get_state();
 
-        // 失败调用
-        failure_count_++;
-        last_failure_time_ms_.store(current_timestamp_ms(), std::memory_order_relaxed);
+        // 加锁保证计数器和状态的一致性
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            failure_count_++;
+            last_failure_time_ms_.store(current_timestamp_ms(), std::memory_order_relaxed);
 
-        // 检查是否需要熔断
-        if (should_trip()) {
-            state_.store(CircuitState::OPEN, std::memory_order_relaxed);
-            CHWELL_LOG_WARN("Circuit breaker " + name_ + " tripped to OPEN state");
+            // 检查是否需要熔断
+            if (should_trip()) {
+                state_.store(CircuitState::OPEN, std::memory_order_relaxed);
+                CHWELL_LOG_WARN("Circuit breaker " + name_ + " tripped to OPEN state");
+            }
+            result.state = state_.load(std::memory_order_relaxed);
         }
 
         return result;
@@ -96,14 +103,21 @@ double DefaultCircuitBreaker::get_failure_rate() const {
 }
 
 void DefaultCircuitBreaker::record_success() {
+    // 加锁保证 failure_count_/success_count_/state_ 的一致性
+    // 避免 should_trip() 读取到中间状态
+    std::lock_guard<std::mutex> lock(mutex_);
     success_count_++;
     if (state_.load(std::memory_order_relaxed) == CircuitState::HALF_OPEN) {
         state_.store(CircuitState::CLOSED, std::memory_order_relaxed);
+        // 恢复到 CLOSED 时重置 half_open_count_，避免下次进入 HALF_OPEN 时计数器残留
+        half_open_count_.store(0, std::memory_order_relaxed);
         CHWELL_LOG_INFO("Circuit breaker " + name_ + " recovered to CLOSED state");
     }
 }
 
 void DefaultCircuitBreaker::record_failure(const std::string& reason) {
+    // 加锁保证 failure_count_/success_count_/state_ 的一致性
+    std::lock_guard<std::mutex> lock(mutex_);
     failure_count_++;
     last_failure_time_ms_.store(current_timestamp_ms(), std::memory_order_relaxed);
     if (should_trip()) {

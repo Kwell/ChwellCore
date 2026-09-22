@@ -57,30 +57,24 @@ void RpcServer::handle_connect(const net::TcpConnectionPtr& conn) {
 
 void RpcServer::handle_disconnect(const net::TcpConnectionPtr& conn) {
     active_connections_.fetch_sub(1);
-    
+
     std::lock_guard<std::mutex> lock(mutex_);
-    buffers_.erase(conn.get());
-    
+    parsers_.erase(conn.get());
+
     CHWELL_LOG_DEBUG("RPC client disconnected, active=" << active_connections_.load());
 }
 
 void RpcServer::handle_message(const net::TcpConnectionPtr& conn, std::string_view data) {
-    // 累积数据到缓冲区
-    std::vector<char> buffer;
+    // 使用 Parser 处理粘包/拆包，避免手动缓冲区管理的竞态
+    std::vector<protocol::Message> messages;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        auto& buf = buffers_[conn.get()];
-        buf.insert(buf.end(), data.begin(), data.end());
-        buffer = buf;  // 复制一份用于解析
+        messages = parsers_[conn.get()].feed(data);
     }
 
-    // 解析消息
-    protocol::Parser parser;
-    auto messages = parser.feed(buffer);
-    
     for (const auto& msg : messages) {
         total_requests_.fetch_add(1);
-        
+
         // 查找处理器
         RpcHandler handler;
         {
@@ -90,7 +84,7 @@ void RpcServer::handle_message(const net::TcpConnectionPtr& conn, std::string_vi
                 handler = it->second;
             }
         }
-        
+
         // Extract request_id prefix (first 4 bytes of body, big-endian)
         // and strip it before passing to handler; echo it back in response.
         std::vector<char> handler_body;
@@ -126,22 +120,6 @@ void RpcServer::handle_message(const net::TcpConnectionPtr& conn, std::string_vi
             protocol::Message resp_msg(msg.cmd, request_id_prefix);
             auto serialized = protocol::serialize(resp_msg);
             conn->send(serialized);
-        }
-    }
-    
-    // 更新缓冲区（移除已处理的数据）
-    if (!messages.empty()) {
-        std::lock_guard<std::mutex> lock(mutex_);
-        auto& buf = buffers_[conn.get()];
-        
-        // 计算已消费的字节数
-        size_t consumed = 0;
-        for (const auto& msg : messages) {
-            consumed += 4 + msg.body.size();  // cmd(2) + len(2) + body
-        }
-        
-        if (consumed <= buf.size()) {
-            buf.erase(buf.begin(), buf.begin() + consumed);
         }
     }
 }

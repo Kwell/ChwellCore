@@ -54,6 +54,10 @@ public:
     std::string server_name() const { return get_string("server_name", "chwell_server"); }
     std::string bus_id() const { return get_string("bus_id", "8.8.8.1"); }
     
+    // 不加锁版本，仅供已持有 mutex_ 的内部方法调用（避免重入死锁）
+    std::string server_name_unlocked() const { return get_string_unlocked("server_name", "chwell_server"); }
+    std::string bus_id_unlocked() const { return get_string_unlocked("bus_id", "8.8.8.1"); }
+    
     // ========== 通用 KV 访问 ==========
     
     std::string get_string(const std::string& key,
@@ -75,7 +79,8 @@ public:
     // ========== 组件配置 ==========
     
     // 获取组件配置列表
-    const std::vector<ComponentConfig>& components() const {
+    // 返回副本：引用在解锁后失效，存在数据竞争/悬垂风险
+    std::vector<ComponentConfig> components() const {
         std::shared_lock lock(mutex_);
         return components_;
     }

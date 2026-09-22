@@ -5,6 +5,7 @@
 #include "chwell/net/tcp_connection.h"
 #include "chwell/core/logger.h"
 #include <string>
+#include <mutex>
 
 namespace chwell {
 namespace game {
@@ -63,6 +64,7 @@ private:
     std::string get_player_id(const net::TcpConnectionPtr& conn);
 
     service::Service* service_ = nullptr;
+    mutable std::mutex positions_mutex_;  // 保护 player_positions_
     std::unordered_map<std::string, PlayerPosition> player_positions_; // player_id -> position
 };
 

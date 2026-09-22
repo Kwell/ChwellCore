@@ -55,9 +55,9 @@ public:
     // 尝试加锁（非阻塞），成功返回 true
     bool try_lock() {
         std::string token = generate_token();
-        bool ok = redis_->setnx(lock_key_, token);
+        // 原子操作：SET key value NX EX ttl（单条命令，避免 SETNX+EXPIRE 两步竞态）
+        bool ok = redis_->set_nx_ex(lock_key_, token, ttl_seconds_);
         if (ok) {
-            redis_->expire(lock_key_, ttl_seconds_);
             lock_token_ = token;
             locked_.store(true);
             fencing_token_.fetch_add(1);
@@ -87,14 +87,9 @@ public:
 
         stop_renew_thread();
 
-        // 原子性校验 + 删除：GET value == token -> DEL key
-        // 通过 execute Lua script 实现（若 Redis 支持），退而求其次用 GET+DEL
-        bool released = false;
-        std::string current_val = redis_->get(lock_key_);
-        if (current_val == lock_token_) {
-            int deleted = redis_->del(lock_key_);
-            released = (deleted > 0);
-        }
+        // 原子性校验 + 删除：仅当 key 的值 == lock_token_ 时才删除
+        // 避免非原子的 GET+DEL 竞态（锁过期后被他人获取时误删他人的锁）
+        bool released = redis_->compare_and_del(lock_key_, lock_token_);
 
         locked_.store(false);
         lock_token_.clear();
@@ -118,11 +113,14 @@ public:
 
 private:
     std::string generate_token() {
-        static std::random_device rd;
-        static std::mt19937_64 gen(rd());
-        static std::uniform_int_distribution<uint64_t> dist;
+        // 使用 thread_local 避免多线程并发调用时的数据竞争
+        // mt19937_64 的 operator() 不是线程安全的
+        thread_local std::mt19937_64 gen(
+            std::random_device{}() ^
+            std::hash<std::thread::id>{}(std::this_thread::get_id()));
+        thread_local std::uniform_int_distribution<uint64_t> dist;
         std::ostringstream oss;
-        oss << dist(gen);
+        oss << std::hex << dist(gen);
         return oss.str();
     }
 
@@ -140,10 +138,10 @@ private:
                 if (!renew_running_.load()) break;
                 if (!locked_.load()) break;
 
-                // Renew only if still owner
-                std::string current_val = redis_->get(lock_key_);
-                if (current_val == lock_token_) {
-                    redis_->expire(lock_key_, ttl_seconds_);
+                // 原子性校验 + 续期：仅当 key 的值 == lock_token_ 时才续期
+                // 避免非原子的 GET+EXPIRE 竞态（锁过期后被他人获取时误续他人的锁）
+                bool renewed = redis_->compare_and_expire(lock_key_, lock_token_, ttl_seconds_);
+                if (renewed) {
                     CHWELL_LOG_DEBUG("DistributedLock: renewed lock '" + lock_key_ + "'");
                 } else {
                     CHWELL_LOG_WARN("DistributedLock: lock stolen or expired during renew, key='"

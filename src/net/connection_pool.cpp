@@ -186,16 +186,19 @@ void ConnectionPool::maybe_expand() {
         return;
     }
     ++pending_creates_;
-    // 启动线程异步补充，避免在锁内阻塞
-    std::thread([this]() {
+
+    // 捕获 shared_from_this() 而非 this，确保 ConnectionPool 在分离线程
+    // 运行期间不会被析构。若析构先于线程完成，线程会访问已释放的内存。
+    auto self = shared_from_this();
+    std::thread([self]() {
         PooledConnection conn;
-        if (create_connection(conn)) {
-            std::lock_guard<std::mutex> lock(mutex_);
-            if (!shutdown_) {
-                connections_.push_back(std::make_unique<PooledConnection>(conn));
+        if (self->create_connection(conn)) {
+            std::lock_guard<std::mutex> lock(self->mutex_);
+            if (!self->shutdown_) {
+                self->connections_.push_back(std::make_unique<PooledConnection>(conn));
             }
         }
-        --pending_creates_;
+        self->pending_creates_--;
     }).detach();
 }
 
@@ -275,17 +278,20 @@ PooledConnection ConnectionPool::get_connection_sync(int timeout_ms) {
     std::mutex sync_mutex;
     std::condition_variable sync_cv;
     bool done = false;
-    
+
     get_connection([&](const PooledConnection& conn) {
         std::lock_guard<std::mutex> lock(sync_mutex);
         result = conn;
         done = true;
         sync_cv.notify_one();
     }, timeout_ms);
-    
+
     std::unique_lock<std::mutex> lock(sync_mutex);
-    sync_cv.wait(lock, [&]() { return done; });
-    
+    // 使用 wait_for 而非 wait，确保不会因回调丢失而永久阻塞
+    int effective_timeout = (timeout_ms > 0) ? timeout_ms : 5000;
+    sync_cv.wait_for(lock, std::chrono::milliseconds(effective_timeout),
+                     [&done]() { return done; });
+
     return result;
 }
 

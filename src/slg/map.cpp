@@ -2,9 +2,17 @@
 #include <algorithm>
 #include <queue>
 #include <cmath>
+#include <random>
 
 namespace chwell {
 namespace slg {
+
+// 线程安全的随机数生成器，替代非线程安全的 rand()
+static int thread_safe_rand(int max) {
+    thread_local std::mt19937 gen(std::random_device{}());
+    std::uniform_int_distribution<int> dist(0, max - 1);
+    return dist(gen);
+}
 
 SlgMapManager::SlgMapManager(const SlgMapConfig& config)
     : config_(config)
@@ -35,7 +43,7 @@ void SlgMapManager::generate_terrain() {
     
     // 简化地形生成：随机分布
     for (auto& cell : cells_) {
-        int r = rand() % 100;
+        int r = thread_safe_rand(100);
         if (r < 60) {
             cell.terrain = TerrainType::PLAIN;
         } else if (r < 75) {
@@ -56,16 +64,16 @@ void SlgMapManager::generate_resources(int count) {
     std::lock_guard<std::mutex> lock(mutex_);
     
     for (int i = 0; i < count; ++i) {
-        int x = rand() % config_.width;
-        int y = rand() % config_.height;
+        int x = thread_safe_rand(config_.width);
+        int y = thread_safe_rand(config_.height);
         auto& cell = cells_[cell_index(x, y)];
         
         // 只在平原生成资源
         if (cell.terrain == TerrainType::PLAIN && !cell.has_resource() && !cell.has_building()) {
             cell.terrain = TerrainType::RESOURCE;
-            cell.resource_type = (rand() % 4) + 1;  // 1-4
-            cell.resource_amount = 10000 + (rand() % 90000);
-            cell.resource_gather_rate = 100 + (rand() % 200);
+            cell.resource_type = thread_safe_rand(4) + 1;  // 1-4
+            cell.resource_amount = 10000 + thread_safe_rand(90000);
+            cell.resource_gather_rate = 100 + thread_safe_rand(200);
         }
     }
     
@@ -89,8 +97,8 @@ void SlgMapManager::generate_cities(int count) {
     int max_attempts = count * 100;
     
     while (created < count && attempts < max_attempts) {
-        int x = margin + rand() % x_range;
-        int y = margin + rand() % y_range;
+        int x = margin + thread_safe_rand(x_range);
+        int y = margin + thread_safe_rand(y_range);
         
         auto& cell = cells_[cell_index(x, y)];
         
@@ -111,7 +119,7 @@ void SlgMapManager::generate_cities(int count) {
             city.x = x;
             city.y = y;
             city.name = "City_" + std::to_string(city.city_id);
-            city.level = 1 + rand() % 5;
+            city.level = 1 + thread_safe_rand(5);
             
             cell.terrain = TerrainType::CITY;
             cell.owner_id = city.city_id;

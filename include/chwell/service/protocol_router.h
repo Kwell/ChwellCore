@@ -6,6 +6,7 @@
 #include <functional>
 #include <unordered_map>
 #include <vector>
+#include <atomic>
 #include "chwell/service/component.h"
 #include "chwell/protocol/message.h"
 #include "chwell/protocol/parser.h"
@@ -51,7 +52,12 @@ public:
 
 private:
     // 为每个连接维护一个解析器（处理粘包/拆包）
-    std::unordered_map<const net::TcpConnection*, protocol::Parser> parsers_;
+    // 使用 uint64_t 连接 ID 作为 key 而非裸指针，避免指针地址复用导致
+    // 新连接错误继承旧连接的解析器状态（半包残留等）
+    std::unordered_map<uint64_t, protocol::Parser> parsers_;
+    // 连接指针 -> 连接 ID 的映射（用于 on_disconnect 时查找）
+    std::unordered_map<const net::TcpConnection*, uint64_t> conn_ids_;
+    std::atomic<uint64_t> next_conn_id_{1};
     mutable std::shared_mutex parsers_mutex_;
 
     std::unordered_map<std::uint16_t, MessageHandler> handlers_;

@@ -44,7 +44,11 @@ std::vector<char> serialize(const Message& msg) {
     std::uint16_t cmd_net = core::host_to_net16(msg.cmd);
     std::memcpy(buf.data(), &cmd_net, 2);
 
-    // len (2 bytes, network byte order)
+    // len (2 bytes, network byte order). Protocol max body is 65535.
+    if (msg.body.size() > 0xFFFFu) {
+        // 不可静默截断，否则会破坏帧边界；返回空表示序列化失败
+        return {};
+    }
     std::uint16_t len_net = core::host_to_net16(static_cast<std::uint16_t>(msg.body.size()));
     std::memcpy(buf.data() + 2, &len_net, 2);
 
@@ -53,7 +57,12 @@ std::vector<char> serialize(const Message& msg) {
         std::memcpy(buf.data() + 4, msg.body.data(), msg.body.size());
     }
 
-    return std::move(buf);  // 移动语义，调用方拿到 buffer 所有权
+    // 返回副本而非 std::move(buf)
+    // std::move 会转移 thread_local buffer 的 capacity，导致下次调用时
+    // capacity 为 0 需要重新分配，thread_local 优化完全失效
+    // 返回副本虽然有一次拷贝，但 thread_local buffer 的 capacity 得以保留
+    // 避免了每次调用的堆分配，整体性能更优
+    return buf;
 }
 
 bool deserialize(const std::vector<char>& data, Message& msg) {
@@ -71,7 +80,7 @@ bool deserialize(const std::vector<char>& data, Message& msg) {
     std::memcpy(&len_net, &data[2], 2);
     std::uint16_t body_len = core::net_to_host16(len_net);
 
-    if (data.size() < 4 + body_len) {
+    if (data.size() < 4u + static_cast<std::size_t>(body_len)) {
         return false;
     }
 

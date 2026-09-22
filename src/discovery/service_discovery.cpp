@@ -42,43 +42,51 @@ void MemoryServiceDiscovery::stop_cleanup_thread() {
 }
 
 bool MemoryServiceDiscovery::register_service(const ServiceInstance& instance) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<ServiceListener> listeners_to_notify;
+    ServiceInstance new_instance;
 
-    std::string instance_id = instance.instance_id;
-    if (instance_id.empty()) {
-        CHWELL_LOG_ERROR("Instance ID cannot be empty");
-        return false;
-    }
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
 
-    // 检查是否已存在
-    if (instances_.find(instance_id) != instances_.end()) {
-        CHWELL_LOG_WARN("Instance already exists: " + instance_id);
-        return false;
-    }
-
-    // 创建实例副本
-    ServiceInstance new_instance = instance;
-    new_instance.register_time = current_timestamp_ms();
-    new_instance.heartbeat_time = new_instance.register_time;
-    new_instance.is_alive = true;
-
-    // 添加到实例表
-    instances_[instance_id] = new_instance;
-
-    // 添加到服务索引
-    service_index_[new_instance.service_id].insert(instance_id);
-
-    CHWELL_LOG_INFO("Service registered: " + new_instance.service_id +
-                    ", instance: " + instance_id +
-                    ", host: " + new_instance.host +
-                    ", port: " + std::to_string(new_instance.port));
-
-    // 通知监听器
-    auto it = listeners_.find(new_instance.service_id);
-    if (it != listeners_.end()) {
-        for (auto& listener : it->second) {
-            listener(new_instance.service_id, new_instance);
+        std::string instance_id = instance.instance_id;
+        if (instance_id.empty()) {
+            CHWELL_LOG_ERROR("Instance ID cannot be empty");
+            return false;
         }
+
+        // 检查是否已存在
+        if (instances_.find(instance_id) != instances_.end()) {
+            CHWELL_LOG_WARN("Instance already exists: " + instance_id);
+            return false;
+        }
+
+        // 创建实例副本
+        new_instance = instance;
+        new_instance.register_time = current_timestamp_ms();
+        new_instance.heartbeat_time = new_instance.register_time;
+        new_instance.is_alive = true;
+
+        // 添加到实例表
+        instances_[instance_id] = new_instance;
+
+        // 添加到服务索引
+        service_index_[new_instance.service_id].insert(instance_id);
+
+        CHWELL_LOG_INFO("Service registered: " + new_instance.service_id +
+                        ", instance: " + instance_id +
+                        ", host: " + new_instance.host +
+                        ", port: " + std::to_string(new_instance.port));
+
+        // 收集需要通知的监听器（在锁外调用，避免死锁）
+        auto it = listeners_.find(new_instance.service_id);
+        if (it != listeners_.end()) {
+            listeners_to_notify = it->second;  // 复制一份
+        }
+    }
+
+    // 在锁外通知监听器，避免回调中再次获取锁导致死锁
+    for (const auto& listener : listeners_to_notify) {
+        listener(new_instance.service_id, new_instance);
     }
 
     return true;

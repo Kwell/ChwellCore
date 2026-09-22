@@ -13,7 +13,10 @@ namespace {
 inline std::vector<char>& encode_buffer() {
     thread_local std::vector<char> buf;
     buf.clear();
-    buf.reserve(4096);
+    // 仅在首次或容量不足时 reserve，避免每次调用都 reserve
+    if (buf.capacity() < 4096) {
+        buf.reserve(4096);
+    }
     return buf;
 }
 
@@ -46,7 +49,8 @@ std::vector<char> LengthHeaderCodec::encode(const std::string& message) {
         std::memcpy(buf.data() + 4, message.data(), message.size());
     }
 
-    return std::move(buf);
+    // 返回副本而非 std::move(buf)，保留 thread_local buffer 的 capacity
+    return buf;
 }
 
 std::vector<std::string> LengthHeaderCodec::decode(const std::vector<char>& data) {
@@ -103,7 +107,8 @@ std::vector<char> JsonCodec::encode(const std::string& message) {
         std::memcpy(buf.data() + 4, message.data(), message.size());
     }
 
-    return std::move(buf);
+    // 返回副本而非 std::move(buf)，保留 thread_local buffer 的 capacity
+    return buf;
 }
 
 std::vector<std::string> JsonCodec::decode(const std::vector<char>& data) {
@@ -156,7 +161,8 @@ std::vector<char> ProtobufCodec::encode(const std::string& message) {
         buf.insert(buf.end(), message.begin(), message.end());
     }
 
-    return std::move(buf);
+    // 返回副本而非 std::move(buf)，保留 thread_local buffer 的 capacity
+    return buf;
 }
 
 bool ProtobufCodec::parse_varint32(std::uint32_t& len) {
@@ -185,30 +191,40 @@ bool ProtobufCodec::parse_varint32(std::uint32_t& len) {
 std::vector<std::string> ProtobufCodec::decode(const std::vector<char>& data) {
     std::vector<std::string> result;
 
-    // 🆕 使用 RingBuffer，零拷贝
     ring_.write(data.data(), data.size());
 
-    while (ring_.readable() > 0) {
+    while (true) {
         std::uint32_t len = 0;
-        if (!parse_varint32(len)) {
-            // varint32 不完整，需要更多数据。恢复位置
-            // 注意：parse_varint32 只在成功时 consume
-            break;
-        }
 
-        // 🆕 包体长度校验
-        if (len > max_body_len_) {
-            CHWELL_LOG_ERROR("ProtobufCodec: body too large: " << len
-                             << " > max=" << max_body_len_);
-            ring_.clear();
-            break;
-        }
-
-        if (ring_.readable() < len) {
-            // body 数据不足，需要更多数据
-            // parse_varint32 只在成功时 consume，所以 varint 已被消费
-            // 下次调用 decode 时 body 数据就会到了
-            break;
+        if (has_pending_) {
+            // 上一轮已消费 varint，这里只等 body
+            len = pending_len_;
+            if (ring_.readable() < len) {
+                break;
+            }
+            has_pending_ = false;
+            pending_len_ = 0;
+        } else {
+            if (ring_.readable() == 0) {
+                break;
+            }
+            if (!parse_varint32(len)) {
+                break;
+            }
+            if (len > max_body_len_) {
+                CHWELL_LOG_ERROR("ProtobufCodec: body too large: " << len
+                                 << " > max=" << max_body_len_);
+                ring_.clear();
+                has_pending_ = false;
+                pending_len_ = 0;
+                break;
+            }
+            if (ring_.readable() < len) {
+                // varint 已消费，暂存长度；不可把后续 body 当新 varint 解析
+                pending_len_ = len;
+                has_pending_ = true;
+                break;
+            }
         }
 
         std::string msg(len, '\0');

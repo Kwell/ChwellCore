@@ -6,11 +6,14 @@
 #include <unordered_map>
 #include <memory>
 #include <mutex>
+#include <atomic>
+#include <cstdint>
 
 #include "chwell/net/posix_io.h"
 #include "chwell/net/tcp_server.h"
 #include "chwell/service/component.h"
 #include "chwell/protocol/message.h"
+#include "chwell/protocol/parser.h"
 
 namespace chwell {
 namespace rpc {
@@ -48,11 +51,13 @@ private:
     net::IoService& io_service_;
     std::unique_ptr<net::TcpServer> server_;
     unsigned short port_;
-    
+
     std::mutex mutex_;
     std::unordered_map<std::uint16_t, RpcHandler> methods_;
-    std::unordered_map<const net::TcpConnection*, std::vector<char>> buffers_;
-    
+    // 使用 Parser 替代裸缓冲区，Parser 内部处理粘包/拆包
+    // 避免裸指针 key 复用问题和手动缓冲区管理的竞态
+    std::unordered_map<const net::TcpConnection*, protocol::Parser> parsers_;
+
     std::atomic<int> total_requests_{0};
     std::atomic<int> active_connections_{0};
 };

@@ -34,7 +34,7 @@ std::vector<Message> Parser::feed(std::string_view data) {
         std::uint16_t body_len = core::net_to_host16(len_net);
 
         // 检查是否有完整的消息（4 字节头部 + body）
-        if (avail < 4 + body_len) {
+        if (avail < 4u + static_cast<std::size_t>(body_len)) {
             break; // 数据不完整，等待更多数据
         }
 

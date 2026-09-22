@@ -95,29 +95,47 @@ std::string PrometheusRegistry::export_metrics() const {
 }
 
 std::string PrometheusRegistry::to_prometheus() const {
-    std::lock_guard<std::mutex> lock(mutex_);
+    // 在锁内收集指标快照，在锁外格式化输出
+    // 避免 Summary::to_prometheus() 内部加锁导致死锁
+    std::vector<std::pair<std::string, std::string>> counter_snapshots;
+    std::vector<std::pair<std::string, std::string>> gauge_snapshots;
+    std::vector<std::pair<std::string, std::string>> histogram_snapshots;
+    std::vector<std::pair<std::string, std::string>> summary_snapshots;
 
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        for (const auto& pair : counters_) {
+            counter_snapshots.emplace_back(
+                pair.first,
+                pair.second->to_prometheus(pair.first, metric_infos_.at(pair.first).help));
+        }
+
+        for (const auto& pair : gauges_) {
+            gauge_snapshots.emplace_back(
+                pair.first,
+                pair.second->to_prometheus(pair.first, metric_infos_.at(pair.first).help));
+        }
+
+        for (const auto& pair : histograms_) {
+            histogram_snapshots.emplace_back(
+                pair.first,
+                pair.second->to_prometheus(pair.first, metric_infos_.at(pair.first).help));
+        }
+
+        for (const auto& pair : summaries_) {
+            summary_snapshots.emplace_back(
+                pair.first,
+                pair.second->to_prometheus(pair.first, metric_infos_.at(pair.first).help));
+        }
+    }
+
+    // 在锁外拼接字符串
     std::ostringstream oss;
-
-    for (const auto& pair : counters_) {
-        oss << pair.second->to_prometheus(pair.first,
-                                          metric_infos_.at(pair.first).help);
-    }
-
-    for (const auto& pair : gauges_) {
-        oss << pair.second->to_prometheus(pair.first,
-                                          metric_infos_.at(pair.first).help);
-    }
-
-    for (const auto& pair : histograms_) {
-        oss << pair.second->to_prometheus(pair.first,
-                                          metric_infos_.at(pair.first).help);
-    }
-
-    for (const auto& pair : summaries_) {
-        oss << pair.second->to_prometheus(pair.first,
-                                          metric_infos_.at(pair.first).help);
-    }
+    for (const auto& s : counter_snapshots) oss << s.second;
+    for (const auto& s : gauge_snapshots) oss << s.second;
+    for (const auto& s : histogram_snapshots) oss << s.second;
+    for (const auto& s : summary_snapshots) oss << s.second;
 
     return oss.str();
 }

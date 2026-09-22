@@ -92,15 +92,21 @@ bool FrameSyncComponent::PreUpdate() {
     int tick_ms = 1000 / frame_rate_;
     frame_timer_handle_ = core::TimerManager::instance().add_repeat_timer(tick_ms,
         [this]() {
-            std::lock_guard<std::mutex> lock(mutex_);
-            for (auto& pair : rooms_) {
-                if (pair.second->check_frame_timeout()) {
-                    // 超时推进，广播帧状态
-                    FrameState state;
-                    state.frame_id = pair.second->current_frame();
-                    state.state_data.clear();
-                    broadcast_frame_state(pair.first, state);
+            std::vector<std::pair<std::string, FrameState>> to_broadcast;
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                for (auto& pair : rooms_) {
+                    if (pair.second->check_frame_timeout()) {
+                        // 超时推进，稍后在锁外广播（broadcast 内部会加锁）
+                        FrameState state;
+                        state.frame_id = pair.second->current_frame();
+                        state.state_data.clear();
+                        to_broadcast.emplace_back(pair.first, state);
+                    }
                 }
+            }
+            for (auto& item : to_broadcast) {
+                broadcast_frame_state(item.first, item.second);
             }
         });
 
@@ -124,11 +130,13 @@ void FrameSyncComponent::handle_frame_input(const net::TcpConnectionPtr& conn, c
     size_t size = data.size();
     size_t offset = 0;
 
-    uint32_t player_id = 0;
+    // 安全修复：不信任客户端发送的 player_id，从服务端会话中获取真实 player_id
+    // 客户端消息中的 player_id 仅用于校验，防止代提其他玩家输入
+    uint32_t claimed_player_id = 0;
     uint32_t frame_id = 0;
     std::vector<uint8_t> input_data;
 
-    if (!decode_uint32(ptr, size, offset, player_id)) {
+    if (!decode_uint32(ptr, size, offset, claimed_player_id)) {
         CHWELL_LOG_ERROR("Failed to decode player_id");
         return;
     }
@@ -143,32 +151,54 @@ void FrameSyncComponent::handle_frame_input(const net::TcpConnectionPtr& conn, c
         return;
     }
 
-    CHWELL_LOG_INFO("Frame input: player_id=" + std::to_string(player_id) +
+    // 从服务端会话获取真实的 player_id（防止伪造）
+    uint32_t real_player_id = get_player_id(conn);
+    if (real_player_id == 0) {
+        CHWELL_LOG_WARN("Frame input from unauthenticated connection, fd="
+                        << (conn ? conn->native_handle() : -1));
+        return;
+    }
+
+    // 校验客户端声称的 player_id 与服务端记录是否一致
+    if (claimed_player_id != real_player_id) {
+        CHWELL_LOG_WARN("Player ID mismatch: claimed=" + std::to_string(claimed_player_id)
+                        + " actual=" + std::to_string(real_player_id)
+                        + " fd=" + std::to_string(conn ? conn->native_handle() : -1));
+        return;
+    }
+
+    CHWELL_LOG_INFO("Frame input: player_id=" + std::to_string(real_player_id) +
                     ", frame_id=" + std::to_string(frame_id) +
                     ", data_size=" + std::to_string(input_data.size()));
 
     FrameInput input;
     input.frame_id = frame_id;
-    input.player_id = player_id;
+    input.player_id = real_player_id;  // 使用服务端验证后的 player_id
     input.input_data = input_data;
 
-    submit_input(player_id, input);
+    submit_input(real_player_id, input);
 
     // 检查是否所有玩家都提交了输入
     std::string room_id = get_room_id(conn);
     if (!room_id.empty()) {
-        std::lock_guard<std::mutex> lock(mutex_);
-        auto it = rooms_.find(room_id);
-        if (it != rooms_.end()) {
-            auto& room = it->second;
-            if (room->all_inputs_ready(frame_id)) {
-                room->advance_frame();
-
-                FrameState state;
-                state.frame_id = room->current_frame();
-                state.state_data.clear();
-                broadcast_frame_state(room_id, state);
+        FrameState state;
+        bool need_broadcast = false;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            auto it = rooms_.find(room_id);
+            if (it != rooms_.end()) {
+                auto& room = it->second;
+                if (room->all_inputs_ready(frame_id)) {
+                    room->advance_frame();
+                    state.frame_id = room->current_frame();
+                    state.state_data.clear();
+                    need_broadcast = true;
+                }
             }
+        }
+        // 在锁外广播，避免 broadcast_frame_state 重入 mutex_
+        if (need_broadcast) {
+            broadcast_frame_state(room_id, state);
         }
     }
 }

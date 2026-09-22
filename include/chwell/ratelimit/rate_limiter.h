@@ -55,6 +55,10 @@ public:
 
     // 获取剩余配额
     virtual int64_t get_remaining(const std::string& key) = 0;
+
+    // 清理长时间未使用的桶，避免内存无限增长
+    // max_idle_ms: 超过此时间未访问的桶将被清理
+    virtual void cleanup_idle(int64_t max_idle_ms) { (void)max_idle_ms; }
 };
 
 // ============================================
@@ -78,12 +82,15 @@ public:
 
     virtual int64_t get_remaining(const std::string& key) override;
 
+    virtual void cleanup_idle(int64_t max_idle_ms) override;
+
 private:
     struct Bucket {
         int64_t tokens;
         std::int64_t last_refill_time_ms;
+        std::int64_t last_access_time_ms;  // 最后访问时间，用于清理空闲桶
 
-        Bucket() : tokens(0), last_refill_time_ms(0) {}
+        Bucket() : tokens(0), last_refill_time_ms(0), last_access_time_ms(0) {}
     };
 
     int64_t capacity_;

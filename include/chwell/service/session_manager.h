@@ -161,6 +161,42 @@ public:
                 std::chrono::system_clock::now().time_since_epoch()).count();
     }
 
+    // 设置会话超时时间（秒），超过此时间未活跃的会话将被清理
+    void set_session_timeout(int seconds) {
+        std::unique_lock lock(sessions_mutex_);
+        session_timeout_sec_ = seconds;
+    }
+
+    // 清理过期会话（应在 Update() 中周期调用）
+    // 返回清理的会话数量
+    size_t cleanup_expired_sessions() {
+        std::unique_lock lock(sessions_mutex_);
+        if (session_timeout_sec_ <= 0) return 0;
+
+        auto now = std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+
+        size_t cleaned = 0;
+        for (auto it = sessions_.begin(); it != sessions_.end(); ) {
+            if (now - it->second.last_active_time > session_timeout_sec_) {
+                CHWELL_LOG_INFO("Session expired, player_id=" + it->second.player_id
+                                + ", room_id=" + it->second.room_id);
+                remove_from_room_index(it->second, it->first);
+                it = sessions_.erase(it);
+                ++cleaned;
+            } else {
+                ++it;
+            }
+        }
+        return cleaned;
+    }
+
+    // 组件 Update 周期调用，自动清理过期会话
+    virtual bool Update(int64_t /*delta_ms*/) override {
+        cleanup_expired_sessions();
+        return true;
+    }
+
 private:
     void remove_from_room_index(const SessionInfo& info, const net::TcpConnection* conn) {
         if (!info.room_id.empty()) {
@@ -178,6 +214,7 @@ private:
     std::unordered_map<const net::TcpConnection*, SessionInfo> sessions_;
     // Reverse index: room_id -> list of connections in that room
     std::unordered_map<std::string, std::vector<const net::TcpConnection*>> room_players_;
+    int session_timeout_sec_ = 1800;  // 会话超时（秒），默认 30 分钟
     mutable std::shared_mutex sessions_mutex_;
 };
 

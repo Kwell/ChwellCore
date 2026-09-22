@@ -20,8 +20,15 @@ namespace metrics {
 class Counter {
 public:
     void inc(double delta = 1.0) {
-        value_.store(value_.load(std::memory_order_relaxed) + delta,
-                     std::memory_order_relaxed);
+        // 使用 compare_exchange 实现 CAS 循环，保证原子 RMW
+        // 旧实现 value_.store(value_.load() + delta) 是非原子 RMW，多线程下会丢失更新
+        double old_val = value_.load(std::memory_order_relaxed);
+        double new_val;
+        do {
+            new_val = old_val + delta;
+        } while (!value_.compare_exchange_weak(old_val, new_val,
+                                                std::memory_order_relaxed,
+                                                std::memory_order_relaxed));
     }
 
     double get() const {
@@ -45,13 +52,25 @@ private:
 class Gauge {
 public:
     void inc(double delta = 1.0) {
-        value_.store(value_.load(std::memory_order_relaxed) + delta,
-                     std::memory_order_relaxed);
+        // CAS 循环保证原子 RMW
+        double old_val = value_.load(std::memory_order_relaxed);
+        double new_val;
+        do {
+            new_val = old_val + delta;
+        } while (!value_.compare_exchange_weak(old_val, new_val,
+                                                std::memory_order_relaxed,
+                                                std::memory_order_relaxed));
     }
 
     void dec(double delta = 1.0) {
-        value_.store(value_.load(std::memory_order_relaxed) - delta,
-                     std::memory_order_relaxed);
+        // CAS 循环保证原子 RMW
+        double old_val = value_.load(std::memory_order_relaxed);
+        double new_val;
+        do {
+            new_val = old_val - delta;
+        } while (!value_.compare_exchange_weak(old_val, new_val,
+                                                std::memory_order_relaxed,
+                                                std::memory_order_relaxed));
     }
 
     void set(double value) {
@@ -82,16 +101,28 @@ public:
         : buckets_(buckets), counts_(buckets.size()) {}
 
     void observe(double value) {
+        // 使用 CAS 循环保证原子 RMW，避免多线程下丢失更新
         for (size_t i = 0; i < counts_.size(); ++i) {
             if (value <= buckets_[i]) {
-                counts_[i].store(counts_[i].load(std::memory_order_relaxed) + 1,
-                                 std::memory_order_relaxed);
+                uint64_t old = counts_[i].load(std::memory_order_relaxed);
+                while (!counts_[i].compare_exchange_weak(old, old + 1,
+                                                          std::memory_order_relaxed,
+                                                          std::memory_order_relaxed)) {}
             }
         }
-        count_.store(count_.load(std::memory_order_relaxed) + 1,
-                     std::memory_order_relaxed);
-        sum_.store(sum_.load(std::memory_order_relaxed) + value,
-                     std::memory_order_relaxed);
+        // count_ 和 sum_ 也用 CAS
+        uint64_t old_count = count_.load(std::memory_order_relaxed);
+        while (!count_.compare_exchange_weak(old_count, old_count + 1,
+                                               std::memory_order_relaxed,
+                                               std::memory_order_relaxed)) {}
+
+        double old_sum = sum_.load(std::memory_order_relaxed);
+        double new_sum;
+        do {
+            new_sum = old_sum + value;
+        } while (!sum_.compare_exchange_weak(old_sum, new_sum,
+                                              std::memory_order_relaxed,
+                                              std::memory_order_relaxed));
     }
 
     double get_count() const {

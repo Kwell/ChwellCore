@@ -65,10 +65,23 @@ public:
     void disconnect();
     bool is_connected() const;
     
+    // 当前是否为内存模拟（非真实 Redis 连接）
+    // 生产环境部署前必须替换为真实实现
+    bool is_mock() const { return true; }  // 当前实现始终为 mock
+    
     // 字符串操作
     bool set(const std::string& key, const std::string& value);
     bool setex(const std::string& key, int seconds, const std::string& value);
     bool setnx(const std::string& key, const std::string& value);
+    
+    // 原子操作（分布式锁安全的基础）
+    // SET key value NX EX seconds —— 原子"不存在则设置并带过期"
+    bool set_nx_ex(const std::string& key, const std::string& value, int seconds);
+    // 原子 CAS+DEL：仅当 key 的值 == expected 时才删除，返回是否删除成功
+    bool compare_and_del(const std::string& key, const std::string& expected);
+    // 原子 CAS+EXPIRE：仅当 key 的值 == expected 时才设置过期
+    bool compare_and_expire(const std::string& key, const std::string& expected, int seconds);
+    
     std::string get(const std::string& key);
     bool get(const std::string& key, std::string& value);
     int del(const std::string& key);
@@ -118,6 +131,7 @@ public:
 private:
     RedisConfig config_;
     mutable std::mutex mutex_;
+    bool connected_{false};  // 连接状态标志
     
     // 内存模拟存储（无 hiredis 时使用）
     std::unordered_map<std::string, std::string> data_;

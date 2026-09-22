@@ -5,6 +5,7 @@
 #include <memory>
 #include <functional>
 #include <random>
+#include <mutex>
 
 #include "chwell/core/logger.h"
 
@@ -162,7 +163,8 @@ private:
     
     BattleConfig config_;
     ReportCallback report_callback_;
-    
+
+    mutable std::mutex rng_mutex_;  // 保护 rng_ 的互斥锁
     mutable std::mt19937 rng_;
 };
 
