@@ -34,12 +34,12 @@
 | **服务层** | 组件化 `Service` 容器，按命令字路由，`SessionManager` 多维会话映射 |
 | **同步** | `FrameSyncRoom`（帧同步 + 快照），`StateSyncRoom`（K/V 状态 + 增量差异 + 订阅） |
 | **游戏组件** | 登录、聊天、房间、心跳、玩家移动（均可直接插拔到 `Service`）|
-| **基础设施** | 时间轮定时器（O(1)），线程池，任务队列（延时/重复/取消），对象池，类型安全事件总线 |
+| **基础设施** | 时间轮定时器，线程池（任务异常隔离），任务队列（延时/重复/取消），对象池，类型安全事件总线 |
 | **空间** | 格子 AOI、十字链表 AOI，SLG 地图与战斗系统 |
 | **存储** | 统一 KV 接口（内存 / MySQL / MongoDB），模板化 ORM `Repository<T>`，YAML 配置驱动 |
 | **集群** | 节点注册表（YAML + 一致性哈希），轻量 RPC，网关转发 |
 | **可靠性** | 熔断器（计数 / 失败率 / 混合策略），令牌桶 / 漏桶 / 固定窗口限流，Prometheus 指标 |
-| **Redis** | 同步 Redis 客户端，分布式锁（SETNX + 自动续租 + RAII 守卫）|
+| **Redis** | **内存 Mock** 客户端 + 分布式锁 API（`SET NX EX` / CAS 删除 / 自动续租）。单进程语义正确，**多实例需换真实 RESP/hiredis** |
 | **Benchmark** | 内置 `BenchmarkSuite`，支持预热 + 多次采样 + 统计导出（CSV / JSON）|
 | **Epoll Reactor** | 多 Reactor 线程模型（Accept 分离），eventfd 唤醒，ET/LT 双模式，万级并发连接 |
 
@@ -208,7 +208,7 @@ public:
 
 | 组件 | 说明 |
 |------|------|
-| `LoginComponent` | 登录/登出，依赖 `SessionManager` |
+| `LoginComponent` | 登录/登出，依赖 `SessionManager`。支持 `set_token_validator` 做服务端 token 校验；**未设置时仅校验非空（开发用，生产必须设置）** |
 | `ChatComponent` | 消息广播到同房间所有玩家 |
 | `RoomComponent` | 房间创建/加入/离开 |
 | `HeartbeatComponent` | 心跳保活 |
@@ -232,7 +232,7 @@ public:
 
 | 模块 | 关键类 | 说明 |
 |------|--------|------|
-| `chwell/core` | `TimerWheel` | 分层时间轮，O(1) 添加/取消定时器 |
+| `chwell/core` | `TimerWheel` | 分层时间轮，O(1) 添加；取消为槽内查找 |
 | `chwell/core` | `ThreadPool` | 固定大小线程池，`post()` 提交任务 |
 | `chwell/task` | `DelayedTaskQueue` | 支持延时 / 重复 / 取消的任务队列 |
 | `chwell/pool` | `ObjectPool<T>` | 模板对象池；`GlobalBufferPool` 全局缓冲区 |
@@ -330,13 +330,17 @@ counter.inc();
 
 ### Redis 与分布式锁 (`chwell/redis`)
 
+> **注意**：当前 `RedisClient` 是**进程内内存 Mock**（连接时会打 WARN），不走 RESP/网络。
+> 分布式锁 API 已按原子语义实现（`SET NX EX` 加锁、`compare_and_del` 解锁、`compare_and_expire` 续租、RAII 守卫），
+> 但**仅保证单进程正确**。多实例部署必须替换为 hiredis / 真实 Redis 后端。
+
 ```cpp
-redis::RedisClient redis("127.0.0.1", 6379);
+redis::RedisClient redis("127.0.0.1", 6379);  // 参数暂存配置，当前不发起真实连接
 redis.set("key", "value");
 auto val = redis.get("key");
 
 // RAII 分布式锁（内部自动续租，离开作用域自动解锁）
-redis::DistributedLock lock(redis, "resource:123", /*ttl_ms=*/5000);
+redis::DistributedLock lock(redis, "resource:123", /*ttl_seconds=*/5);
 if (lock.try_lock()) {
     // 临界区
 }
@@ -561,7 +565,7 @@ cd build
 # 运行全部测试
 ./chwell_core_tests
 
-# 排除需要本地 Redis 服务的用例
+# 排除 Redis Mock 相关用例（可选）
 ./chwell_core_tests --gtest_filter="-*Redis*"
 
 # 仅 benchmark 相关
@@ -611,7 +615,7 @@ cd ChwellBenchmark/build
 | `test_udp_socket.cpp` | UDP Socket 创建 / 绑定 / 发送接收 |
 | `test_orm_repository.cpp` | ORM 仓储 CRUD |
 | `test_storage.cpp` | Document 序列化、MemoryStorage TTL、批量操作、StorageFactory、StorageComponent nullptr guard、AsyncStorageAdapter（Future/Callback/并发）|
-| `test_redis_client.cpp` | Redis 客户端（需本地 Redis）|
+| `test_redis_client.cpp` | Redis 客户端 **内存 Mock** + 分布式锁 API |
 | `test_gateway_multinode.cpp` | 多节点注册 / 服务发现 / 分布式锁 |
 
 ---
@@ -700,7 +704,7 @@ ChwellCore/
 │   ├── metrics/                  # prometheus_metrics.h
 │   └── benchmark/                # benchmark.h
 ├── src/                          # 与 include/ 镜像的实现文件
-├── tests/                        # GoogleTest 单元测试（212 个用例）
+├── tests/                        # GoogleTest 单元测试
 ├── integration_tests/            # 集成测试
 ├── examples/
 │   ├── echo_server.cpp
@@ -743,13 +747,13 @@ ChwellCore/
 - 服务发现 + 负载均衡 + 一致性哈希
 - 熔断器（计数 / 失败率 / 混合策略，`execute_with_result` 正确计数）+ 限流器
 - Prometheus 指标
-- Redis 客户端 + 分布式锁
+- Redis 客户端（内存 Mock）+ 分布式锁 API
 - AOI（格子 / 十字链表）+ SLG 模块
 - Benchmark 框架（含 tcp / memory / loadbalance / protocol 基准全实现）
 - H5 对战 Demo（完整前后端）
 - 存储模块全面整治（MySQL 大值修复、MySQL/MongoDB keys() 修复、MongoDB 全局 init 修复）
 - 异步存储接口（`AsyncStorageInterface` + `AsyncStorageAdapter`，Future + Callback 两套 API）
-- 单元测试全覆盖（258 个测试用例）
+- 单元测试覆盖核心模块（见 `tests/`）
 - **Epoll 多 Reactor 网络框架（高性能替代方案，万级并发连接支持）**
 
 ### 规划中
