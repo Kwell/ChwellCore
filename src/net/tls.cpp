@@ -4,6 +4,7 @@
 
 #include <openssl/ssl.h>
 #include <openssl/err.h>
+#include <poll.h>
 
 namespace chwell {
 namespace net {
@@ -107,42 +108,71 @@ TlsConnection::~TlsConnection() {
 
 bool TlsConnection::handshake() {
     if (!ssl_) return false;
-    int ret = ctx_.is_server() ? SSL_accept(static_cast<SSL*>(ssl_))
-                               : SSL_connect(static_cast<SSL*>(ssl_));
-    if (ret <= 0) {
+    if (established_) return true;
+    // 非阻塞 fd 上 SSL_accept/connect 可能返回 WANT_READ/WRITE，需重试
+    for (int attempt = 0; attempt < 10000; ++attempt) {
+        int ret = ctx_.is_server() ? SSL_accept(static_cast<SSL*>(ssl_))
+                                   : SSL_connect(static_cast<SSL*>(ssl_));
+        if (ret == 1) {
+            established_ = true;
+            return true;
+        }
+        int err = SSL_get_error(static_cast<SSL*>(ssl_), ret);
+        if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
+            struct pollfd pfd;
+            pfd.fd = socket_.native_handle();
+            pfd.events = (err == SSL_ERROR_WANT_READ) ? POLLIN : POLLOUT;
+            pfd.revents = 0;
+            ::poll(&pfd, 1, 1000);
+            continue;
+        }
         log_ssl_error("TLS: handshake failed");
         return false;
     }
-    established_ = true;
-    return true;
+    log_ssl_error("TLS: handshake timeout");
+    return false;
 }
 
 ssize_t TlsConnection::read(void* buf, std::size_t len) {
     if (!ssl_) return -1;
-    int n = SSL_read(static_cast<SSL*>(ssl_), buf, static_cast<int>(len));
-    if (n <= 0) {
+    for (;;) {
+        int n = SSL_read(static_cast<SSL*>(ssl_), buf, static_cast<int>(len));
+        if (n > 0) return static_cast<ssize_t>(n);
         int err = SSL_get_error(static_cast<SSL*>(ssl_), n);
-        if (err != SSL_ERROR_ZERO_RETURN && err != SSL_ERROR_WANT_READ &&
-            err != SSL_ERROR_WANT_WRITE) {
+        if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
+            struct pollfd pfd;
+            pfd.fd = socket_.native_handle();
+            pfd.events = (err == SSL_ERROR_WANT_READ) ? POLLIN : POLLOUT;
+            pfd.revents = 0;
+            ::poll(&pfd, 1, 1000);
+            continue;
+        }
+        if (err != SSL_ERROR_ZERO_RETURN) {
             log_ssl_error("TLS: read error");
         }
         return -1;
     }
-    return static_cast<ssize_t>(n);
 }
 
 ssize_t TlsConnection::write(const void* buf, std::size_t len) {
     if (!ssl_) return -1;
-    int n = SSL_write(static_cast<SSL*>(ssl_), buf, static_cast<int>(len));
-    if (n <= 0) {
+    for (;;) {
+        int n = SSL_write(static_cast<SSL*>(ssl_), buf, static_cast<int>(len));
+        if (n > 0) return static_cast<ssize_t>(n);
         int err = SSL_get_error(static_cast<SSL*>(ssl_), n);
-        if (err != SSL_ERROR_ZERO_RETURN && err != SSL_ERROR_WANT_READ &&
-            err != SSL_ERROR_WANT_WRITE) {
+        if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
+            struct pollfd pfd;
+            pfd.fd = socket_.native_handle();
+            pfd.events = (err == SSL_ERROR_WANT_READ) ? POLLIN : POLLOUT;
+            pfd.revents = 0;
+            ::poll(&pfd, 1, 1000);
+            continue;
+        }
+        if (err != SSL_ERROR_ZERO_RETURN) {
             log_ssl_error("TLS: write error");
         }
         return -1;
     }
-    return static_cast<ssize_t>(n);
 }
 
 void TlsConnection::close() {
