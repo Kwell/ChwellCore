@@ -78,8 +78,10 @@ bool TlsContext::init_client(const std::string& ca_file) {
             SSL_CTX_free(c);
             return false;
         }
-        SSL_CTX_set_verify(c, SSL_VERIFY_PEER, nullptr);
+    } else {
+        SSL_CTX_set_default_verify_paths(c);
     }
+    SSL_CTX_set_verify(c, SSL_VERIFY_PEER, nullptr);
     ctx_ = c;
     return true;
 }

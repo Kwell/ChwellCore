@@ -115,26 +115,24 @@ RateLimitResult LeakyBucketRateLimiter::check(const std::string& key) {
 }
 
 bool LeakyBucketRateLimiter::consume(const std::string& key, int count) {
+    if (count <= 0) return true;
     std::lock_guard<std::mutex> lock(mutex_);
 
     auto it = buckets_.find(key);
     if (it == buckets_.end()) {
         // 创建新桶
         Bucket bucket;
-        bucket.tokens = capacity_;
+        bucket.tokens = 0;
         bucket.last_leak_time_ms = current_timestamp_ms();
         buckets_[key] = bucket;
         it = buckets_.find(key);
     }
 
     Bucket& bucket = it->second;
-
-    // 漏出令牌
     leak_tokens(bucket);
 
-    // 检查是否有足够令牌
-    if (bucket.tokens >= count) {
-        bucket.tokens -= count;
+    if (bucket.tokens + count <= capacity_) {
+        bucket.tokens += count;
         return true;
     }
 
@@ -179,9 +177,10 @@ void LeakyBucketRateLimiter::leak_tokens(Bucket& bucket) {
     int64_t elapsed_ms = now - bucket.last_leak_time_ms;
 
     if (elapsed_ms > 0) {
-        // 计算应该漏出的令牌数
+        // 漏桶：水位随时间下降（原实现误为补水）
         double tokens_to_leak = (elapsed_ms / 1000.0) * leak_rate_per_second_;
-        bucket.tokens = std::min(capacity_, static_cast<int64_t>(bucket.tokens + static_cast<int64_t>(tokens_to_leak)));
+        bucket.tokens = std::max<int64_t>(
+            0, bucket.tokens - static_cast<int64_t>(tokens_to_leak));
         bucket.last_leak_time_ms = now;
     }
 }
@@ -231,8 +230,29 @@ RateLimitResult FixedWindowRateLimiter::check(const std::string& key) {
 }
 
 bool FixedWindowRateLimiter::consume(const std::string& key, int count) {
-    RateLimitResult result = check(key);
-    return result.allowed;
+    if (count <= 0) return true;
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    auto it = windows_.find(key);
+    if (it == windows_.end()) {
+        Window window;
+        window.count = 0;
+        window.start_time_ms = current_timestamp_ms();
+        windows_[key] = window;
+        it = windows_.find(key);
+    }
+
+    Window& window = it->second;
+    if (should_reset_window(window)) {
+        window.count = 0;
+        window.start_time_ms = current_timestamp_ms();
+    }
+
+    if (window.count + count <= max_requests_) {
+        window.count += count;
+        return true;
+    }
+    return false;
 }
 
 void FixedWindowRateLimiter::reset(const std::string& key) {
