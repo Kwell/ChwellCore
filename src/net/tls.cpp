@@ -5,9 +5,6 @@
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 #include <poll.h>
-#include <poll.h>
-#include <poll.h>
-#include <poll.h>
 
 namespace chwell {
 namespace net {
