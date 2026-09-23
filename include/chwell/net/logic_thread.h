@@ -329,3 +329,100 @@ private:
                 }
             }
 
+            // 🆕 帧耗时监控
+            if (processed > 0) {
+                auto frame_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - frame_start).count();
+                if (frame_elapsed >= frame_threshold_ms_) {
+                    blocked_count_.fetch_add(1, std::memory_order_relaxed);
+                    CHWELL_LOG_ERROR("LogicThread frame blocked: " << frame_elapsed
+                                     << "ms (processed=" << processed << " messages)");
+                    if (stall_handler_) {
+                        stall_handler_(frame_elapsed, "frame");
+                    }
+                }
+
+                spin_count_.store(0, std::memory_order_relaxed);
+                continue;
+            }
+
+            wait_for_messages();
+        }
+
+        drain_remaining();
+    }
+
+    void wait_for_messages() {
+        uint32_t spins = spin_count_.fetch_add(1, std::memory_order_relaxed);
+        if (spins < max_spin_) {
+            std::this_thread::yield();
+            return;
+        }
+
+        std::unique_lock<std::mutex> lock(cv_mutex_);
+        cv_.wait_for(lock, std::chrono::milliseconds(1));
+    }
+
+    // 排空队列中剩余消息（停止时调用）
+    void drain_remaining() {
+        size_t drained = 0;
+        while (true) {
+            size_t r = read_idx_.load(std::memory_order_relaxed);
+            if (r == write_idx_.load(std::memory_order_acquire)) break;
+
+            LogicMessage& msg = queue_[r];
+            TcpConnectionPtr conn;
+            if (msg.conn_guard) {
+                conn = std::static_pointer_cast<TcpConnection>(msg.conn_guard);
+            }
+
+            if (msg.type == LogicMessage::kMessage && msg_handler_) {
+                std::string_view sv(msg.data.data(), msg.data.size());
+                msg_handler_(conn, sv);
+            } else if (msg.type == LogicMessage::kDisconnect && disc_handler_) {
+                disc_handler_(conn);
+            } else if (msg.type == LogicMessage::kTask && msg.task) {
+                msg.task();
+            }
+
+            msg = LogicMessage();
+            read_idx_.store((r + 1) % queue_capacity_, std::memory_order_release);
+            ++drained;
+        }
+        if (drained > 0) {
+            CHWELL_LOG_INFO("LogicThread drained " << drained << " remaining messages on stop");
+        }
+    }
+
+    std::atomic<bool> running_;
+    std::thread thread_;
+
+    size_t queue_capacity_;
+    LogicMessage* queue_;
+    std::atomic<size_t> write_idx_;   // 原子类型，避免消费者无锁读取时的数据竞争
+    std::atomic<size_t> read_idx_;
+    std::vector<TcpConnectionPtr> overflow_disconnects_;
+
+    std::mutex post_mutex_;
+    std::mutex cv_mutex_;
+    std::condition_variable cv_;
+
+    MessageHandler msg_handler_;
+    DisconnectHandler disc_handler_;
+    StallHandler stall_handler_;  // 🆕
+
+    size_t max_batch_;
+    std::atomic<uint32_t> spin_count_;
+    uint32_t max_spin_;
+
+    // 🆕 阻塞监控
+    int64_t slow_threshold_ms_;
+    int64_t frame_threshold_ms_;
+    std::atomic<uint64_t> slow_count_;
+    std::atomic<uint64_t> blocked_count_;
+    std::atomic<uint64_t> total_processed_;
+};
+
+} // namespace net
+} // namespace chwell
+
