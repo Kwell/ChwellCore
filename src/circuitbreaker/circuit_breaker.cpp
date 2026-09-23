@@ -141,7 +141,12 @@ void DefaultCircuitBreaker::trip() {
 }
 
 void DefaultCircuitBreaker::recover() {
+    std::lock_guard<std::mutex> lock(mutex_);
     state_.store(CircuitState::CLOSED, std::memory_order_relaxed);
+    // 清计数：否则下一次失败会立刻按旧 failure_count 再跳闸
+    failure_count_.store(0, std::memory_order_relaxed);
+    success_count_.store(0, std::memory_order_relaxed);
+    half_open_count_.store(0, std::memory_order_relaxed);
 
     CHWELL_LOG_INFO("Circuit breaker " + name_ + " manually recovered to CLOSED state");
 }

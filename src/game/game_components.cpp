@@ -208,6 +208,7 @@ void ChatComponent::handle_chat(const net::TcpConnectionPtr& conn, const std::ve
 
     // 获取玩家ID（从 SessionManager）
     std::string player_id = "unknown";
+    std::string session_room;
     if (service_) {
         auto* session_mgr = service_->get_component<service::SessionManager>();
         if (session_mgr) {
@@ -217,11 +218,17 @@ void ChatComponent::handle_chat(const net::TcpConnectionPtr& conn, const std::ve
                 send_error_response(conn, error_code::NOT_LOGGED_IN, "Please login first");
                 return;
             }
+            // 房间以会话为准，不信任包体 room_id（防跨房灌消息）
+            session_room = session_mgr->get_room_id(conn);
+            if (session_room.empty() || session_room != room_id) {
+                send_error_response(conn, error_code::INVALID_REQUEST, "Not in this room");
+                return;
+            }
         }
     }
 
     // 广播聊天消息
-    broadcast_chat(room_id, player_id, content);
+    broadcast_chat(session_room, player_id, content);
 }
 
 void ChatComponent::broadcast_chat(const std::string& room_id, const std::string& from_player_id, const std::string& content) {
