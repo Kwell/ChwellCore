@@ -76,8 +76,13 @@ void TaskQueue::worker_loop() {
         }
         
         if (task) {
+            if (task->cancelled()) {
+                std::lock_guard<std::mutex> lock(mutex_);
+                tasks_.erase(task->id());
+                continue;
+            }
             ++running_count_;
-            
+
             try {
                 task->execute();
             } catch (const std::exception& e) {
@@ -108,7 +113,9 @@ bool TaskQueue::cancel(int64_t task_id) {
     
     auto it = tasks_.find(task_id);
     if (it != tasks_.end()) {
-        // 注意：只能取消还在队列中的任务
+        if (it->second) {
+            it->second->mark_cancelled();
+        }
         tasks_.erase(it);
         return true;
     }

@@ -56,7 +56,7 @@ private:
     // 新连接错误继承旧连接的解析器状态（半包残留等）
     std::unordered_map<uint64_t, protocol::Parser> parsers_;
     // 连接指针 -> 连接 ID 的映射（用于 on_disconnect 时查找）
-    std::unordered_map<const net::TcpConnection*, uint64_t> conn_ids_;
+    std::unordered_map<std::uint64_t, uint64_t> conn_ids_;
     std::atomic<uint64_t> next_conn_id_{1};
     mutable std::shared_mutex parsers_mutex_;
 

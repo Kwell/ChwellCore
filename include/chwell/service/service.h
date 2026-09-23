@@ -69,20 +69,20 @@ public:
                 CHWELL_LOG_INFO("New connection (epoll) fd=" << conn->native_handle());
                 // 创建 bridge，将 EpollTcpConnection 适配为 TcpConnectionPtr
                 auto bridge = std::make_shared<net::EpollTcpBridge>(conn);
-                int fd = conn->native_handle();
+                std::uint64_t cid = conn->conn_id();
                 {
                     std::lock_guard<std::mutex> lock(bridge_mutex_);
-                    bridge_map_[fd] = bridge;
+                    bridge_map_[cid] = bridge;
                 }
             });
 
             epoll_server_->set_disconnect_callback([this](const net::EpollTcpConnectionPtr& conn) {
                 CHWELL_LOG_INFO("Connection closed (epoll) fd=" << conn->native_handle());
-                int fd = conn->native_handle();
+                std::uint64_t cid = conn->conn_id();
                 net::TcpConnectionPtr bridge;
                 {
                     std::lock_guard<std::mutex> lock(bridge_mutex_);
-                    auto it = bridge_map_.find(fd);
+                    auto it = bridge_map_.find(cid);
                     if (it != bridge_map_.end()) {
                         bridge = it->second;
                         bridge_map_.erase(it);
@@ -96,7 +96,7 @@ public:
                 net::TcpConnectionPtr bridge;
                 {
                     std::lock_guard<std::mutex> lock(bridge_mutex_);
-                    auto it = bridge_map_.find(conn->native_handle());
+                    auto it = bridge_map_.find(conn->conn_id());
                     if (it != bridge_map_.end()) bridge = it->second;
                 }
                 if (bridge) dispatch_message(bridge, data);
@@ -387,7 +387,7 @@ private:
 
     // epoll 模式下：fd → bridge 的映射
     std::mutex bridge_mutex_;
-    std::unordered_map<int, net::TcpConnectionPtr> bridge_map_;
+    std::unordered_map<std::uint64_t, net::TcpConnectionPtr> bridge_map_;
 
     core::ThreadPool thread_pool_;
     std::size_t worker_threads_;

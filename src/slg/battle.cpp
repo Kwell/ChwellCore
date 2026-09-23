@@ -54,8 +54,11 @@ BattleReport BattleSystem::execute(
             if (defender_remaining <= 0) break;
             if (attacker_remaining <= 0) break;
             
-            // 选择目标
-            int target_idx = rng_() % std::max(1, (int)defender_generals.size());
+            // 选择目标（空表禁止下标访问）
+            if (defender_generals.empty()) {
+                break;
+            }
+            int target_idx = static_cast<int>(rng_() % defender_generals.size());
             const auto& target = defender_generals[target_idx];
             
             bool use_skill = config_.use_skills && (rng_() % 100 < 30);
@@ -82,7 +85,10 @@ BattleReport BattleSystem::execute(
                 if (attacker_remaining <= 0) break;
                 if (defender_remaining <= 0) break;
                 
-                int target_idx = rng_() % std::max(1, (int)attacker_generals.size());
+                if (attacker_generals.empty()) {
+                    break;
+                }
+                int target_idx = static_cast<int>(rng_() % attacker_generals.size());
                 const auto& target = attacker_generals[target_idx];
                 
                 bool use_skill = config_.use_skills && (rng_() % 100 < 30);

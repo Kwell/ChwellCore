@@ -42,6 +42,13 @@ public:
 
     virtual int native_handle() const noexcept { return socket_.native_handle(); }
 
+    // 进程内唯一连接 ID：fd/裸指针复用后仍可作 map 键
+    std::uint64_t conn_id() const noexcept { return conn_id_; }
+    static std::uint64_t generate_conn_id() {
+        static std::atomic<std::uint64_t> counter{1};
+        return counter.fetch_add(1, std::memory_order_relaxed);
+    }
+
 private:
     void run_read_loop();
 
@@ -50,6 +57,7 @@ private:
     MessageCallback message_cb_;
     ConnectionCallback close_cb_;
     std::atomic<bool> closed_{false};
+    std::uint64_t conn_id_ = generate_conn_id();
     std::mutex send_mutex_;
 };
 

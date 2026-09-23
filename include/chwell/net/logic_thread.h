@@ -160,7 +160,10 @@ public:
         size_t w = write_idx_.load(std::memory_order_relaxed);
         size_t next = (w + 1) % queue_capacity_;
         if (next == read_idx_.load(std::memory_order_acquire)) {
-            return false;
+            // 队列满也不能丢断连：否则 Session/Router 清理不会执行
+            overflow_disconnects_.push_back(conn);
+            notify();
+            return true;
         }
 
         queue_[w] = LogicMessage::make_disconnect(conn);
@@ -314,6 +317,18 @@ private:
                 total_processed_.fetch_add(1, std::memory_order_relaxed);
             }
 
+            // 处理队列满时旁路的断连
+            {
+                std::vector<TcpConnectionPtr> pending;
+                {
+                    std::lock_guard<std::mutex> plock(post_mutex_);
+                    pending.swap(overflow_disconnects_);
+                }
+                for (auto& c : pending) {
+                    if (disc_handler_) disc_handler_(c);
+                }
+            }
+
             // 🆕 帧耗时监控
             if (processed > 0) {
                 auto frame_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -386,6 +401,7 @@ private:
     LogicMessage* queue_;
     std::atomic<size_t> write_idx_;   // 原子类型，避免消费者无锁读取时的数据竞争
     std::atomic<size_t> read_idx_;
+    std::vector<TcpConnectionPtr> overflow_disconnects_;
 
     std::mutex post_mutex_;
     std::mutex cv_mutex_;

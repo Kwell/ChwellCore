@@ -276,7 +276,8 @@ bool SlgMapManager::move_troop(uint64_t troop_id, int to_x, int to_y) {
     
     auto& troop = it->second;
     if (troop.state != Troop::State::IDLE) return false;
-    
+    if (!is_valid_pos(to_x, to_y)) return false;
+
     troop.to_x = to_x;
     troop.to_y = to_y;
     troop.state = Troop::State::MARCHING;
@@ -339,7 +340,12 @@ void SlgMapManager::update_troops(int64_t current_time) {
                     troop.from_x = troop.to_x;
                     troop.from_y = troop.to_y;
                 } else {
-                    // 检查目的地状态，决定下一步
+                    // 目的地非法时不得写 cells_
+                    if (!is_valid_pos(troop.to_x, troop.to_y)) {
+                        troop.state = Troop::State::IDLE;
+                        troop.from_x = troop.current_x;
+                        troop.from_y = troop.current_y;
+                    } else {
                     auto& cell = cells_[cell_index(troop.to_x, troop.to_y)];
                     if (cell.has_resource()) {
                         troop.state = Troop::State::GATHERING;
@@ -349,6 +355,7 @@ void SlgMapManager::update_troops(int64_t current_time) {
                         troop.state = Troop::State::IDLE;
                         troop.from_x = troop.to_x;
                         troop.from_y = troop.to_y;
+                    }
                     }
                 }
                 
@@ -433,7 +440,9 @@ int SlgMapManager::calculate_distance(int x1, int y1, int x2, int y2) const {
 
 int64_t SlgMapManager::calculate_march_time(int from_x, int from_y, int to_x, int to_y, int speed) const {
     int distance = calculate_distance(from_x, from_y, to_x, to_y);
-    // 基础时间 = 距离 * 1000ms / 速度
+    if (speed <= 0) {
+        return 0;
+    }
     return static_cast<int64_t>(distance) * 1000 / speed;
 }
 

@@ -15,8 +15,15 @@ CircuitBreakerResult DefaultCircuitBreaker::execute(std::function<void()> func) 
 
     // 检查熔断器状态
     if (result.state == CircuitState::OPEN) {
-        result.reason = "Circuit breaker is OPEN";
-        return result;
+        if (should_attempt_reset()) {
+            state_.store(CircuitState::HALF_OPEN, std::memory_order_relaxed);
+            half_open_count_.store(0, std::memory_order_relaxed);
+            result.state = CircuitState::HALF_OPEN;
+            CHWELL_LOG_INFO("Circuit breaker " + name_ + " entered HALF_OPEN");
+        } else {
+            result.reason = "Circuit breaker is OPEN";
+            return result;
+        }
     }
 
     if (result.state == CircuitState::HALF_OPEN) {
@@ -134,7 +141,12 @@ void DefaultCircuitBreaker::trip() {
 }
 
 void DefaultCircuitBreaker::recover() {
+    std::lock_guard<std::mutex> lock(mutex_);
     state_.store(CircuitState::CLOSED, std::memory_order_relaxed);
+    // 清计数：否则下一次失败会立刻按旧 failure_count 再跳闸
+    failure_count_.store(0, std::memory_order_relaxed);
+    success_count_.store(0, std::memory_order_relaxed);
+    half_open_count_.store(0, std::memory_order_relaxed);
 
     CHWELL_LOG_INFO("Circuit breaker " + name_ + " manually recovered to CLOSED state");
 }

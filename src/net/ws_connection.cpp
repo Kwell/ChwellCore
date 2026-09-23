@@ -55,6 +55,11 @@ void WsRawConnection::send_text(const std::string& text) {
         ssize_t n = socket_.write(ptr, len);
         if (n <= 0) {
             CHWELL_LOG_WARN("WsRawConnection send failed: " + std::string(strerror(errno)));
+            // 半包写失败必须断开，否则后续 send 会接在半帧后造成流错乱
+            ErrorCode ec;
+            socket_.shutdown(SHUT_RDWR, ec);
+            socket_.close(ec);
+            closed_ = true;
             return;
         }
         ptr += n;
@@ -71,6 +76,10 @@ void WsRawConnection::send_binary(const std::vector<char>& data) {
         ssize_t n = socket_.write(ptr, len);
         if (n <= 0) {
             CHWELL_LOG_WARN("WsRawConnection send_binary failed: " + std::string(strerror(errno)));
+            ErrorCode ec;
+            socket_.shutdown(SHUT_RDWR, ec);
+            socket_.close(ec);
+            closed_ = true;
             return;
         }
         ptr += n;
