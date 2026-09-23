@@ -317,6 +317,18 @@ private:
                 total_processed_.fetch_add(1, std::memory_order_relaxed);
             }
 
+            // 处理队列满时旁路的断连
+            {
+                std::vector<TcpConnectionPtr> pending;
+                {
+                    std::lock_guard<std::mutex> plock(post_mutex_);
+                    pending.swap(overflow_disconnects_);
+                }
+                for (auto& c : pending) {
+                    if (disc_handler_) disc_handler_(c);
+                }
+            }
+
             // 🆕 帧耗时监控
             if (processed > 0) {
                 auto frame_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
