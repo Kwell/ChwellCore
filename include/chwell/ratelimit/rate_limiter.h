@@ -114,6 +114,8 @@ private:
 
 class LeakyBucketRateLimiter : public RateLimiter {
 public:
+    virtual void cleanup_idle(int64_t max_idle_ms) override;
+public:
     LeakyBucketRateLimiter(int64_t capacity, double leak_rate_per_second)
         : capacity_(capacity), leak_rate_per_second_(leak_rate_per_second) {}
 
@@ -157,6 +159,8 @@ private:
 // ============================================
 
 class FixedWindowRateLimiter : public RateLimiter {
+public:
+    virtual void cleanup_idle(int64_t max_idle_ms) override;
 public:
     FixedWindowRateLimiter(int64_t max_requests, int64_t window_size_ms)
         : max_requests_(max_requests), window_size_ms_(window_size_ms) {}
