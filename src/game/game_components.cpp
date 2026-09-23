@@ -131,15 +131,16 @@ void LoginComponent::handle_login(const net::TcpConnectionPtr& conn, const std::
     }
 
     // 调用 token 验证器（如果设置了）
-    // 未设置验证器时仅检查非空，生产环境必须设置验证器
-    if (token_validator_) {
-        if (!token_validator_(player_id, token)) {
-            CHWELL_LOG_WARN("Token validation failed for player: " + player_id);
-            send_error_response(conn, error_code::INVALID_TOKEN, "Token validation failed");
-            return;
-        }
-    } else {
-        CHWELL_LOG_WARN("No token validator set, accepting any non-empty token (INSECURE)");
+    // 必须设置验证器：未配置时拒绝登录（避免任意非空 token 即可冒充 player_id）
+    if (!token_validator_) {
+        CHWELL_LOG_ERROR("Login rejected: no TokenValidator configured");
+        send_error_response(conn, error_code::INVALID_TOKEN, "Token validator not configured");
+        return;
+    }
+    if (!token_validator_(player_id, token)) {
+        CHWELL_LOG_WARN("Token validation failed for player: " + player_id);
+        send_error_response(conn, error_code::INVALID_TOKEN, "Token validation failed");
+        return;
     }
 
     // 获取 SessionManager 并登录
