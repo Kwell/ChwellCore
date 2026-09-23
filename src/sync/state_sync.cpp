@@ -1,5 +1,7 @@
 #include "chwell/sync/state_sync.h"
 #include "chwell/service/protocol_router.h"
+#include "chwell/service/session_manager.h"
+#include "chwell/service/service.h"
 #include "chwell/protocol/message.h"
 #include "chwell/core/endian.h"
 #include <cstring>
@@ -181,6 +183,19 @@ void StateSyncComponent::handle_state_update(const net::TcpConnectionPtr& conn, 
     if (!decode_string(ptr, size, offset, entity_id)) {
         CHWELL_LOG_ERROR("Failed to decode entity_id");
         return;
+    }
+
+    // 归属校验：entity_id 必须等于会话玩家，禁止改他人状态
+    if (service_) {
+        auto* session_mgr = service_->get_component<service::SessionManager>();
+        if (session_mgr) {
+            std::string owner = session_mgr->get_player_id(conn);
+            if (owner.empty() || owner != entity_id) {
+                CHWELL_LOG_WARN("State update rejected: entity " + entity_id
+                                + " not owned by session player");
+                return;
+            }
+        }
     }
 
     if (!decode_string(ptr, size, offset, state_key)) {

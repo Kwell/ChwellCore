@@ -60,7 +60,8 @@ public:
         if (ok) {
             lock_token_ = token;
             locked_.store(true);
-            fencing_token_.fetch_add(1);
+            // 用共享计数器发号（进程内单调）；跨进程需真实 Redis INCR
+            fencing_token_.store(next_fencing_token(), std::memory_order_relaxed);
             start_renew_thread();
             CHWELL_LOG_INFO("DistributedLock: acquired lock '" + lock_key_ + "'");
         }
@@ -122,6 +123,18 @@ private:
         std::ostringstream oss;
         oss << std::hex << dist(gen);
         return oss.str();
+    }
+
+    // 进程内共享的 fencing 序号（跨进程仍需服务端 INCR）
+    static uint64_t next_fencing_token() {
+        static std::atomic<uint64_t> seq{1};
+        return seq.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    // 进程内共享的 fencing 序号（跨进程仍需服务端 INCR）
+    static uint64_t next_fencing_token() {
+        static std::atomic<uint64_t> seq{1};
+        return seq.fetch_add(1, std::memory_order_relaxed);
     }
 
     void start_renew_thread() {
