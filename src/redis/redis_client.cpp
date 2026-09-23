@@ -74,6 +74,7 @@ RedisReply RedisClient::execute(const std::vector<std::string>& args) {
     
     if (cmd == "SET" && args.size() >= 3) {
         data_[args[1]] = args[2];
+        expires_.erase(args[1]);
         reply.type = ReplyType::STATUS;
         reply.str = "OK";
     }
@@ -455,6 +456,16 @@ bool RedisClient::compare_and_del(const std::string& key, const std::string& exp
 // 原子 CAS+EXPIRE：仅当值匹配时才续期（避免续期他人的锁）
 bool RedisClient::compare_and_expire(const std::string& key, const std::string& expected, int seconds) {
     std::lock_guard<std::mutex> lock(mutex_);
+    // 先懒过期：避免复活已死锁
+    auto exp_it = expires_.find(key);
+    if (exp_it != expires_.end()) {
+        auto now = std::chrono::steady_clock::now().time_since_epoch().count() / 1000000000;
+        if (now >= exp_it->second) {
+            data_.erase(key);
+            expires_.erase(exp_it);
+            return false;
+        }
+    }
     auto it = data_.find(key);
     if (it != data_.end() && it->second == expected) {
         auto now = std::chrono::steady_clock::now().time_since_epoch().count() / 1000000000;
