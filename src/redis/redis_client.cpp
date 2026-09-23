@@ -569,6 +569,10 @@ bool RedisClient::setnx(const std::string& key, const std::string& value) {
 
 // 原子 SET NX EX：不存在则设置并带过期（单条命令，避免 SETNX+EXPIRE 两步竞态）
 bool RedisClient::set_nx_ex(const std::string& key, const std::string& value, int seconds) {
+    if (!use_mock_) {
+        RedisReply r = execute({"SET", key, value, "NX", "EX", std::to_string(seconds)});
+        return r.is_status() || (r.is_string() && r.str == "OK");
+    }
     std::lock_guard<std::mutex> lock(mutex_);
     // 先检查过期清理
     auto exp_it = expires_.find(key);
@@ -591,6 +595,13 @@ bool RedisClient::set_nx_ex(const std::string& key, const std::string& value, in
 
 // 原子 CAS+DEL：仅当值匹配时才删除（避免删除他人的锁）
 bool RedisClient::compare_and_del(const std::string& key, const std::string& expected) {
+    if (!use_mock_) {
+        static const char* kLua =
+            "if redis.call('GET', KEYS[1]) == ARGV[1] then "
+            "return redis.call('DEL', KEYS[1]) else return 0 end";
+        RedisReply r = execute({"EVAL", kLua, "1", key, expected});
+        return r.is_integer() && r.integer > 0;
+    }
     std::lock_guard<std::mutex> lock(mutex_);
     // 先检查过期清理
     auto exp_it = expires_.find(key);
@@ -613,6 +624,13 @@ bool RedisClient::compare_and_del(const std::string& key, const std::string& exp
 
 // 原子 CAS+EXPIRE：仅当值匹配时才续期（避免续期他人的锁）
 bool RedisClient::compare_and_expire(const std::string& key, const std::string& expected, int seconds) {
+    if (!use_mock_) {
+        static const char* kLua =
+            "if redis.call('GET', KEYS[1]) == ARGV[1] then "
+            "return redis.call('EXPIRE', KEYS[1], ARGV[2]) else return 0 end";
+        RedisReply r = execute({"EVAL", kLua, "1", key, expected, std::to_string(seconds)});
+        return r.is_integer() && r.integer > 0;
+    }
     std::lock_guard<std::mutex> lock(mutex_);
     // 先懒过期：避免复活已死锁
     auto exp_it = expires_.find(key);
