@@ -64,7 +64,11 @@ void TcpConnection::send(std::string_view data) {
     while (len > 0) {
         ssize_t n = socket_.write(ptr, len);
         if (n <= 0) {
-            CHWELL_LOG_ERROR("Send failed: " + std::string(strerror(errno)));
+            CHWELL_LOG_ERROR("Send failed, closing connection to avoid stream desync");
+            net::ErrorCode ec;
+            socket_.shutdown(SHUT_RDWR, ec);
+            socket_.close(ec);
+            closed_ = true;
             return;
         }
         ptr += n;

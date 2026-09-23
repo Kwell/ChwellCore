@@ -39,7 +39,43 @@ public:
             }
 
             std::size_t pos = request_data.find("\r\n\r\n");
-            if (pos == std::string::npos) continue;
+            if (pos == std::string::npos) {
+                if (request_data.size() > MAX_REQUEST_SIZE) {
+                    CHWELL_LOG_WARN("HttpSession request headers too large");
+                    break;
+                }
+                continue;
+            }
+
+            // 先解析 Content-Length，等 body 齐全再交付 handler
+            {
+                HttpRequest probe;
+                if (!parse_request(request_data, probe)) {
+                    CHWELL_LOG_WARN("HttpSession parse request failed");
+                    break;
+                }
+                std::string cl = probe.header("Content-Length");
+                std::size_t body_start = pos + 4;
+                std::size_t need = 0;
+                if (!cl.empty()) {
+                    long long len = std::atoll(cl.c_str());
+                    if (len < 0) {
+                        CHWELL_LOG_WARN("HttpSession negative Content-Length");
+                        break;
+                    }
+                    need = static_cast<std::size_t>(len);
+                    if (need > static_cast<std::size_t>(MAX_BODY_SIZE)) {
+                        CHWELL_LOG_WARN("HttpSession body too large");
+                        break;
+                    }
+                }
+                if (request_data.size() < body_start + need) {
+                    if (request_data.size() > MAX_REQUEST_SIZE) {
+                        break;
+                    }
+                    continue;  // 等更多 body 字节
+                }
+            }
 
             HttpRequest req;
             if (!parse_request(request_data, req)) {
@@ -106,6 +142,10 @@ private:
                 std::string value = line.substr(colon + 1);
                 while (!value.empty() && (value[0] == ' ' || value[0] == '\t')) {
                     value.erase(value.begin());
+                }
+                // HTTP 头名大小写不敏感
+                for (char& c : key) {
+                    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
                 }
                 req.headers[key] = value;
             }
