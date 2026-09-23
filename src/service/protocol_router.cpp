@@ -17,7 +17,7 @@ void ProtocolRouterComponent::on_message(const net::TcpConnectionPtr& conn,
         // 为连接分配唯一 ID（首次见到该连接时）
         // 使用 ID 而非裸指针作为 key，避免指针地址复用导致新连接
         // 错误继承旧连接的解析器状态（半包残留等）
-        auto& conn_id = conn_ids_[conn.get()];
+        auto& conn_id = conn_ids_[conn->conn_id()];
         if (conn_id == 0) {
             conn_id = next_conn_id_.fetch_add(1, std::memory_order_relaxed);
         }
@@ -51,10 +51,10 @@ void ProtocolRouterComponent::on_disconnect(const net::TcpConnectionPtr& conn) {
     std::unique_lock lock(parsers_mutex_);
 
     // 通过连接指针找到 ID，再清理解析器和 ID 映射
-    auto id_it = conn_ids_.find(conn.get());
+    auto id_it = conn_ids_.find(conn->conn_id());
     if (id_it != conn_ids_.end()) {
-        uint64_t conn_id = id_it->second;
-        parsers_.erase(conn_id);
+        uint64_t parser_slot = id_it->second;
+        parsers_.erase(parser_slot);
         conn_ids_.erase(id_it);
     }
 }

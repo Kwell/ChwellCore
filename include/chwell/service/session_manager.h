@@ -34,12 +34,12 @@ public:
 
     virtual void on_disconnect(const net::TcpConnectionPtr& conn) override {
         std::unique_lock lock(sessions_mutex_);
-        auto it = sessions_.find(conn.get());
+        auto it = sessions_.find(conn->conn_id());
         if (it != sessions_.end()) {
             CHWELL_LOG_INFO(
                 "Session removed, player_id=" + it->second.player_id +
                 ", room_id=" + it->second.room_id);
-            remove_from_room_index(it->second, conn.get());
+            remove_from_room_index(it->second, conn->conn_id());
             sessions_.erase(it);
         }
     }
@@ -47,12 +47,12 @@ public:
     // 登录：绑定玩家ID
     void login(const net::TcpConnectionPtr& conn, const std::string& player_id) {
         std::unique_lock lock(sessions_mutex_);
-        auto it = sessions_.find(conn.get());
+        auto it = sessions_.find(conn->conn_id());
         if (it != sessions_.end()) {
             // Remove from old room index if already in a room
-            remove_from_room_index(it->second, conn.get());
+            remove_from_room_index(it->second, conn->conn_id());
         }
-        SessionInfo& s = sessions_[conn.get()];
+        SessionInfo& s = sessions_[conn->conn_id()];
         s.player_id = player_id;
         s.authed = true;
         update_active_time(s);
@@ -62,9 +62,9 @@ public:
     // 登出
     void logout(const net::TcpConnectionPtr& conn) {
         std::unique_lock lock(sessions_mutex_);
-        auto it = sessions_.find(conn.get());
+        auto it = sessions_.find(conn->conn_id());
         if (it != sessions_.end()) {
-            remove_from_room_index(it->second, conn.get());
+            remove_from_room_index(it->second, conn->conn_id());
             // CHWELL_LOG_INFO("Player logout, id=" + it->second.player_id);
             sessions_.erase(it);
         }
@@ -73,14 +73,14 @@ public:
     // 加入房间
     void join_room(const net::TcpConnectionPtr& conn, const std::string& room_id) {
         std::unique_lock lock(sessions_mutex_);
-        auto it = sessions_.find(conn.get());
+        auto it = sessions_.find(conn->conn_id());
         if (it != sessions_.end()) {
             // Remove from old room index if switching rooms
-            remove_from_room_index(it->second, conn.get());
+            remove_from_room_index(it->second, conn->conn_id());
             it->second.room_id = room_id;
             // Add to new room index
             if (!room_id.empty() && it->second.authed) {
-                room_players_[room_id].push_back(conn.get());
+                room_players_[room_id].push_back(conn->conn_id());
             }
             update_active_time(it->second);
             // CHWELL_LOG_INFO(
@@ -91,10 +91,10 @@ public:
     // 离开房间
     void leave_room(const net::TcpConnectionPtr& conn) {
         std::unique_lock lock(sessions_mutex_);
-        auto it = sessions_.find(conn.get());
+        auto it = sessions_.find(conn->conn_id());
         if (it != sessions_.end()) {
             std::string room_id = it->second.room_id;
-            remove_from_room_index(it->second, conn.get());
+            remove_from_room_index(it->second, conn->conn_id());
             it->second.room_id.clear();
             update_active_time(it->second);
             // CHWELL_LOG_INFO(
@@ -105,7 +105,7 @@ public:
     // 设置网关ID
     void set_gateway(const net::TcpConnectionPtr& conn, const std::string& gateway_id) {
         std::unique_lock lock(sessions_mutex_);
-        auto it = sessions_.find(conn.get());
+        auto it = sessions_.find(conn->conn_id());
         if (it != sessions_.end()) {
             it->second.gateway_id = gateway_id;
             update_active_time(it->second);
@@ -115,13 +115,13 @@ public:
     // 查询接口
     bool is_logged_in(const net::TcpConnectionPtr& conn) const {
         std::shared_lock lock(sessions_mutex_);
-        auto it = sessions_.find(conn.get());
+        auto it = sessions_.find(conn->conn_id());
         return it != sessions_.end() && it->second.authed;
     }
 
     std::string get_player_id(const net::TcpConnectionPtr& conn) const {
         std::shared_lock lock(sessions_mutex_);
-        auto it = sessions_.find(conn.get());
+        auto it = sessions_.find(conn->conn_id());
         if (it != sessions_.end() && it->second.authed) {
             return it->second.player_id;
         }
@@ -130,7 +130,7 @@ public:
 
     std::string get_room_id(const net::TcpConnectionPtr& conn) const {
         std::shared_lock lock(sessions_mutex_);
-        auto it = sessions_.find(conn.get());
+        auto it = sessions_.find(conn->conn_id());
         if (it != sessions_.end()) {
             return it->second.room_id;
         }
@@ -144,8 +144,8 @@ public:
         auto rit = room_players_.find(room_id);
         if (rit != room_players_.end()) {
             players.reserve(rit->second.size());
-            for (const auto* conn_ptr : rit->second) {
-                auto it = sessions_.find(conn_ptr);
+            for (const auto conn_id : rit->second) {
+                auto it = sessions_.find(conn_id);
                 if (it != sessions_.end() && it->second.authed) {
                     players.push_back(it->second.player_id);
                 }
@@ -198,12 +198,12 @@ public:
     }
 
 private:
-    void remove_from_room_index(const SessionInfo& info, const net::TcpConnection* conn) {
+    void remove_from_room_index(const SessionInfo& info, std::uint64_t conn_id) {
         if (!info.room_id.empty()) {
             auto rit = room_players_.find(info.room_id);
             if (rit != room_players_.end()) {
                 auto& vec = rit->second;
-                vec.erase(std::remove(vec.begin(), vec.end(), conn), vec.end());
+                vec.erase(std::remove(vec.begin(), vec.end(), conn_id), vec.end());
                 if (vec.empty()) {
                     room_players_.erase(rit);
                 }
@@ -211,9 +211,9 @@ private:
         }
     }
 
-    std::unordered_map<const net::TcpConnection*, SessionInfo> sessions_;
-    // Reverse index: room_id -> list of connections in that room
-    std::unordered_map<std::string, std::vector<const net::TcpConnection*>> room_players_;
+    std::unordered_map<std::uint64_t, SessionInfo> sessions_;
+    // Reverse index: room_id -> list of connection ids in that room
+    std::unordered_map<std::string, std::vector<std::uint64_t>> room_players_;
     int session_timeout_sec_ = 1800;  // 会话超时（秒），默认 30 分钟
     mutable std::shared_mutex sessions_mutex_;
 };

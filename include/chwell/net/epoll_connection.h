@@ -54,6 +54,34 @@ public:
     int native_handle() const noexcept { return fd_; }
     bool is_open() const noexcept { return fd_ >= 0 && !closed_; }
 
+    // 进程内唯一连接 ID（fd 复用后仍稳定）
+    std::uint64_t conn_id() const noexcept { return conn_id_; }
+    static std::uint64_t generate_conn_id() {
+        static std::atomic<std::uint64_t> counter{1};
+        return counter.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    // 进程内唯一连接 ID（fd 复用后仍稳定）
+    std::uint64_t conn_id() const noexcept { return conn_id_; }
+    static std::uint64_t generate_conn_id() {
+        static std::atomic<std::uint64_t> counter{1};
+        return counter.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    // 进程内唯一连接 ID（fd 复用后仍稳定）
+    std::uint64_t conn_id() const noexcept { return conn_id_; }
+    static std::uint64_t generate_conn_id() {
+        static std::atomic<std::uint64_t> counter{1};
+        return counter.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    // 进程内唯一连接 ID（fd 复用后仍稳定）
+    std::uint64_t conn_id() const noexcept { return conn_id_; }
+    static std::uint64_t generate_conn_id() {
+        static std::atomic<std::uint64_t> counter{1};
+        return counter.fetch_add(1, std::memory_order_relaxed);
+    }
+
     void handle_read_event();
     void handle_write_event();
     void handle_error_event();
@@ -113,6 +141,10 @@ private:
     void update_last_active();
 
     int fd_;
+    std::uint64_t conn_id_ = generate_conn_id();
+    std::uint64_t conn_id_ = generate_conn_id();
+    std::uint64_t conn_id_ = generate_conn_id();
+    std::uint64_t conn_id_ = generate_conn_id();
     EpollDemuxer* demuxer_;
 
     std::vector<char> read_buffer_;
