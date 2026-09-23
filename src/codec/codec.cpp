@@ -68,12 +68,15 @@ std::vector<std::string> LengthHeaderCodec::decode(const std::vector<char>& data
         std::uint32_t body_len = core::net_to_host32(len_net);
 
         // 🆕 包体长度校验
-        if (body_len > max_body_len_) {
-            ring_.clear();  // 丢弃恶意数据
+        // 防溢出：4 + body_len 在 body_len 接近 UINT32_MAX 时回绕
+        if (body_len > max_body_len_ ||
+            ring_.readable() < 4u ||
+            ring_.readable() - 4u < body_len) {
+            if (body_len > max_body_len_) {
+                ring_.clear();
+            }
             break;
         }
-
-        if (ring_.readable() < 4 + body_len) break;
 
         // 🆕 消费 4 字节头
         ring_.consume(4);
@@ -126,12 +129,15 @@ std::vector<std::string> JsonCodec::decode(const std::vector<char>& data) {
         std::uint32_t body_len = core::net_to_host32(len_net);
 
         // 🆕 包体长度校验
-        if (body_len > max_body_len_) {
-            ring_.clear();
+        // 防溢出：4 + body_len 在 body_len 接近 UINT32_MAX 时回绕
+        if (body_len > max_body_len_ ||
+            ring_.readable() < 4u ||
+            ring_.readable() - 4u < body_len) {
+            if (body_len > max_body_len_) {
+                ring_.clear();
+            }
             break;
         }
-
-        if (ring_.readable() < 4 + body_len) break;
 
         ring_.consume(4);
 
