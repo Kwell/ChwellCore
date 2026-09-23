@@ -185,6 +185,54 @@ void LeakyBucketRateLimiter::leak_tokens(Bucket& bucket) {
     }
 }
 
+void LeakyBucketRateLimiter::cleanup_idle(int64_t max_idle_ms) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    int64_t now = current_timestamp_ms();
+    for (auto it = buckets_.begin(); it != buckets_.end();) {
+        if (now - it->second.last_leak_time_ms > max_idle_ms) {
+            it = buckets_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+void FixedWindowRateLimiter::cleanup_idle(int64_t max_idle_ms) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    int64_t now = current_timestamp_ms();
+    for (auto it = windows_.begin(); it != windows_.end();) {
+        if (now - it->second.start_time_ms > max_idle_ms) {
+            it = windows_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+void LeakyBucketRateLimiter::cleanup_idle(int64_t max_idle_ms) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    int64_t now = current_timestamp_ms();
+    for (auto it = buckets_.begin(); it != buckets_.end();) {
+        if (now - it->second.last_leak_time_ms > max_idle_ms) {
+            it = buckets_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+void FixedWindowRateLimiter::cleanup_idle(int64_t max_idle_ms) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    int64_t now = current_timestamp_ms();
+    for (auto it = windows_.begin(); it != windows_.end();) {
+        if (now - it->second.start_time_ms > max_idle_ms) {
+            it = windows_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
 // ============================================
 // FixedWindowRateLimiter
 // ============================================
