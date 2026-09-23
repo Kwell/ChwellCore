@@ -571,7 +571,7 @@ bool RedisClient::setnx(const std::string& key, const std::string& value) {
 bool RedisClient::set_nx_ex(const std::string& key, const std::string& value, int seconds) {
     if (!use_mock_) {
         RedisReply r = execute({"SET", key, value, "NX", "EX", std::to_string(seconds)});
-        return r.is_status() || (r.is_string() && r.str == "OK");
+        return r.type == ReplyType::STATUS || (r.is_string() && r.str == "OK");
     }
     std::lock_guard<std::mutex> lock(mutex_);
     // 先检查过期清理
