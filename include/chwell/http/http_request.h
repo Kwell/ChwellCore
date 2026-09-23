@@ -3,6 +3,7 @@
 #include <string>
 #include <map>
 #include <cctype>
+#include <cctype>
 
 namespace chwell {
 namespace http {
