@@ -4,13 +4,13 @@
 #include <cstring>
 #include <cstdint>
 #include <string>
+#include <cctype>
 
 namespace chwell {
 namespace net {
 
 namespace {
 
-// Minimal SHA-1 (for Sec-WebSocket-Accept)
 struct Sha1 {
     uint32_t h[5] = {0x67452301u, 0xEFCDAB89u, 0x98BADCFEu, 0x10325476u, 0xC3D2E1F0u};
     uint64_t total = 0;
@@ -121,7 +121,6 @@ void WsRawConnection::start() {
     auto self = shared_from_this();
     int fd = socket_.native_handle();
 
-    // --- RFC6455 server handshake ---
     std::string req;
     char tmp[1024];
     while (req.find("\r\n\r\n") == std::string::npos && req.size() < 16 * 1024) {
@@ -218,11 +217,11 @@ void WsRawConnection::run_read_loop() {
             }
             acc.erase(0, hdr + mask_len + static_cast<size_t>(plen));
 
-            if (opcode == 0x8) { // close
+            if (opcode == 0x8) {
                 closed_ = true;
                 break;
             }
-            if (opcode == 0x9) { // ping -> pong
+            if (opcode == 0x9) {
                 std::string pong;
                 pong.push_back(static_cast<char>(0x8A));
                 if (payload.size() < 126) {
@@ -233,7 +232,7 @@ void WsRawConnection::run_read_loop() {
                 send_all_fd(socket_.native_handle(), pong.data(), pong.size());
                 continue;
             }
-            if (opcode == 0xA) continue; // pong
+            if (opcode == 0xA) continue;
 
             if ((opcode == 0x1 || opcode == 0x2 || opcode == 0x0) && fin) {
                 if (message_cb_) message_cb_(self, payload);
