@@ -67,7 +67,8 @@ public:
     
     // 当前是否为内存模拟（非真实 Redis 连接）
     // 生产环境部署前必须替换为真实实现
-    bool is_mock() const { return true; }  // 当前实现始终为 mock
+    // true = 内存 mock；false = 已建立 RESP/TCP 真连接
+    bool is_mock() const { return use_mock_; }
     
     // 字符串操作
     bool set(const std::string& key, const std::string& value);
@@ -132,6 +133,30 @@ private:
     RedisConfig config_;
     mutable std::mutex mutex_;
     bool connected_{false};  // 连接状态标志
+    bool use_mock_{true};    // true=内存 mock，false=RESP/TCP
+    int fd_{-1};             // RESP 连接 fd
+    std::string rbuf_;       // RESP 读缓冲
+    bool use_mock_{true};    // true=内存 mock，false=RESP/TCP
+    int fd_{-1};             // RESP 连接 fd
+    std::string rbuf_;       // RESP 读缓冲
+    bool use_mock_{true};    // true=内存 mock，false=RESP/TCP
+    int fd_{-1};             // RESP 连接 fd
+    std::string rbuf_;       // RESP 读缓冲
+    bool use_mock_{true};    // true=内存 mock，false=RESP/TCP
+    int fd_{-1};             // RESP 连接 fd
+    std::string rbuf_;       // RESP 读缓冲
+    bool use_mock_{true};    // true=内存 mock，false=RESP/TCP
+    int fd_{-1};             // RESP 连接 fd
+    std::string rbuf_;       // RESP 读缓冲
+    bool use_mock_{true};    // true=内存 mock，false=RESP/TCP
+    int fd_{-1};             // RESP 连接 fd
+    std::string rbuf_;       // RESP 读缓冲
+    bool use_mock_{true};    // true=内存 mock，false=RESP/TCP
+    int fd_{-1};             // RESP 连接 fd
+    std::string rbuf_;       // RESP 读缓冲
+    bool use_mock_{true};    // true=内存 mock，false=RESP/TCP
+    int fd_{-1};             // RESP 连接 fd
+    std::string rbuf_;       // RESP 读缓冲
     
     // 内存模拟存储（无 hiredis 时使用）
     std::unordered_map<std::string, std::string> data_;

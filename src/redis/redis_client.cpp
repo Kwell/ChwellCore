@@ -2,9 +2,76 @@
 #include <chrono>
 #include <set>
 #include <algorithm>
+#include <cstring>
+#include <cstdlib>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+#include <netdb.h>
 
 namespace chwell {
 namespace redis {
+
+namespace {
+void append_resp_cmd(std::string& out, const std::vector<std::string>& args) {
+    out += '*';
+    out += std::to_string(args.size());
+    out += "\r\n";
+    for (const auto& a : args) {
+        out += '$';
+        out += std::to_string(a.size());
+        out += "\r\n";
+        out += a;
+        out += "\r\n";
+    }
+}
+bool send_all(int fd, const std::string& data) {
+    size_t off = 0;
+    while (off < data.size()) {
+        ssize_t n = ::send(fd, data.data() + off, data.size() - off, 0);
+        if (n <= 0) return false;
+        off += static_cast<size_t>(n);
+    }
+    return true;
+}
+bool parse_reply(const std::string& buf, size_t& pos, RedisReply& out, int depth = 0) {
+    if (depth > 32 || pos >= buf.size()) return false;
+    char type = buf[pos];
+    size_t nl = buf.find("\r\n", pos);
+    if (nl == std::string::npos) return false;
+    std::string line = buf.substr(pos + 1, nl - pos - 1);
+    size_t next = nl + 2;
+    switch (type) {
+        case '+': out.type = ReplyType::STATUS; out.str = line; pos = next; return true;
+        case '-': out.type = ReplyType::ERROR; out.str = line; pos = next; return true;
+        case ':': out.type = ReplyType::INTEGER; out.integer = std::strtoll(line.c_str(), nullptr, 10); pos = next; return true;
+        case '$': {
+            long long len = std::strtoll(line.c_str(), nullptr, 10);
+            if (len < 0) { out.type = ReplyType::NIL; pos = next; return true; }
+            if (next + static_cast<size_t>(len) + 2 > buf.size()) return false;
+            out.type = ReplyType::STRING;
+            out.str.assign(buf.data() + next, static_cast<size_t>(len));
+            pos = next + static_cast<size_t>(len) + 2;
+            return true;
+        }
+        case '*': {
+            long long n = std::strtoll(line.c_str(), nullptr, 10);
+            if (n < 0) { out.type = ReplyType::NIL; pos = next; return true; }
+            out.type = ReplyType::ARRAY;
+            out.elements.clear();
+            pos = next;
+            for (long long i = 0; i < n; ++i) {
+                RedisReply el;
+                if (!parse_reply(buf, pos, el, depth + 1)) return false;
+                out.elements.push_back(std::move(el));
+            }
+            return true;
+        }
+        default: return false;
+    }
+}
+} // namespace
 
 RedisClient::RedisClient(const RedisConfig& config)
     : config_(config) {
@@ -15,26 +82,78 @@ RedisClient::~RedisClient() {
 }
 
 bool RedisClient::connect() {
-    // ⚠️ 当前为内存模拟实现，非真实 Redis 连接
-    // 数据不跨进程共享，不适用于多实例部署的分布式场景
-    // 生产环境需替换为真实 Redis 协议（RESP）实现或 hiredis 库
-    CHWELL_LOG_WARN("RedisClient: using IN-MEMORY MOCK, no real Redis connection. "
-                    "Data is NOT shared across instances. "
-                    "Distributed locks and pub/sub will NOT work in multi-instance deployments.");
+    const char* force_mock = std::getenv("CHWELL_REDIS_MOCK");
+    if (force_mock && force_mock[0] == '1') {
+        use_mock_ = true;
+        connected_ = true;
+        CHWELL_LOG_WARN("RedisClient: forced IN-MEMORY MOCK (CHWELL_REDIS_MOCK=1)");
+        return true;
+    }
+    struct addrinfo hints;
+    std::memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    struct addrinfo* res = nullptr;
+    std::string port = std::to_string(config_.port);
+    if (getaddrinfo(config_.host.c_str(), port.c_str(), &hints, &res) != 0 || !res) {
+        CHWELL_LOG_ERROR("RedisClient: DNS failed, fallback mock");
+        use_mock_ = true;
+        connected_ = true;
+        return true;
+    }
+    int fd = ::socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+    if (fd < 0) {
+        freeaddrinfo(res);
+        use_mock_ = true;
+        connected_ = true;
+        return true;
+    }
+    if (::connect(fd, res->ai_addr, res->ai_addrlen) != 0) {
+        ::close(fd);
+        freeaddrinfo(res);
+        CHWELL_LOG_WARN("RedisClient: connect failed, fallback IN-MEMORY MOCK");
+        use_mock_ = true;
+        connected_ = true;
+        return true;
+    }
+    freeaddrinfo(res);
+    fd_ = fd;
+    use_mock_ = false;
     connected_ = true;
+    rbuf_.clear();
+    if (!config_.password.empty()) {
+        RedisReply auth = execute({"AUTH", config_.password});
+        if (auth.is_error()) {
+            disconnect();
+            use_mock_ = true;
+            connected_ = true;
+            return true;
+        }
+    }
+    if (config_.db != 0) {
+        execute({"SELECT", std::to_string(config_.db)});
+    }
+    CHWELL_LOG_INFO("RedisClient: RESP connected to " + config_.host + ":" + port);
     return true;
 }
 
 void RedisClient::disconnect() {
     std::lock_guard<std::mutex> lock(mutex_);
-    CHWELL_LOG_INFO("RedisClient (memory mock) disconnected");
+    if (fd_ >= 0) {
+        ::close(fd_);
+        fd_ = -1;
+    }
     connected_ = false;
-    data_.clear();
-    expires_.clear();
-    hashes_.clear();
-    lists_.clear();
-    sets_.clear();
-    zsets_.clear();
+    if (use_mock_) {
+        data_.clear();
+        expires_.clear();
+        hashes_.clear();
+        lists_.clear();
+        sets_.clear();
+        zsets_.clear();
+    } else {
+        rbuf_.clear();
+    }
 }
 
 bool RedisClient::is_connected() const {
@@ -43,6 +162,45 @@ bool RedisClient::is_connected() const {
 
 RedisReply RedisClient::execute(const std::vector<std::string>& args) {
     std::lock_guard<std::mutex> lock(mutex_);
+
+    if (!use_mock_) {
+        RedisReply err;
+        if (args.empty() || fd_ < 0) {
+            err.type = ReplyType::ERROR;
+            err.str = "not connected";
+            return err;
+        }
+        std::string cmd;
+        append_resp_cmd(cmd, args);
+        if (!send_all(fd_, cmd)) {
+            err.type = ReplyType::ERROR;
+            err.str = "send failed";
+            return err;
+        }
+        for (;;) {
+            size_t pos = 0;
+            RedisReply reply;
+            if (parse_reply(rbuf_, pos, reply)) {
+                rbuf_.erase(0, pos);
+                return reply;
+            }
+            char tmp[4096];
+            ssize_t n = ::recv(fd_, tmp, sizeof(tmp), 0);
+            if (n <= 0) {
+                err.type = ReplyType::ERROR;
+                err.str = "recv failed";
+                return err;
+            }
+            rbuf_.append(tmp, static_cast<size_t>(n));
+            if (rbuf_.size() > 16 * 1024 * 1024) {
+                err.type = ReplyType::ERROR;
+                err.str = "reply too large";
+                rbuf_.clear();
+                return err;
+            }
+        }
+    }
+
     RedisReply reply;
     
     if (args.empty()) {
