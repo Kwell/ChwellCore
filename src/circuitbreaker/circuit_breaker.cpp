@@ -15,8 +15,15 @@ CircuitBreakerResult DefaultCircuitBreaker::execute(std::function<void()> func) 
 
     // 检查熔断器状态
     if (result.state == CircuitState::OPEN) {
-        result.reason = "Circuit breaker is OPEN";
-        return result;
+        if (should_attempt_reset()) {
+            state_.store(CircuitState::HALF_OPEN, std::memory_order_relaxed);
+            half_open_count_.store(0, std::memory_order_relaxed);
+            result.state = CircuitState::HALF_OPEN;
+            CHWELL_LOG_INFO("Circuit breaker " + name_ + " entered HALF_OPEN");
+        } else {
+            result.reason = "Circuit breaker is OPEN";
+            return result;
+        }
     }
 
     if (result.state == CircuitState::HALF_OPEN) {

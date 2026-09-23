@@ -27,6 +27,13 @@ StorageResult MemoryStorage::get(const std::string& key) {
     if (it == data_.end()) {
         return StorageResult::failure("key not found");
     }
+    auto now = std::chrono::duration_cast<std::chrono::seconds>(
+                   std::chrono::system_clock::now().time_since_epoch())
+                   .count();
+    if (it->second.expire_at > 0 && it->second.expire_at < now) {
+        data_.erase(it);
+        return StorageResult::failure("key not found");
+    }
     return StorageResult::success(it->second.value);
 }
 
@@ -50,7 +57,18 @@ StorageResult MemoryStorage::remove(const std::string& key) {
 bool MemoryStorage::exists(const std::string& key) {
     std::lock_guard<std::mutex> lock(mutex_);
     prune_expired();
-    return data_.find(key) != data_.end();
+    auto it = data_.find(key);
+    if (it == data_.end()) {
+        return false;
+    }
+    auto now = std::chrono::duration_cast<std::chrono::seconds>(
+                   std::chrono::system_clock::now().time_since_epoch())
+                   .count();
+    if (it->second.expire_at > 0 && it->second.expire_at < now) {
+        data_.erase(it);
+        return false;
+    }
+    return true;
 }
 
 std::vector<std::string> MemoryStorage::keys(const std::string& prefix) {
@@ -76,7 +94,14 @@ std::vector<StorageResult> MemoryStorage::mget(
         if (it == data_.end()) {
             out.push_back(StorageResult::failure("key not found"));
         } else {
-            out.push_back(StorageResult::success(it->second.value));
+            auto now = std::chrono::duration_cast<std::chrono::seconds>(
+                           std::chrono::system_clock::now().time_since_epoch())
+                           .count();
+            if (it->second.expire_at > 0 && it->second.expire_at < now) {
+                out.push_back(StorageResult::failure("key not found"));
+            } else {
+                out.push_back(StorageResult::success(it->second.value));
+            }
         }
     }
     return out;

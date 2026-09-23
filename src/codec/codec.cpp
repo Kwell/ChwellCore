@@ -190,6 +190,9 @@ bool ProtobufCodec::parse_varint32(std::uint32_t& len) {
         }
         shift += 7;
     }
+    if (avail >= 5) {
+        ring_.clear();
+    }
 
     return false;  // 不完整
 }
