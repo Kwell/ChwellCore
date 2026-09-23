@@ -328,42 +328,6 @@ private:
                     if (disc_handler_) disc_handler_(c);
                 }
             }
-    void drain_remaining() {
-        size_t drained = 0;
-        while (true) {
-            size_t r = read_idx_.load(std::memory_order_relaxed);
-            if (r == write_idx_.load(std::memory_order_acquire)) break;
-
-            LogicMessage& msg = queue_[r];
-            TcpConnectionPtr conn;
-            if (msg.conn_guard) {
-                conn = std::static_pointer_cast<TcpConnection>(msg.conn_guard);
-            }
-
-            if (msg.type == LogicMessage::kMessage && msg_handler_) {
-                std::string_view sv(msg.data.data(), msg.data.size());
-                msg_handler_(conn, sv);
-            } else if (msg.type == LogicMessage::kDisconnect && disc_handler_) {
-                disc_handler_(conn);
-            } else if (msg.type == LogicMessage::kTask && msg.task) {
-                msg.task();
-            }
-
-            msg = LogicMessage();
-            read_idx_.store((r + 1) % queue_capacity_, std::memory_order_release);
-            ++drained;
-        }
-        if (drained > 0) {
-            CHWELL_LOG_INFO("LogicThread drained " << drained << " remaining messages on stop");
-        }
-    }
-
-    std::atomic<bool> running_;
-    std::thread thread_;
-
-    size_t queue_capacity_;
-    LogicMessage* queue_;
-    std::atomic<size_t> write_idx_;   // 原子类型，避免消费者无锁读取时的数据竞争
     std::atomic<size_t> read_idx_;
     std::vector<TcpConnectionPtr> overflow_disconnects_;
 
