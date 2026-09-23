@@ -328,29 +328,4 @@ private:
                     if (disc_handler_) disc_handler_(c);
                 }
             }
-    std::atomic<size_t> read_idx_;
-    std::vector<TcpConnectionPtr> overflow_disconnects_;
-
-    std::mutex post_mutex_;
-    std::mutex cv_mutex_;
-    std::condition_variable cv_;
-
-    MessageHandler msg_handler_;
-    DisconnectHandler disc_handler_;
-    StallHandler stall_handler_;  // 🆕
-
-    size_t max_batch_;
-    std::atomic<uint32_t> spin_count_;
-    uint32_t max_spin_;
-
-    // 🆕 阻塞监控
-    int64_t slow_threshold_ms_;
-    int64_t frame_threshold_ms_;
-    std::atomic<uint64_t> slow_count_;
-    std::atomic<uint64_t> blocked_count_;
-    std::atomic<uint64_t> total_processed_;
-};
-
-} // namespace net
-} // namespace chwell
 
