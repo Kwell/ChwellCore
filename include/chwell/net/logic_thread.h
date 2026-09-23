@@ -328,42 +328,6 @@ private:
                     if (disc_handler_) disc_handler_(c);
                 }
             }
-
-            // 🆕 帧耗时监控
-            if (processed > 0) {
-                auto frame_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::steady_clock::now() - frame_start).count();
-                if (frame_elapsed >= frame_threshold_ms_) {
-                    blocked_count_.fetch_add(1, std::memory_order_relaxed);
-                    CHWELL_LOG_ERROR("LogicThread frame blocked: " << frame_elapsed
-                                     << "ms (processed=" << processed << " messages)");
-                    if (stall_handler_) {
-                        stall_handler_(frame_elapsed, "frame");
-                    }
-                }
-
-                spin_count_.store(0, std::memory_order_relaxed);
-                continue;
-            }
-
-            wait_for_messages();
-        }
-
-        drain_remaining();
-    }
-
-    void wait_for_messages() {
-        uint32_t spins = spin_count_.fetch_add(1, std::memory_order_relaxed);
-        if (spins < max_spin_) {
-            std::this_thread::yield();
-            return;
-        }
-
-        std::unique_lock<std::mutex> lock(cv_mutex_);
-        cv_.wait_for(lock, std::chrono::milliseconds(1));
-    }
-
-    // 排空队列中剩余消息（停止时调用）
     void drain_remaining() {
         size_t drained = 0;
         while (true) {
