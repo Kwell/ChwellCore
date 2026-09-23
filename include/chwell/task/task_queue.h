@@ -82,13 +82,18 @@ public:
     void set_retry_count(int count) { retry_count_ = count; }
     
     int retry_attempt() const { return retry_attempt_; }
-    
+
+    // 取消标记：worker 在执行前检查，避免“假取消”
+    void mark_cancelled() { cancelled_.store(true, std::memory_order_release); }
+    bool cancelled() const { return cancelled_.load(std::memory_order_acquire); }
+
 protected:
     TaskPriority priority_ = TaskPriority::NORMAL;
     int64_t id_ = 0;
     int timeout_ms_ = 0;
     int retry_count_ = 0;
     int retry_attempt_ = 0;
+    std::atomic<bool> cancelled_{false};
 };
 
 // 泛型任务

@@ -99,41 +99,12 @@ void TimerWheel::cancel_timer(TimerHandle& handle) {
 
     std::lock_guard<std::mutex> lock(mutex_);
 
-    // 🆕 O(1) 路径：通过 TimerHandle 的定位信息直接移除
-    int h_layer = handle.layer();
-    int h_slot = handle.slot();
-
-    if (h_layer >= 0 && h_layer < static_cast<int>(wheels_.size()) &&
-        h_slot >= 0 && h_slot < wheels_[h_layer].wheel_size) {
-
-        auto& tasks_list = wheels_[h_layer].slots[h_slot].tasks;
-
-        // 尝试用迭代器直接移除（如果 task 还持有有效的迭代器）
-        // 先通过 task_map_ 找到 task
-        auto map_it = task_map_.find(handle.id());
-        if (map_it != task_map_.end()) {
-            auto task = map_it->second.lock();
-            if (task && !task->cancelled) {
-                task->cancelled = true;
-
-                // O(1) 移除：使用 task 中存储的 list_iter 直接 erase
-                // std::list 迭代器在其他元素插入/删除时不会失效
-                // task->list_iter 在 add_task_to_wheel 中被设置
-                // 如果 task 已被 process_slot/cascade 移走，list_iter 会被更新
-                tasks_list.erase(task->list_iter);
-            }
-            task_map_.erase(map_it);
-        }
-
-        handle.invalidate();
-        return;
-    }
-
-    // Fallback：只通过 task_map_ 标记取消
     auto it = task_map_.find(handle.id());
     if (it != task_map_.end()) {
         auto task = it->second.lock();
         if (task) {
+            // 仅标记取消。list_iter/layer/slot 在 cascade 与 re-arm 后会失效，
+            // 直接 erase 悬垂迭代器是 UB；由 process_slot 清理 cancelled 节点。
             task->cancelled = true;
         }
         task_map_.erase(it);
