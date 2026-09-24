@@ -61,8 +61,8 @@ void ConnectionPool::shutdown() {
     connections_.clear();
     
     while (!waiting_callbacks_.empty()) {
-        auto cb = waiting_callbacks_.front();
-        waiting_callbacks_.pop();
+        auto cb = waiting_callbacks_.front().cb;
+        waiting_callbacks_.pop_front();
         if (cb) {
             PooledConnection empty;
             cb(empty);
@@ -215,6 +215,19 @@ bool ConnectionPool::try_get_idle(PooledConnection& conn) {
 }
 
 void ConnectionPool::get_connection(ConnectionCallback callback, int timeout_ms) {
+    {
+        auto now = PooledConnection::current_time_ms();
+        while (!waiting_callbacks_.empty()) {
+            auto& w = waiting_callbacks_.front();
+            if (w.deadline_ms != 0 && now > w.deadline_ms) {
+                PooledConnection empty;
+                auto cb = w.cb;
+                waiting_callbacks_.pop_front();
+                if (cb) cb(empty);
+            } else break;
+        }
+    }
+
     if (shutdown_) {
         PooledConnection empty;
         callback(empty);
@@ -240,7 +253,7 @@ void ConnectionPool::get_connection(ConnectionCallback callback, int timeout_ms)
         } else {
             // 已达上限：排队等待（timeout_ms==0 则立即返回空）
             if (timeout_ms != 0) {
-                waiting_callbacks_.push(callback);
+                waiting_callbacks_.push_back(Waiter{callback, (timeout_ms > 0) ? (PooledConnection::current_time_ms() + timeout_ms) : 0});
             } else {
                 lock.unlock();
                 PooledConnection empty;
@@ -300,6 +313,19 @@ PooledConnection ConnectionPool::get_connection_sync(int timeout_ms) {
 }
 
 void ConnectionPool::return_connection(PooledConnection& conn) {
+    {
+        auto now = PooledConnection::current_time_ms();
+        while (!waiting_callbacks_.empty()) {
+            auto& w = waiting_callbacks_.front();
+            if (w.deadline_ms != 0 && now > w.deadline_ms) {
+                PooledConnection empty;
+                auto cb = w.cb;
+                waiting_callbacks_.pop_front();
+                if (cb) cb(empty);
+            } else break;
+        }
+    }
+
     if (!conn.connection) {
         return;
     }
@@ -327,8 +353,8 @@ void ConnectionPool::return_connection(PooledConnection& conn) {
 
         if (!waiting_callbacks_.empty()) {
             if (try_get_idle(idle_conn)) {
-                pending_cb = std::move(waiting_callbacks_.front());
-                waiting_callbacks_.pop();
+                pending_cb = std::move(waiting_callbacks_.front().cb);
+                waiting_callbacks_.pop_front();
             }
         }
 

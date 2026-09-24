@@ -2,6 +2,7 @@
 
 #include <vector>
 #include <queue>
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <condition_variable>
@@ -117,7 +118,8 @@ private:
     std::condition_variable cv_;
     
     std::vector<std::unique_ptr<PooledConnection>> connections_;
-    std::queue<ConnectionCallback> waiting_callbacks_;
+    struct Waiter { ConnectionCallback cb; int64_t deadline_ms; };
+    std::deque<Waiter> waiting_callbacks_;
     
     std::atomic<bool> shutdown_;
     std::atomic<int> pending_creates_;  // 正在创建的连接数
