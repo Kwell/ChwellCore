@@ -284,6 +284,7 @@ RedisReply RedisClient::execute(const std::vector<std::string>& args) {
         reply.integer = data_.count(args[1]) ? 1 : 0;
     }
     else if (cmd == "EXPIRE" && args.size() >= 3) {
+        check_expire(args[1]);
         if (data_.count(args[1])) {
             auto now = std::chrono::steady_clock::now().time_since_epoch().count() / 1000000000;
             expires_[args[1]] = now + std::stoll(args[2]);
@@ -295,6 +296,7 @@ RedisReply RedisClient::execute(const std::vector<std::string>& args) {
         }
     }
     else if (cmd == "TTL" && args.size() >= 2) {
+        check_expire(args[1]);
         if (!data_.count(args[1])) {
             reply.type = ReplyType::INTEGER;
             reply.integer = -2;
@@ -308,12 +310,14 @@ RedisReply RedisClient::execute(const std::vector<std::string>& args) {
         }
     }
     else if (cmd == "INCR" && args.size() >= 2) {
+        check_expire(args[1]);
         int64_t val = data_.count(args[1]) ? std::stoll(data_[args[1]]) : 0;
         data_[args[1]] = std::to_string(++val);
         reply.type = ReplyType::INTEGER;
         reply.integer = val;
     }
     else if (cmd == "INCRBY" && args.size() >= 3) {
+        check_expire(args[1]);
         int64_t val = data_.count(args[1]) ? std::stoll(data_[args[1]]) : 0;
         val += std::stoll(args[2]);
         data_[args[1]] = std::to_string(val);
