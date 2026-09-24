@@ -16,6 +16,7 @@ RateLimitResult TokenBucketRateLimiter::check(const std::string& key) {
 }
 
 bool TokenBucketRateLimiter::consume(const std::string& key, int count) {
+    if (count <= 0) return true;
     std::lock_guard<std::mutex> lock(mutex_);
 
     int64_t now = current_timestamp_ms();
