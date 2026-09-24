@@ -1,41 +1,37 @@
 #pragma once
 
-// 注意：本文件提供 MockConnectionFactoryV2（真实 MockTcpConnection 对象版本），
+// 注意：本文件提供 MockConnectionFactoryV2（TcpConnection 子类版本），
 // mock_tcp_connection.h 提供 MockConnectionFactory（轻量指针整数版本）。
 // 请勿在同一翻译单元内同时包含两个文件，以避免命名冲突。
-// 如需两者，将引用改为对应的 V2 版本类名即可。
 
 #include <atomic>
-#include <functional>
+#include <memory>
 #include <vector>
 #include "chwell/net/tcp_connection.h"
 
 namespace chwell {
 namespace test {
 
-// Mock TcpConnection 对象：持有真实堆内存，支持 send/close 记录
-class MockTcpConnection {
+// 真正的 TcpConnection 子类：conn_id()/成员布局均合法，
+// 可安全传给 SessionManager 等会读取 conn_id() 的组件。
+class MockTcpConnection : public net::TcpConnection {
 public:
-    explicit MockTcpConnection(int fd = 0) : fd_(fd), closed_(false) {}
+    explicit MockTcpConnection(int tag = 0)
+        : net::TcpConnection(net::TcpSocket()), tag_(tag) {}
 
-    void start() {}
-    void send(const std::vector<char>& data) {}
-    void close() { closed_ = true; }
+    void start() override {}
+    void send(const std::vector<char>& data) override { (void)data; }
+    void send(std::string_view data) override { (void)data; }
+    void close() override { closed_.store(true, std::memory_order_relaxed); }
 
-    void set_message_callback(const net::MessageCallback& cb) {}
-    void set_close_callback(const net::ConnectionCallback& cb) {}
-
-    int native_handle() const noexcept { return fd_; }
-    bool is_closed() const noexcept { return closed_.load(); }
+    int native_handle() const noexcept override { return tag_; }
+    bool is_closed() const noexcept { return closed_.load(std::memory_order_relaxed); }
 
 private:
-    int fd_;
-    std::atomic<bool> closed_;
+    int tag_;
+    std::atomic<bool> closed_{false};
 };
 
-// V2 工厂：创建的 TcpConnectionPtr 指向真实 MockTcpConnection 堆对象，
-// 与 mock_tcp_connection.h 中的 MockConnectionFactory 不同，
-// 命名为 MockConnectionFactoryV2 以消除 ODR 冲突。
 class MockConnectionFactoryV2 {
 public:
     static int next_id() {
@@ -44,19 +40,12 @@ public:
     }
 
     static net::TcpConnectionPtr create() {
-        int id = next_id();
-        auto* mock_conn = new MockTcpConnection(id);
-        // 必须用 aliasing 构造：TcpConnection 继承 enable_shared_from_this，
-        // 若直接 shared_ptr<TcpConnection>(ptr, deleter) 会在 MockTcpConnection
-        // （仅数字段）上写 weak_this，造成 heap-buffer-overflow。
-        std::shared_ptr<void> owner(mock_conn, [](void* p) {
-            delete reinterpret_cast<MockTcpConnection*>(p);
-        });
-        return net::TcpConnectionPtr(owner, reinterpret_cast<net::TcpConnection*>(mock_conn));
+        // make_shared 会正确初始化 enable_shared_from_this
+        return std::make_shared<MockTcpConnection>(next_id());
     }
 
     static MockTcpConnection* unwrap(const net::TcpConnectionPtr& conn) {
-        return reinterpret_cast<MockTcpConnection*>(conn.get());
+        return static_cast<MockTcpConnection*>(conn.get());
     }
 };
 
