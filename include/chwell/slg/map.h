@@ -228,7 +228,7 @@ private:
     void notify_troop_change(const Troop& troop);
     
     SlgMapConfig config_;
-    mutable std::mutex mutex_;
+    mutable std::recursive_mutex mutex_;
     
     std::vector<GridCell> cells_;
     std::unordered_map<uint64_t, City> cities_;

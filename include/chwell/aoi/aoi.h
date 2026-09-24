@@ -144,7 +144,7 @@ private:
     std::vector<uint64_t> get_entity_ids_in_view_locked(int x, int y) const;
 
     Config config_;
-    mutable std::mutex mutex_;
+    mutable std::recursive_mutex mutex_;
     
     // 实体存储
     std::unordered_map<uint64_t, Entity> entities_;
@@ -206,7 +206,7 @@ private:
     std::vector<Entity> get_entities_in_view_unlocked(int x, int y) const;
     
     Config config_;
-    mutable std::mutex mutex_;
+    mutable std::recursive_mutex mutex_;
     
     std::unordered_map<uint64_t, std::unique_ptr<Node>> nodes_;
     Node* head_x_;  // X链表头

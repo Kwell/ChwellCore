@@ -64,7 +64,7 @@ void UdpServer::recv_loop() {
 
         std::vector<char> data(buffer_.begin(), buffer_.begin() + n);
         if (message_cb_) {
-            io_service_.post([this, data, remote]() {
+            io_service_.post([self = shared_from_this(), data, remote]() {
                 message_cb_(data, remote);
             });
         }

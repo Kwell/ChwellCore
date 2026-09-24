@@ -43,5 +43,7 @@ EXPOSE 8080 9000 9001
 # 通过环境变量选择要启动的服务，默认 http server
 ENV SERVICE_BINARY=example_http_server
 
+RUN useradd -r -u 10001 chwell
+USER chwell
 CMD ["/bin/sh", "-c", "/usr/local/bin/$SERVICE_BINARY"]
 
