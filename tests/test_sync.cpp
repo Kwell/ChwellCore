@@ -10,17 +10,11 @@ using namespace chwell;
 
 namespace {
 
-// 使用 aliasing 构造函数创建虚拟连接：避免触发 enable_shared_from_this 初始化
-static int dummy_conn1_obj;
-static int dummy_conn2_obj;
-static int dummy_conn3_obj;
-
 net::TcpConnectionPtr make_dummy_conn(std::uintptr_t tag) {
-    auto guard = std::make_shared<int>(static_cast<int>(tag));
-    void* ptr = (tag == 1) ? static_cast<void*>(&dummy_conn1_obj)
-              : (tag == 2) ? static_cast<void*>(&dummy_conn2_obj)
-                           : static_cast<void*>(&dummy_conn3_obj);
-    return net::TcpConnectionPtr(guard, reinterpret_cast<net::TcpConnection*>(ptr));
+    (void)tag;
+    // 必须是真正的 TcpConnection：调用方会读取 conn_id()，
+    // reinterpret 到 int 上会构成 global/heap-buffer-overflow。
+    return std::make_shared<net::TcpConnection>(net::TcpSocket());
 }
 
 // ============================================

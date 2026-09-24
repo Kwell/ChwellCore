@@ -12,17 +12,12 @@ using namespace chwell;
 
 namespace {
 
-// 使用 aliasing 构造函数创建虚拟连接：避免触发 enable_shared_from_this 初始化
-// aliasing ctor 不会访问 T 对象内部，因此对 reinterpret_cast 指针是安全的
-static int dummy_conn1_obj;
-static int dummy_conn2_obj;
-
 net::TcpConnectionPtr make_dummy_conn(std::uintptr_t tag) {
-    // guard 负责控制生命周期，ptr 仅作为 map key 使用（永不解引用）
-    auto guard = std::make_shared<int>(static_cast<int>(tag));
-    void* ptr = (tag == 1) ? static_cast<void*>(&dummy_conn1_obj)
-                            : static_cast<void*>(&dummy_conn2_obj);
-    return net::TcpConnectionPtr(guard, reinterpret_cast<net::TcpConnection*>(ptr));
+    (void)tag;
+    // 必须是真正的 TcpConnection：SessionManager 等会调用 conn_id() 读成员，
+    // aliasing/reinterpret 到 int 上会构成 global-buffer-overflow。
+    // 每个实例自动生成唯一 conn_id_。
+    return std::make_shared<net::TcpConnection>(net::TcpSocket());
 }
 
 }  // namespace

@@ -12,17 +12,11 @@ using namespace chwell::game;
 
 namespace {
 
-// 使用静态对象作为虚拟连接的地址，避免使用无效指针
-static int dummy_conn1_obj;
-static int dummy_conn2_obj;
-
-// 创建虚拟连接
 net::TcpConnectionPtr make_dummy_conn(std::uintptr_t tag) {
-    void* ptr = (tag == 1) ? &dummy_conn1_obj : &dummy_conn2_obj;
-    auto* raw_ptr = reinterpret_cast<net::TcpConnection*>(ptr);
-    return net::TcpConnectionPtr(raw_ptr, [](net::TcpConnection*) {
-        // 空删除器，不实际释放内存
-    });
+    (void)tag;
+    // 必须是真正的 TcpConnection：调用方会读取 conn_id()，
+    // reinterpret 到 int 上会构成 global/heap-buffer-overflow。
+    return std::make_shared<net::TcpConnection>(net::TcpSocket());
 }
 
 // 测试字符串编码/解码
