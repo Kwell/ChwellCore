@@ -127,6 +127,12 @@ public:
     // 记录一次失败（供 execute_with_result 调用）
     void record_failure(const std::string& reason);
 
+    // OPEN 超时后尝试进入 HALF_OPEN（供 execute_with_result 调用）
+    bool try_recover_from_open();
+
+    // OPEN 超时后尝试进入 HALF_OPEN（供 execute_with_result 调用）
+    bool try_recover_from_open();
+
 private:
     // 获取当前时间戳（毫秒）
     std::uint64_t current_timestamp_ms() const {
@@ -162,8 +168,13 @@ CircuitBreakerResult CircuitBreaker::execute_with_result(std::function<T()> func
 
     // 检查熔断器状态
     if (result.state == CircuitState::OPEN) {
-        result.reason = "Circuit breaker is OPEN";
-        return result;
+        // 与 execute() 一致：超时后允许进入半开试探
+        auto* def = dynamic_cast<DefaultCircuitBreaker*>(this);
+        if (!def || !def->try_recover_from_open()) {
+            result.reason = "Circuit breaker is OPEN";
+            return result;
+        }
+        result.state = get_state();
     }
 
     auto start_time = std::chrono::system_clock::now();

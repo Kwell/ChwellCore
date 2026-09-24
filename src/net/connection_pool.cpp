@@ -277,22 +277,26 @@ PooledConnection ConnectionPool::get_connection_sync(int timeout_ms) {
     PooledConnection result;
     std::mutex sync_mutex;
     std::condition_variable sync_cv;
-    bool done = false;
+    struct WaitState {
+        std::mutex m;
+        std::condition_variable cv;
+        bool done = false;
+        PooledConnection result;
+    };
+    auto st = std::make_shared<WaitState>();
 
-    get_connection([&](const PooledConnection& conn) {
-        std::lock_guard<std::mutex> lock(sync_mutex);
-        result = conn;
-        done = true;
-        sync_cv.notify_one();
+    get_connection([st](const PooledConnection& conn) {
+        std::lock_guard<std::mutex> lock(st->m);
+        st->result = conn;
+        st->done = true;
+        st->cv.notify_one();
     }, timeout_ms);
 
-    std::unique_lock<std::mutex> lock(sync_mutex);
-    // 使用 wait_for 而非 wait，确保不会因回调丢失而永久阻塞
+    std::unique_lock<std::mutex> lock(st->m);
     int effective_timeout = (timeout_ms > 0) ? timeout_ms : 5000;
-    sync_cv.wait_for(lock, std::chrono::milliseconds(effective_timeout),
-                     [&done]() { return done; });
-
-    return result;
+    st->cv.wait_for(lock, std::chrono::milliseconds(effective_timeout),
+                    [&st]() { return st->done; });
+    return st->result;
 }
 
 void ConnectionPool::return_connection(PooledConnection& conn) {

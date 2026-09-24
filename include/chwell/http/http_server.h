@@ -21,6 +21,8 @@ public:
 
     void start();
     void stop();
+    ~HttpServer() { stop(); }
+    ~HttpServer() { stop(); }
 
     void set_handler(const HttpHandler& handler) { handler_ = handler; }
 
