@@ -22,7 +22,7 @@ SlgMapManager::SlgMapManager(const SlgMapConfig& config)
 }
 
 void SlgMapManager::init() {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     
     // 初始化所有格子
     cells_.resize(config_.width * config_.height);
@@ -39,7 +39,7 @@ void SlgMapManager::init() {
 }
 
 void SlgMapManager::generate_terrain() {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     
     // 简化地形生成：随机分布
     for (auto& cell : cells_) {
@@ -61,7 +61,7 @@ void SlgMapManager::generate_terrain() {
 }
 
 void SlgMapManager::generate_resources(int count) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     
     for (int i = 0; i < count; ++i) {
         int x = thread_safe_rand(config_.width);
@@ -81,7 +81,7 @@ void SlgMapManager::generate_resources(int count) {
 }
 
 void SlgMapManager::generate_cities(int count) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     
     // 边界保护：确保地图足够大
     int margin = std::min(50, std::min(config_.width, config_.height) / 4);
@@ -143,14 +143,14 @@ bool SlgMapManager::is_valid_pos(int x, int y) const {
 }
 
 bool SlgMapManager::get_cell(int x, int y, GridCell& cell) const {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (!is_valid_pos(x, y)) return false;
     cell = cells_[cell_index(x, y)];
     return true;
 }
 
 bool SlgMapManager::update_cell(int x, int y, const GridCell& cell) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (!is_valid_pos(x, y)) return false;
     cells_[cell_index(x, y)] = cell;
     notify_cell_change(cell);
@@ -158,7 +158,7 @@ bool SlgMapManager::update_cell(int x, int y, const GridCell& cell) {
 }
 
 bool SlgMapManager::update_cell_owner(int x, int y, uint64_t owner_id, uint64_t alliance_id) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (!is_valid_pos(x, y)) return false;
     auto& cell = cells_[cell_index(x, y)];
     cell.owner_id = owner_id;
@@ -168,7 +168,7 @@ bool SlgMapManager::update_cell_owner(int x, int y, uint64_t owner_id, uint64_t 
 }
 
 bool SlgMapManager::add_building(int x, int y, int type, int level) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (!is_valid_pos(x, y)) return false;
     auto& cell = cells_[cell_index(x, y)];
     if (cell.has_building()) return false;
@@ -179,7 +179,7 @@ bool SlgMapManager::add_building(int x, int y, int type, int level) {
 }
 
 bool SlgMapManager::remove_building(int x, int y) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (!is_valid_pos(x, y)) return false;
     auto& cell = cells_[cell_index(x, y)];
     cell.building_type = 0;
@@ -189,7 +189,7 @@ bool SlgMapManager::remove_building(int x, int y) {
 }
 
 bool SlgMapManager::create_city(int x, int y, const std::string& name, uint64_t owner_id) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (!is_valid_pos(x, y)) return false;
     
     auto& cell = cells_[cell_index(x, y)];
@@ -213,7 +213,7 @@ bool SlgMapManager::create_city(int x, int y, const std::string& name, uint64_t 
 }
 
 bool SlgMapManager::get_city(uint64_t city_id, City& city) const {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     auto it = cities_.find(city_id);
     if (it != cities_.end()) {
         city = it->second;
@@ -223,7 +223,7 @@ bool SlgMapManager::get_city(uint64_t city_id, City& city) const {
 }
 
 bool SlgMapManager::get_city_at(int x, int y, City& city) const {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     for (const auto& pair : cities_) {
         if (pair.second.x == x && pair.second.y == y) {
             city = pair.second;
@@ -234,7 +234,7 @@ bool SlgMapManager::get_city_at(int x, int y, City& city) const {
 }
 
 bool SlgMapManager::update_city(const City& city) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     auto it = cities_.find(city.city_id);
     if (it == cities_.end()) return false;
     it->second = city;
@@ -243,7 +243,7 @@ bool SlgMapManager::update_city(const City& city) {
 
 uint64_t SlgMapManager::create_troop(uint64_t owner_id, int from_x, int from_y,
                                      int infantry, int cavalry, int archer, int siege) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     
     Troop troop;
     troop.troop_id = next_troop_id_++;
@@ -269,7 +269,7 @@ uint64_t SlgMapManager::create_troop(uint64_t owner_id, int from_x, int from_y,
 }
 
 bool SlgMapManager::move_troop(uint64_t troop_id, int to_x, int to_y) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     
     auto it = troops_.find(troop_id);
     if (it == troops_.end()) return false;
@@ -293,7 +293,7 @@ bool SlgMapManager::move_troop(uint64_t troop_id, int to_x, int to_y) {
 }
 
 bool SlgMapManager::cancel_troop(uint64_t troop_id) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     
     auto it = troops_.find(troop_id);
     if (it == troops_.end()) return false;
@@ -312,7 +312,7 @@ bool SlgMapManager::cancel_troop(uint64_t troop_id) {
 }
 
 bool SlgMapManager::get_troop(uint64_t troop_id, Troop& troop) const {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     auto it = troops_.find(troop_id);
     if (it != troops_.end()) {
         troop = it->second;
@@ -322,7 +322,7 @@ bool SlgMapManager::get_troop(uint64_t troop_id, Troop& troop) const {
 }
 
 void SlgMapManager::update_troops(int64_t current_time) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     
     for (auto& pair : troops_) {
         auto& troop = pair.second;
@@ -379,7 +379,7 @@ void SlgMapManager::update_troops(int64_t current_time) {
 
 std::vector<GridCell> SlgMapManager::get_cells_in_range(int x, int y, int range) const {
     std::vector<GridCell> result;
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     
     for (int dy = -range; dy <= range; ++dy) {
         for (int dx = -range; dx <= range; ++dx) {
@@ -395,7 +395,7 @@ std::vector<GridCell> SlgMapManager::get_cells_in_range(int x, int y, int range)
 
 std::vector<Troop> SlgMapManager::get_troops_in_range(int x, int y, int range) const {
     std::vector<Troop> result;
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     
     for (const auto& pair : troops_) {
         const auto& troop = pair.second;
@@ -409,7 +409,7 @@ std::vector<Troop> SlgMapManager::get_troops_in_range(int x, int y, int range) c
 
 std::vector<City> SlgMapManager::get_cities_in_range(int x, int y, int range) const {
     std::vector<City> result;
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     
     for (const auto& pair : cities_) {
         const auto& city = pair.second;
@@ -423,7 +423,7 @@ std::vector<City> SlgMapManager::get_cities_in_range(int x, int y, int range) co
 
 std::vector<GridCell> SlgMapManager::get_player_territory(uint64_t player_id) const {
     std::vector<GridCell> result;
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     
     for (const auto& cell : cells_) {
         if (cell.owner_id == player_id) {
@@ -470,12 +470,12 @@ std::vector<std::pair<int, int>> SlgMapManager::find_path(int from_x, int from_y
 }
 
 int SlgMapManager::total_cities() const {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     return static_cast<int>(cities_.size());
 }
 
 int SlgMapManager::total_troops() const {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     return static_cast<int>(troops_.size());
 }
 
