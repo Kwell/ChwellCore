@@ -133,6 +133,20 @@ void DefaultCircuitBreaker::record_failure(const std::string& reason) {
     }
 }
 
+bool DefaultCircuitBreaker::try_recover_from_open() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (state_.load(std::memory_order_relaxed) != CircuitState::OPEN) {
+        return true;
+    }
+    if (!should_attempt_reset()) {
+        return false;
+    }
+    state_.store(CircuitState::HALF_OPEN, std::memory_order_relaxed);
+    half_open_count_.store(0, std::memory_order_relaxed);
+    CHWELL_LOG_INFO("Circuit breaker " + name_ + " entered HALF_OPEN");
+    return true;
+}
+
 void DefaultCircuitBreaker::trip() {
     state_.store(CircuitState::OPEN, std::memory_order_relaxed);
     last_failure_time_ms_.store(current_timestamp_ms(), std::memory_order_relaxed);
