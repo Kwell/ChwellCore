@@ -111,7 +111,7 @@ private:
 
         // 2 倍增长
         size_t new_cap = buffer_.size();
-        while (new_cap < needed) new_cap *= 2;
+        while (new_cap < needed) { if (new_cap == 0) { new_cap = needed; break; } size_t next = new_cap * 2; if (next <= new_cap) { new_cap = needed; break; } new_cap = next; }
 
         // 将数据线性化到新缓冲区
         std::vector<char> new_buf(new_cap);

@@ -43,6 +43,8 @@ void TcpConnection::run_read_loop() {
 
     // P0 #1: call close_cb_ exactly once – no CloseGuard needed.
     closed_ = true;
+    { ErrorCode ec; socket_.shutdown(SHUT_RDWR, ec); socket_.close(ec); }
+    closed_ = true;
     if (close_cb_) {
         close_cb_(shared_from_this());
     }
