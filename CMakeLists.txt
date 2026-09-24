@@ -47,7 +47,7 @@ if(CHWELL_USE_YAML)
         FetchContent_Declare(
             yaml-cpp
             GIT_REPOSITORY https://github.com/jbeder/yaml-cpp.git
-            GIT_TAG yaml-cpp-0.7.0
+            GIT_TAG yaml-cpp-0.7.0 # TODO: pin commit SHA
         )
         set(YAML_CPP_BUILD_TESTS OFF CACHE BOOL "" FORCE)
         set(YAML_CPP_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
@@ -206,7 +206,7 @@ if (CHWELL_BUILD_TESTS)
         FetchContent_Declare(
             googletest
             GIT_REPOSITORY https://github.com/google/googletest.git
-            GIT_TAG v1.14.0
+            GIT_TAG v1.14.0 # TODO: pin commit SHA
         )
         set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
         FetchContent_MakeAvailable(googletest)
