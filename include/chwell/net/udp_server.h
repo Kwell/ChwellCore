@@ -20,6 +20,10 @@ public:
 
     void start_receive();
     void stop();
+    ~UdpServer() { stop(); }
+    ~UdpServer() { stop(); }
+    ~UdpServer() { stop(); }
+    ~UdpServer() { stop(); }
 
     void send_to(const std::vector<char>& data, const UdpEndpoint& remote);
 
