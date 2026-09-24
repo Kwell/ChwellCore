@@ -182,7 +182,9 @@ void TimerWheel::process_slot(int layer, int slot, std::vector<std::shared_ptr<T
 
     auto it = tasks.begin();
     while (it != tasks.end()) {
-        auto& task = *it;
+        // 必须先拷贝 shared_ptr：erase(it) 会销毁链表节点内的 shared_ptr，
+        // 若 auto& task = *it 后再 task->xxx 即 use-after-free
+        auto task = *it;
 
         if (task->cancelled) {
             it = tasks.erase(it);
