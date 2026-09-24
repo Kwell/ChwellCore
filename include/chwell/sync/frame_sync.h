@@ -98,6 +98,19 @@ public:
         player_inputs_[player_id].push(input);
         // 🆕 记录已提交的帧
         submitted_frames_[player_id].insert(input.frame_id);
+        // 修剪过旧帧记录，防止集合无限增长
+        {
+            uint32_t cur = current_frame_.load(std::memory_order_relaxed);
+            auto& s = submitted_frames_[player_id];
+            for (auto it = s.begin(); it != s.end();) {
+                if (*it + 256 < cur) it = s.erase(it);
+                else ++it;
+            }
+            if (s.empty()) submitted_frames_.erase(player_id);
+        }
+        // 限制单玩家输入队列长度
+        auto& q = player_inputs_[player_id];
+        while (q.size() > 256) q.pop();
         CHWELL_LOG_DEBUG("Player " + std::to_string(player_id)
                          + " submitted input for frame " + std::to_string(input.frame_id));
     }
