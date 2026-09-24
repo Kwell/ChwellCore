@@ -131,12 +131,6 @@ private:
         return seq.fetch_add(1, std::memory_order_relaxed);
     }
 
-    // 进程内共享的 fencing 序号（跨进程仍需服务端 INCR）
-    static uint64_t next_fencing_token() {
-        static std::atomic<uint64_t> seq{1};
-        return seq.fetch_add(1, std::memory_order_relaxed);
-    }
-
     void start_renew_thread() {
         renew_running_.store(true);
         renew_thread_ = std::thread([this]() {
