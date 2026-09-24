@@ -338,6 +338,11 @@ void RoomComponent::handle_join_room(const net::TcpConnectionPtr& conn, const st
 void RoomComponent::join_room(const net::TcpConnectionPtr& conn, const std::string& room_id) {
     std::lock_guard<std::mutex> lock(rooms_mutex_);
 
+    // 先退出旧房间，避免同时挂在多个房间（与 Session 语义一致）
+    for (auto& pair : rooms_) {
+        pair.second->connections.erase(conn.get());
+    }
+
     // 查找或创建房间
     auto it = rooms_.find(room_id);
     std::shared_ptr<Room> room;
@@ -458,8 +463,44 @@ void HeartbeatComponent::handle_heartbeat(const net::TcpConnectionPtr& conn, con
         return;
     }
 
+    if (conn) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        last_seen_[conn->conn_id()] = {conn, timestamp_ms / 1000 > 0 ? timestamp_ms / 1000 : 0};
+        // 用墙钟秒做超时基准
+        last_seen_[conn->conn_id()].second =
+            std::chrono::duration_cast<std::chrono::seconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count();
+    }
+
     // 回应心跳
     send_heartbeat_response(conn, timestamp_ms);
+}
+
+bool HeartbeatComponent::PreUpdate() {
+    auto now = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    std::vector<net::TcpConnectionPtr> dead;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (auto it = last_seen_.begin(); it != last_seen_.end();) {
+            if (now - it->second.second > HEARTBEAT_TIMEOUT) {
+                dead.push_back(it->second.first);
+                it = last_seen_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+    for (auto& c : dead) {
+        if (c) c->close();
+    }
+    return true;
+}
+
+void HeartbeatComponent::on_disconnect(const net::TcpConnectionPtr& conn) {
+    if (!conn) return;
+    std::lock_guard<std::mutex> lock(mutex_);
+    last_seen_.erase(conn->conn_id());
 }
 
 void HeartbeatComponent::send_heartbeat_response(const net::TcpConnectionPtr& conn, int64_t timestamp_ms) {

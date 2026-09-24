@@ -136,6 +136,14 @@ public:
 
     // 处理心跳请求
     void handle_heartbeat(const net::TcpConnectionPtr& conn, const std::vector<char>& data);
+    bool PreUpdate() override;
+    void on_disconnect(const net::TcpConnectionPtr& conn) override;
+
+private:
+    std::mutex mutex_;
+    std::unordered_map<std::uint64_t, std::pair<net::TcpConnectionPtr, std::int64_t>> last_seen_;
+
+public:
 
     // 发送心跳响应
     void send_heartbeat_response(const net::TcpConnectionPtr& conn, int64_t timestamp_ms);

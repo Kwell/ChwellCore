@@ -14,7 +14,7 @@ class TcpConnection;
 class WsRawConnection;
 
 typedef std::shared_ptr<TcpConnection> TcpConnectionPtr;
-typedef std::shared_ptr<WsConnection> WsConnectionPtr;
+typedef std::shared_ptr<WsRawConnection> WsConnectionPtr;
 
 // 连接基类：提供所有连接类型的公共接口
 class IConnection {

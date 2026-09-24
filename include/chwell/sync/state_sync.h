@@ -260,10 +260,19 @@ public:
             it->second.erase(conn.get());
         }
 
-        // 同时清理 connection_map_ 中的反向映射
-        auto cmap_it = connection_map_.find(conn.get());
-        if (cmap_it != connection_map_.end()) {
-            connection_map_.erase(cmap_it);
+        // 仅当该连接已无任何订阅时才清 connection_map_（避免误删其他 entity 的 shared_ptr）
+        bool still_subscribed = false;
+        for (auto& sp : subscribers_) {
+            if (sp.second.find(conn.get()) != sp.second.end()) {
+                still_subscribed = true;
+                break;
+            }
+        }
+        if (!still_subscribed) {
+            auto cmap_it = connection_map_.find(conn.get());
+            if (cmap_it != connection_map_.end()) {
+                connection_map_.erase(cmap_it);
+            }
         }
     }
 
