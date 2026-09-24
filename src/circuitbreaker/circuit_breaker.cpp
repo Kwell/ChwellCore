@@ -147,6 +147,11 @@ bool DefaultCircuitBreaker::try_recover_from_open() {
     return true;
 }
 
+bool DefaultCircuitBreaker::try_acquire_half_open_slot() {
+    uint32_t count = half_open_count_.fetch_add(1, std::memory_order_relaxed);
+    return count < config_.half_open_calls;
+}
+
 void DefaultCircuitBreaker::trip() {
     state_.store(CircuitState::OPEN, std::memory_order_relaxed);
     last_failure_time_ms_.store(current_timestamp_ms(), std::memory_order_relaxed);

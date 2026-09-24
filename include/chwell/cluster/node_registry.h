@@ -74,8 +74,11 @@ public:
         info.listen_port = listen_port;
         info.node_type = node_type;
         info.online = true;
-        // Add to consistent hash ring (use node_type as service_id, node_id as instance_id)
-        ch_balancer_.remove_instance(node.id);`n        ch_balancer_.add_instance(node_type, node_id);
+        // Re-register: drop old vnodes first so weight/instance changes don't stack
+        ch_balancer_.remove_instance(node_type, node_id);
+        ch_balancer_.add_instance(node_type, node_id);
+        ch_balancer_.remove_instance("__all__", node_id);
+        ch_balancer_.add_instance("__all__", node_id);
     }
 
     // 注销节点
@@ -158,8 +161,8 @@ private:
             info.online = true;
             if (!info.node_id.empty() && info.listen_port != 0) {
                 nodes_[info.node_id] = info;
-                ch_balancer_.remove_instance(node.id);`n        ch_balancer_.add_instance(info.node_type, info.node_id);
-                ch_balancer_.remove_instance(node.id);`n        ch_balancer_.add_instance("__all__", info.node_id);
+                ch_balancer_.add_instance(info.node_type, info.node_id);
+                ch_balancer_.add_instance("__all__", info.node_id);
             }
         }
         return !nodes_.empty();

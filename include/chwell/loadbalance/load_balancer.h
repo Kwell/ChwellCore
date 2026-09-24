@@ -37,8 +37,9 @@ public:
     // 获取当前策略
     virtual LoadBalanceStrategy get_strategy() const = 0;
 
-    // 更新服务实例列表
-    virtual void update_instances(const std::vector<discovery::ServiceInstance>& instances) = 0;
+    // 更新指定服务的实例列表
+    virtual void update_instances(const std::string& service_id,
+                                  const std::vector<discovery::ServiceInstance>& instances) = 0;
 
     // 设置实例权重（用于加权策略）
     virtual void set_weight(const std::string& instance_id, int weight) = 0;
@@ -68,7 +69,8 @@ public:
         return strategy_;
     }
 
-    virtual void update_instances(const std::vector<discovery::ServiceInstance>& instances) override;
+    virtual void update_instances(const std::string& service_id,
+                                  const std::vector<discovery::ServiceInstance>& instances) override;
 
     virtual void set_weight(const std::string& instance_id, int weight) override {
         std::unique_lock<std::shared_mutex> lock(mutex_);
@@ -114,7 +116,8 @@ public:
         return strategy_;
     }
 
-    virtual void update_instances(const std::vector<discovery::ServiceInstance>& instances) override;
+    virtual void update_instances(const std::string& service_id,
+                                  const std::vector<discovery::ServiceInstance>& instances) override;
 
     virtual void set_weight(const std::string& instance_id, int weight) override {
         std::unique_lock<std::shared_mutex> lock(mutex_);
@@ -148,7 +151,7 @@ private:
 class WeightedRoundRobinLoadBalancer : public LoadBalancer {
 public:
     WeightedRoundRobinLoadBalancer(std::shared_ptr<discovery::ServiceDiscovery> discovery)
-        : discovery_(discovery), total_weight_(0), dirty_(true) {}
+        : discovery_(discovery) {}
 
     virtual ~WeightedRoundRobinLoadBalancer() = default;
 
@@ -164,12 +167,15 @@ public:
         return strategy_;
     }
 
-    virtual void update_instances(const std::vector<discovery::ServiceInstance>& instances) override;
+    virtual void update_instances(const std::string& service_id,
+                                  const std::vector<discovery::ServiceInstance>& instances) override;
 
     virtual void set_weight(const std::string& instance_id, int weight) override {
         std::unique_lock<std::shared_mutex> lock(mutex_);
         weights_[instance_id] = weight;
-        dirty_ = true;
+        for (auto& kv : caches_) {
+            kv.second.dirty = true;
+        }
     }
 
     virtual int get_weight(const std::string& instance_id) const override {
@@ -182,14 +188,21 @@ public:
     }
 
 private:
-    // 重建内部缓存数组（写锁已持有时调用）
-    void rebuild_cache();
+    // 重建指定服务的内部缓存数组（写锁已持有时调用）
+    void rebuild_cache(const std::string& service_id);
 
     // 加权实例条目，紧凑排列在连续内存中
     struct WeightedEntry {
         discovery::ServiceInstance instance;
         int weight;          // 配置的权重
         int current_weight;  // 平滑加权轮询的当前权重
+    };
+
+    // 每个 service_id 一份紧凑缓存
+    struct ServiceCache {
+        std::vector<WeightedEntry> cache;
+        int total_weight = 0;
+        bool dirty = true;
     };
 
     std::shared_ptr<discovery::ServiceDiscovery> discovery_;
@@ -199,10 +212,8 @@ private:
     std::unordered_map<std::string, std::vector<discovery::ServiceInstance>> instances_by_service_;
     std::unordered_map<std::string, int> weights_;
 
-    // 紧凑缓存层（读操作热点路径）
-    std::vector<WeightedEntry> cache_;   // 缓存数组，连续内存
-    int total_weight_;                    // 缓存的总权重
-    bool dirty_;                          // 标记需要重建缓存
+    // 紧凑缓存层（读操作热点路径，按 service_id 分键）
+    std::unordered_map<std::string, ServiceCache> caches_;
 
     mutable std::shared_mutex mutex_;
 };

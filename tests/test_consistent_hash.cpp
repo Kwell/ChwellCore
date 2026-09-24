@@ -120,3 +120,19 @@ TEST(ConsistentHashTest, MultipleServices) {
     EXPECT_EQ(20u, instances_a.size());  // 2 instances * 10 vnodes
     EXPECT_EQ(20u, instances_b.size());
 }
+TEST(ConsistentHashTest, ReRegisterDropsOldVnodes) {
+    loadbalance::ConsistentHashLoadBalancer lb(10);
+
+    lb.add_instance("test_service", "instance_1", 1);
+    auto before = lb.get_all_instances("test_service");
+    EXPECT_EQ(10u, before.size());
+
+    lb.add_instance("test_service", "instance_1", 2);
+    auto after = lb.get_all_instances("test_service");
+    EXPECT_EQ(20u, after.size());
+
+    for (const auto& v : after) {
+        EXPECT_EQ(std::string("instance_1"), v.instance_id);
+    }
+}
+

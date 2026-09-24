@@ -55,230 +55,140 @@ bool GridAoi::add_entity(const Entity& entity) {
     if (entity.id == 0) {
         return false;
     }
-    
-    std::lock_guard<std::mutex> lock(mutex_);
-    
-    // 检查是否已存在
-    if (entities_.find(entity.id) != entities_.end()) {
-        CHWELL_LOG_WARN("Entity already exists: " << entity.id);
-        return false;
-    }
-    
-    // 计算格子
-    int grid_x, grid_y;
-    pos_to_grid(entity.x, entity.y, grid_x, grid_y);
-    
-    // 添加到实体列表
-    entities_[entity.id] = entity;
-    
-    // 添加到格子
-    int idx = grid_index(grid_x, grid_y);
-    grids_[idx].insert(entity.id);
-    
-    // 记录格子
-    entity_to_grid_[entity.id] = idx;
-    
-    // 触发进入事件（通知视野内的观察者）
-    if (callback_) {
-        // 获取视野内的实体
-        int min_gx, min_gy, max_gx, max_gy;
-        get_grids_in_view(entity.x, entity.y, min_gx, min_gy, max_gx, max_gy);
-        
-        for (int gy = min_gy; gy <= max_gy; ++gy) {
-            for (int gx = min_gx; gx <= max_gx; ++gx) {
-                int gidx = grid_index(gx, gy);
-                for (uint64_t other_id : grids_[gidx]) {
-                    if (other_id != entity.id) {
-                        AoiEvent event;
-                        event.type = EventType::ENTER;
-                        event.watcher_id = other_id;
-                        event.target_id = entity.id;
-                        event.new_x = entity.x;
-                        event.new_y = entity.y;
-                        trigger_event(event);
+
+    std::vector<AoiEvent> events;
+    {
+        std::lock_guard<std::recursive_mutex> lock(mutex_);
+        pending_events_.clear();
+
+        // 检查是否已存在
+        if (entities_.find(entity.id) != entities_.end()) {
+            CHWELL_LOG_WARN("Entity already exists: " << entity.id);
+            return false;
+        }
+
+        // 计算格子
+        int grid_x, grid_y;
+        pos_to_grid(entity.x, entity.y, grid_x, grid_y);
+
+        // 添加到实体列表
+        entities_[entity.id] = entity;
+
+        // 添加到格子
+        int idx = grid_index(grid_x, grid_y);
+        grids_[idx].insert(entity.id);
+
+        // 记录格子
+        entity_to_grid_[entity.id] = idx;
+
+        // 触发进入事件（通知视野内的观察者）
+        if (callback_) {
+            int min_gx, min_gy, max_gx, max_gy;
+            get_grids_in_view(entity.x, entity.y, min_gx, min_gy, max_gx, max_gy);
+
+            for (int gy = min_gy; gy <= max_gy; ++gy) {
+                for (int gx = min_gx; gx <= max_gx; ++gx) {
+                    int gidx = grid_index(gx, gy);
+                    for (uint64_t other_id : grids_[gidx]) {
+                        if (other_id != entity.id) {
+                            AoiEvent event;
+                            event.type = EventType::ENTER;
+                            event.watcher_id = other_id;
+                            event.target_id = entity.id;
+                            event.new_x = entity.x;
+                            event.new_y = entity.y;
+                            trigger_event(event);
+                        }
                     }
                 }
             }
         }
+
+        events.swap(pending_events_);
     }
-    
+    fire_events(events);
     return true;
 }
 
 bool GridAoi::remove_entity(uint64_t entity_id) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    
-    auto it = entities_.find(entity_id);
-    if (it == entities_.end()) {
-        return false;
-    }
-    
-    const Entity& entity = it->second;
-    
-    // 触发离开事件
-    if (callback_) {
-        int min_gx, min_gy, max_gx, max_gy;
-        get_grids_in_view(entity.x, entity.y, min_gx, min_gy, max_gx, max_gy);
-        
-        for (int gy = min_gy; gy <= max_gy; ++gy) {
-            for (int gx = min_gx; gx <= max_gx; ++gx) {
-                int gidx = grid_index(gx, gy);
-                for (uint64_t other_id : grids_[gidx]) {
-                    if (other_id != entity_id) {
-                        AoiEvent event;
-                        event.type = EventType::LEAVE;
-                        event.watcher_id = other_id;
-                        event.target_id = entity_id;
-                        trigger_event(event);
-                    }
-                }
-            }
-        }
-    }
-    
-    // 从格子中移除
-    auto grid_it = entity_to_grid_.find(entity_id);
-    if (grid_it != entity_to_grid_.end()) {
-        grids_[grid_it->second].erase(entity_id);
-        entity_to_grid_.erase(grid_it);
-    }
-    
-    // 移除实体
-    entities_.erase(it);
-    
-    return true;
-}
+    std::vector<AoiEvent> events;
+    {
+        std::lock_guard<std::recursive_mutex> lock(mutex_);
+        pending_events_.clear();
 
-bool GridAoi::update_entity(uint64_t entity_id, int new_x, int new_y) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    
-    auto it = entities_.find(entity_id);
-    if (it == entities_.end()) {
-        return false;
-    }
-    
-    Entity& entity = it->second;
-    int old_x = entity.x;
-    int old_y = entity.y;
-    
-    // 计算旧格子
-    int old_grid_x, old_grid_y;
-    pos_to_grid(old_x, old_y, old_grid_x, old_grid_y);
-    
-    // 计算新格子
-    int new_grid_x, new_grid_y;
-    pos_to_grid(new_x, new_y, new_grid_x, new_grid_y);
-    
-    // 更新实体位置
-    entity.x = new_x;
-    entity.y = new_y;
-    
-    // 如果格子没变，只触发移动事件
-    if (old_grid_x == new_grid_x && old_grid_y == new_grid_y) {
-        if (callback_) {
-            AoiEvent event;
-            event.type = EventType::MOVE;
-            event.watcher_id = 0;  // 广播给所有观察者
-            event.target_id = entity_id;
-            event.old_x = old_x;
-            event.old_y = old_y;
-            event.new_x = new_x;
-            event.new_y = new_y;
-            
-            // 通知格子内的观察者
-            int idx = grid_index(old_grid_x, old_grid_y);
-            for (uint64_t other_id : grids_[idx]) {
-                if (other_id != entity_id) {
-                    event.watcher_id = other_id;
-                    trigger_event(event);
-                }
-            }
+        auto it = entities_.find(entity_id);
+        if (it == entities_.end()) {
+            return false;
         }
-        return true;
-    }
-    
-    // 格子变化，需要计算视野变化
-    
-    // 获取旧视野和新视野的格子
-    int old_min_gx, old_min_gy, old_max_gx, old_max_gy;
-    int new_min_gx, new_min_gy, new_max_gx, new_max_gy;
-    
-    get_grids_in_view(old_x, old_y, old_min_gx, old_min_gy, old_max_gx, old_max_gy);
-    get_grids_in_view(new_x, new_y, new_min_gx, new_min_gy, new_max_gx, new_max_gy);
-    
-    // 从旧格子移除，添加到新格子
-    int old_idx = grid_index(old_grid_x, old_grid_y);
-    int new_idx = grid_index(new_grid_x, new_grid_y);
-    
-    grids_[old_idx].erase(entity_id);
-    grids_[new_idx].insert(entity_id);
-    entity_to_grid_[entity_id] = new_idx;
-    
-    if (callback_) {
-        // 离开旧视野的格子
-        for (int gy = old_min_gy; gy <= old_max_gy; ++gy) {
-            for (int gx = old_min_gx; gx <= old_max_gx; ++gx) {
-                // 检查是否在新视野外
-                if (gx < new_min_gx || gx > new_max_gx || 
-                    gy < new_min_gy || gy > new_max_gy) {
+
+        const Entity& entity = it->second;
+
+        // 触发离开事件
+        if (callback_) {
+            int min_gx, min_gy, max_gx, max_gy;
+            get_grids_in_view(entity.x, entity.y, min_gx, min_gy, max_gx, max_gy);
+
+            for (int gy = min_gy; gy <= max_gy; ++gy) {
+                for (int gx = min_gx; gx <= max_gx; ++gx) {
                     int gidx = grid_index(gx, gy);
                     for (uint64_t other_id : grids_[gidx]) {
                         if (other_id != entity_id) {
-                            // 实体离开观察者的视野
                             AoiEvent event;
                             event.type = EventType::LEAVE;
                             event.watcher_id = other_id;
                             event.target_id = entity_id;
                             trigger_event(event);
-                            
-                            // 观察者离开实体的视野
-                            event.watcher_id = entity_id;
-                            event.target_id = other_id;
-                            trigger_event(event);
                         }
                     }
                 }
             }
         }
-        
-        // 进入新视野的格子
-        for (int gy = new_min_gy; gy <= new_max_gy; ++gy) {
-            for (int gx = new_min_gx; gx <= new_max_gx; ++gx) {
-                // 检查是否在旧视野外
-                if (gx < old_min_gx || gx > old_max_gx || 
-                    gy < old_min_gy || gy > old_max_gy) {
-                    int gidx = grid_index(gx, gy);
-                    for (uint64_t other_id : grids_[gidx]) {
-                        if (other_id != entity_id) {
-                            // 实体进入观察者的视野
-                            AoiEvent event;
-                            event.type = EventType::ENTER;
-                            event.watcher_id = other_id;
-                            event.target_id = entity_id;
-                            event.new_x = new_x;
-                            event.new_y = new_y;
-                            trigger_event(event);
-                            
-                            // 观察者进入实体的视野
-                            auto other_it = entities_.find(other_id);
-                            if (other_it != entities_.end()) {
-                                event.watcher_id = entity_id;
-                                event.target_id = other_id;
-                                event.new_x = other_it->second.x;
-                                event.new_y = other_it->second.y;
-                                trigger_event(event);
-                            }
-                        }
-                    }
-                }
-            }
+
+        // 从格子中移除
+        auto grid_it = entity_to_grid_.find(entity_id);
+        if (grid_it != entity_to_grid_.end()) {
+            grids_[grid_it->second].erase(entity_id);
+            entity_to_grid_.erase(grid_it);
         }
-        
-        // 通知新旧视野重叠区域的观察者移动事件
-        for (int gy = std::max(old_min_gy, new_min_gy); gy <= std::min(old_max_gy, new_max_gy); ++gy) {
-            for (int gx = std::max(old_min_gx, new_min_gx); gx <= std::min(old_max_gx, new_max_gx); ++gx) {
-                int gidx = grid_index(gx, gy);
-                for (uint64_t other_id : grids_[gidx]) {
+
+        // 移除实体
+        entities_.erase(it);
+
+        events.swap(pending_events_);
+    }
+    fire_events(events);
+    return true;
+}
+
+bool GridAoi::update_entity(uint64_t entity_id, int new_x, int new_y) {
+    std::vector<AoiEvent> events;
+    {
+        std::lock_guard<std::recursive_mutex> lock(mutex_);
+        pending_events_.clear();
+
+        auto it = entities_.find(entity_id);
+        if (it == entities_.end()) {
+            return false;
+        }
+
+        Entity& entity = it->second;
+        int old_x = entity.x;
+        int old_y = entity.y;
+
+        int old_grid_x, old_grid_y;
+        pos_to_grid(old_x, old_y, old_grid_x, old_grid_y);
+
+        int new_grid_x, new_grid_y;
+        pos_to_grid(new_x, new_y, new_grid_x, new_grid_y);
+
+        entity.x = new_x;
+        entity.y = new_y;
+
+        // 同格：只通知 MOVE
+        if (old_grid_x == new_grid_x && old_grid_y == new_grid_y) {
+            if (callback_) {
+                int idx = grid_index(old_grid_x, old_grid_y);
+                for (uint64_t other_id : grids_[idx]) {
                     if (other_id != entity_id) {
                         AoiEvent event;
                         event.type = EventType::MOVE;
@@ -292,14 +202,107 @@ bool GridAoi::update_entity(uint64_t entity_id, int new_x, int new_y) {
                     }
                 }
             }
+            events.swap(pending_events_);
+        } else {
+            // 跨格：计算视野增减
+            int old_min_gx, old_min_gy, old_max_gx, old_max_gy;
+            int new_min_gx, new_min_gy, new_max_gx, new_max_gy;
+
+            get_grids_in_view(old_x, old_y, old_min_gx, old_min_gy, old_max_gx, old_max_gy);
+            get_grids_in_view(new_x, new_y, new_min_gx, new_min_gy, new_max_gx, new_max_gy);
+
+            int old_idx = grid_index(old_grid_x, old_grid_y);
+            int new_idx = grid_index(new_grid_x, new_grid_y);
+
+            grids_[old_idx].erase(entity_id);
+            grids_[new_idx].insert(entity_id);
+            entity_to_grid_[entity_id] = new_idx;
+
+            if (callback_) {
+                // 离开旧视野
+                for (int gy = old_min_gy; gy <= old_max_gy; ++gy) {
+                    for (int gx = old_min_gx; gx <= old_max_gx; ++gx) {
+                        if (gx >= new_min_gx && gx <= new_max_gx &&
+                            gy >= new_min_gy && gy <= new_max_gy) {
+                            continue;
+                        }
+                        int gidx = grid_index(gx, gy);
+                        for (uint64_t other_id : grids_[gidx]) {
+                            if (other_id != entity_id) {
+                                AoiEvent event;
+                                event.type = EventType::LEAVE;
+                                event.watcher_id = other_id;
+                                event.target_id = entity_id;
+                                trigger_event(event);
+
+                                event.watcher_id = entity_id;
+                                event.target_id = other_id;
+                                trigger_event(event);
+                            }
+                        }
+                    }
+                }
+
+                // 进入新视野
+                for (int gy = new_min_gy; gy <= new_max_gy; ++gy) {
+                    for (int gx = new_min_gx; gx <= new_max_gx; ++gx) {
+                        if (gx >= old_min_gx && gx <= old_max_gx &&
+                            gy >= old_min_gy && gy <= old_max_gy) {
+                            continue;
+                        }
+                        int gidx = grid_index(gx, gy);
+                        for (uint64_t other_id : grids_[gidx]) {
+                            if (other_id != entity_id) {
+                                AoiEvent event;
+                                event.type = EventType::ENTER;
+                                event.watcher_id = other_id;
+                                event.target_id = entity_id;
+                                event.new_x = new_x;
+                                event.new_y = new_y;
+                                trigger_event(event);
+
+                                auto other_it = entities_.find(other_id);
+                                if (other_it != entities_.end()) {
+                                    event.watcher_id = entity_id;
+                                    event.target_id = other_id;
+                                    event.new_x = other_it->second.x;
+                                    event.new_y = other_it->second.y;
+                                    trigger_event(event);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 重叠区域 MOVE
+                for (int gy = std::max(old_min_gy, new_min_gy); gy <= std::min(old_max_gy, new_max_gy); ++gy) {
+                    for (int gx = std::max(old_min_gx, new_min_gx); gx <= std::min(old_max_gx, new_max_gx); ++gx) {
+                        int gidx = grid_index(gx, gy);
+                        for (uint64_t other_id : grids_[gidx]) {
+                            if (other_id != entity_id) {
+                                AoiEvent event;
+                                event.type = EventType::MOVE;
+                                event.watcher_id = other_id;
+                                event.target_id = entity_id;
+                                event.old_x = old_x;
+                                event.old_y = old_y;
+                                event.new_x = new_x;
+                                event.new_y = new_y;
+                                trigger_event(event);
+                            }
+                        }
+                    }
+                }
+            }
+            events.swap(pending_events_);
         }
-    }
-    
+    } // unlock
+    fire_events(events);
     return true;
 }
 
 bool GridAoi::get_entity(uint64_t entity_id, Entity& entity) const {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     auto it = entities_.find(entity_id);
     if (it != entities_.end()) {
         entity = it->second;
@@ -343,7 +346,7 @@ std::vector<uint64_t> GridAoi::get_entity_ids_in_view_locked(int x, int y) const
 }
 
 std::vector<Entity> GridAoi::get_entities_in_view(uint64_t watcher_id) const {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     auto it = entities_.find(watcher_id);
     if (it == entities_.end()) {
         return {};
@@ -352,12 +355,12 @@ std::vector<Entity> GridAoi::get_entities_in_view(uint64_t watcher_id) const {
 }
 
 std::vector<Entity> GridAoi::get_entities_in_view(int x, int y) const {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     return get_entities_in_view_locked(x, y);
 }
 
 std::vector<uint64_t> GridAoi::get_entity_ids_in_view(uint64_t watcher_id) const {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     auto it = entities_.find(watcher_id);
     if (it == entities_.end()) {
         return {};
@@ -366,7 +369,7 @@ std::vector<uint64_t> GridAoi::get_entity_ids_in_view(uint64_t watcher_id) const
 }
 
 std::vector<uint64_t> GridAoi::get_entity_ids_in_view(int x, int y) const {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     return get_entity_ids_in_view_locked(x, y);
 }
 
@@ -377,7 +380,7 @@ std::vector<Entity> GridAoi::get_entities_in_grid(int grid_x, int grid_y) const 
         return result;
     }
     
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     int gidx = grid_index(grid_x, grid_y);
     
     for (uint64_t eid : grids_[gidx]) {
@@ -397,7 +400,7 @@ std::vector<uint64_t> GridAoi::get_entity_ids_in_grid(int grid_x, int grid_y) co
         return result;
     }
     
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     int gidx = grid_index(grid_x, grid_y);
     
     for (uint64_t eid : grids_[gidx]) {
@@ -410,7 +413,7 @@ std::vector<uint64_t> GridAoi::get_entity_ids_in_grid(int grid_x, int grid_y) co
 std::vector<Entity> GridAoi::get_entities_in_grids(int center_grid_x, int center_grid_y) const {
     std::vector<Entity> result;
     
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     
     int min_gx = std::max(0, center_grid_x - config_.view_range);
     int min_gy = std::max(0, center_grid_y - config_.view_range);
@@ -433,9 +436,20 @@ std::vector<Entity> GridAoi::get_entities_in_grids(int center_grid_x, int center
 }
 
 void GridAoi::trigger_event(const AoiEvent& event) {
-    if (callback_) {
+    pending_events_.push_back(event);
+}
+
+void GridAoi::fire_events(std::vector<AoiEvent>& events) {
+    if (!callback_ || events.empty()) {
+        events.clear();
+        return;
+    }
+    AoiCallback cb = callback_;
+    std::vector<AoiEvent> local;
+    local.swap(events);
+    for (const auto& event : local) {
         try {
-            callback_(event);
+            cb(event);
         } catch (const std::exception& e) {
             CHWELL_LOG_ERROR("AOI callback exception: " << e.what());
         }
@@ -443,7 +457,7 @@ void GridAoi::trigger_event(const AoiEvent& event) {
 }
 
 int GridAoi::total_entities() const {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     return static_cast<int>(entities_.size());
 }
 
@@ -452,7 +466,7 @@ int GridAoi::entity_count_in_grid(int grid_x, int grid_y) const {
         return 0;
     }
     
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     int gidx = grid_index(grid_x, grid_y);
     return static_cast<int>(grids_[gidx].size());
 }
@@ -472,7 +486,7 @@ bool CrossListAoi::add_entity(const Entity& entity) {
         return false;
     }
     
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     
     if (nodes_.find(entity.id) != nodes_.end()) {
         return false;
@@ -568,7 +582,7 @@ void CrossListAoi::remove_from_lists(Node* node) {
 }
 
 bool CrossListAoi::remove_entity(uint64_t entity_id) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     
     auto it = nodes_.find(entity_id);
     if (it == nodes_.end()) {
@@ -582,7 +596,7 @@ bool CrossListAoi::remove_entity(uint64_t entity_id) {
 }
 
 bool CrossListAoi::update_entity(uint64_t entity_id, int new_x, int new_y) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     
     auto it = nodes_.find(entity_id);
     if (it == nodes_.end()) {
@@ -604,7 +618,7 @@ bool CrossListAoi::update_entity(uint64_t entity_id, int new_x, int new_y) {
 }
 
 std::vector<Entity> CrossListAoi::get_entities_in_view(uint64_t watcher_id) const {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
 
     auto it = nodes_.find(watcher_id);
     if (it == nodes_.end()) {
@@ -615,7 +629,7 @@ std::vector<Entity> CrossListAoi::get_entities_in_view(uint64_t watcher_id) cons
 }
 
 std::vector<Entity> CrossListAoi::get_entities_in_view(int x, int y) const {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     return get_entities_in_view_unlocked(x, y);
 }
 
@@ -640,7 +654,7 @@ std::vector<Entity> CrossListAoi::get_entities_in_view_unlocked(int x, int y) co
 }
 
 int CrossListAoi::total_entities() const {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     return static_cast<int>(nodes_.size());
 }
 

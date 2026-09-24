@@ -275,4 +275,33 @@ TEST(CircuitBreakerTest, FailureRateCalculation) {
     EXPECT_EQ(1u, cb.get_success_count());
 }
 
+TEST(CircuitBreakerTest, HalfOpenProbeLimit) {
+    circuitbreaker::CircuitBreakerConfig config;
+    config.trip_strategy = circuitbreaker::TripStrategy::FAILURE_COUNT;
+    config.failure_threshold = 100;
+    config.timeout_ms = 50;
+    config.half_open_calls = 2;
+
+    circuitbreaker::DefaultCircuitBreaker cb("half_open_limit", config);
+    cb.trip();
+    EXPECT_EQ(circuitbreaker::CircuitState::OPEN, cb.get_state());
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(80));
+
+    int out = 0;
+    auto fail = []() -> int { throw std::runtime_error("probe fail"); };
+
+    // half_open_calls=2：前两次探测失败，耗尽名额
+    auto r1 = cb.execute_with_result<int>(fail, out);
+    EXPECT_FALSE(r1.success);
+    auto r2 = cb.execute_with_result<int>(fail, out);
+    EXPECT_FALSE(r2.success);
+
+    // 名额耗尽后，即使函数可成功也拒绝
+    auto ok = [&out]() -> int { return 7; };
+    auto r3 = cb.execute_with_result<int>(ok, out);
+    EXPECT_FALSE(r3.success);
+    EXPECT_EQ(std::string("Half-open calls exceeded"), r3.reason);
+}
+
 } // namespace
