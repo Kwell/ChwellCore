@@ -31,6 +31,11 @@ public:
                                                 std::memory_order_relaxed));
     }
 
+    // 允许 registry.reset() 将计数器归零（保持引用有效）
+    void set(double value) {
+        value_.store(value, std::memory_order_relaxed);
+    }
+
     double get() const {
         return value_.load(std::memory_order_relaxed);
     }
