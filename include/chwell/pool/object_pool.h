@@ -102,10 +102,9 @@ public:
         if (!obj) {
             obj = factory_.create();
             if (!obj) {
-                // 创建失败，回滚计数
+                // 创建失败，回滚计数（空指针不得计入 borrowed）
                 std::lock_guard<std::mutex> lock(mutex_);
                 --created_count_;
-                ++borrowed_count_;
                 return std::unique_ptr<T, std::function<void(T*)>>(nullptr, nullptr);
             }
         }
