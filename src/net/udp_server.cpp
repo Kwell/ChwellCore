@@ -64,8 +64,10 @@ void UdpServer::recv_loop() {
 
         std::vector<char> data(buffer_.begin(), buffer_.begin() + n);
         if (message_cb_) {
-            io_service_.post([self = shared_from_this(), data, remote]() {
-                message_cb_(data, remote);
+            // UdpServer 非 shared 管理，捕获回调副本避免悬垂 this
+            auto cb = message_cb_;
+            io_service_.post([cb, data, remote]() {
+                cb(data, remote);
             });
         }
     }
