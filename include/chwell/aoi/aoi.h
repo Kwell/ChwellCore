@@ -136,8 +136,11 @@ private:
                            int& min_gx, int& min_gy, 
                            int& max_gx, int& max_gy) const;
     
-    // 触发事件
+    // 触发事件（入队，由 fire_events 在锁外派发）
     void trigger_event(const AoiEvent& event);
+
+    // 锁外派发 pending 事件，避免回调重入死锁
+    void fire_events(std::vector<AoiEvent>& events);
     
     // 无锁版本（调用方须持有 mutex_）
     std::vector<Entity>   get_entities_in_view_locked(int x, int y) const;
@@ -145,18 +148,21 @@ private:
 
     Config config_;
     mutable std::recursive_mutex mutex_;
-    
+
     // 实体存储
     std::unordered_map<uint64_t, Entity> entities_;
-    
+
     // 格子存储 [grid_index] -> set of entity_ids
     std::vector<std::unordered_set<uint64_t>> grids_;
-    
+
     // 实体所在格子缓存
     std::unordered_map<uint64_t, int> entity_to_grid_;
-    
+
     // 回调
     AoiCallback callback_;
+
+    // 当前操作收集的待派发事件（仅在持锁期间写入）
+    std::vector<AoiEvent> pending_events_;
 };
 
 // 十字链表 AOI（适用于实时战斗、高更新频率）

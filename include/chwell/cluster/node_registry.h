@@ -74,8 +74,11 @@ public:
         info.listen_port = listen_port;
         info.node_type = node_type;
         info.online = true;
-        // Add to consistent hash ring (use node_type as service_id, node_id as instance_id)
+        // Re-register: drop old vnodes first so weight/instance changes don't stack
+        ch_balancer_.remove_instance(node_type, node_id);
         ch_balancer_.add_instance(node_type, node_id);
+        ch_balancer_.remove_instance("__all__", node_id);
+        ch_balancer_.add_instance("__all__", node_id);
     }
 
     // 注销节点

@@ -7,6 +7,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# MSVC 默认按本地代码页解析源码，UTF-8 中文注释会被误解析；强制 UTF-8
+if(MSVC)
+    add_compile_options(/utf-8)
+endif()
+
 option(CHWELL_BUILD_EXAMPLES "Build example servers" ON)
 option(CHWELL_USE_YAML "Enable YAML config for storage (yaml-cpp)" ON)
 option(CHWELL_USE_PROTOBUF "Enable Protobuf codec and game.proto examples" ON)
@@ -47,7 +52,7 @@ if(CHWELL_USE_YAML)
         FetchContent_Declare(
             yaml-cpp
             GIT_REPOSITORY https://github.com/jbeder/yaml-cpp.git
-            GIT_TAG yaml-cpp-0.7.0 # TODO: pin commit SHA
+            GIT_TAG 0579ae3d976091d7d664aa9d2527e0d0cff25763
         )
         set(YAML_CPP_BUILD_TESTS OFF CACHE BOOL "" FORCE)
         set(YAML_CPP_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
@@ -206,7 +211,7 @@ if (CHWELL_BUILD_TESTS)
         FetchContent_Declare(
             googletest
             GIT_REPOSITORY https://github.com/google/googletest.git
-            GIT_TAG v1.14.0 # TODO: pin commit SHA
+            GIT_TAG f8d7d77c06936315286eb55f8de22cd23c188571
         )
         set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
         FetchContent_MakeAvailable(googletest)

@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <map>
 
 #include "chwell/discovery/service_discovery.h"
 #include "chwell/loadbalance/load_balancer.h"
@@ -317,12 +318,69 @@ TEST(LoadBalancerTest, LoadBalancerUpdateInstances) {
     instances.push_back(instance1);
     instances.push_back(instance2);
 
-    lb.update_instances(instances);
+    lb.update_instances("test_service", instances);
 
     // 应该能够选择到两个实例
     discovery::ServiceInstance out1, out2;
     EXPECT_TRUE(lb.select_instance("test_service", out1));
     EXPECT_TRUE(lb.select_instance("test_service", out2));
+}
+
+
+TEST(LoadBalancerTest, UpdateInstancesPerServiceIsolation) {
+    auto discovery = std::make_shared<discovery::MemoryServiceDiscovery>(30000);
+
+    discovery::ServiceInstance a1;
+    a1.service_id = "service_a";
+    a1.instance_id = "a1";
+    a1.host = "127.0.0.1";
+    a1.port = 7001;
+
+    discovery::ServiceInstance b1;
+    b1.service_id = "service_b";
+    b1.instance_id = "b1";
+    b1.host = "127.0.0.1";
+    b1.port = 7002;
+
+    loadbalance::RoundRobinLoadBalancer lb(discovery);
+    lb.update_instances("service_a", {a1});
+    lb.update_instances("service_b", {b1});
+
+    discovery::ServiceInstance out;
+    ASSERT_TRUE(lb.select_instance("service_a", out));
+    EXPECT_EQ("a1", out.instance_id);
+    ASSERT_TRUE(lb.select_instance("service_b", out));
+    EXPECT_EQ("b1", out.instance_id);
+}
+
+TEST(LoadBalancerTest, WeightedPerServiceCache) {
+    auto discovery = std::make_shared<discovery::MemoryServiceDiscovery>(30000);
+
+    discovery::ServiceInstance a1;
+    a1.service_id = "svc";
+    a1.instance_id = "w1";
+    a1.host = "127.0.0.1";
+    a1.port = 7010;
+
+    discovery::ServiceInstance a2;
+    a2.service_id = "svc";
+    a2.instance_id = "w2";
+    a2.host = "127.0.0.1";
+    a2.port = 7011;
+
+    loadbalance::WeightedRoundRobinLoadBalancer lb(discovery);
+    lb.set_weight("w1", 3);
+    lb.set_weight("w2", 1);
+    lb.update_instances("svc", {a1, a2});
+
+    std::map<std::string, int> hits;
+    for (int i = 0; i < 40; ++i) {
+        discovery::ServiceInstance out;
+        ASSERT_TRUE(lb.select_instance("svc", out));
+        hits[out.instance_id]++;
+    }
+    EXPECT_EQ(30, hits["w1"]);
+    EXPECT_EQ(10, hits["w2"]);
 }
 
 } // namespace

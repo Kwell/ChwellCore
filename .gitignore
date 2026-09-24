@@ -1,3 +1,7 @@
+build*/
+build-check/
+build-lib/
+
 # Build
 build/
 *.o

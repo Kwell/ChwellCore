@@ -130,8 +130,8 @@ public:
     // OPEN 超时后尝试进入 HALF_OPEN（供 execute_with_result 调用）
     bool try_recover_from_open();
 
-    // OPEN 超时后尝试进入 HALF_OPEN（供 execute_with_result 调用）
-    bool try_recover_from_open();
+    // HALF_OPEN 探测名额（超过 half_open_calls 返回 false）
+    bool try_acquire_half_open_slot();
 
 private:
     // 获取当前时间戳（毫秒）
@@ -175,6 +175,15 @@ CircuitBreakerResult CircuitBreaker::execute_with_result(std::function<T()> func
             return result;
         }
         result.state = get_state();
+    }
+
+    // HALF_OPEN 探测名额限制，与 execute() 对齐
+    if (result.state == CircuitState::HALF_OPEN) {
+        auto* def = dynamic_cast<DefaultCircuitBreaker*>(this);
+        if (def && !def->try_acquire_half_open_slot()) {
+            result.reason = "Half-open calls exceeded";
+            return result;
+        }
     }
 
     auto start_time = std::chrono::system_clock::now();

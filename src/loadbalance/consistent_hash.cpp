@@ -35,6 +35,9 @@ void ConsistentHashLoadBalancer::add_instance(
     const std::string& instance_id,
     int weight) {
 
+    // Re-register must drop old vnodes first, otherwise weight changes stack
+    remove_instance(service_id, instance_id);
+
     // 根据权重调整虚拟节点数
     int node_count = virtual_nodes_ * weight;
 

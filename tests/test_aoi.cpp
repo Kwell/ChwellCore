@@ -170,3 +170,23 @@ TEST(CrossListAoiTest, BasicOperations) {
     EXPECT_TRUE(aoi.remove_entity(1));
     EXPECT_EQ(aoi.total_entities(), 1);
 }
+
+TEST_F(AoiTest, CallbackCanReenterAoi) {
+    // 回调在锁外派发：内部再次调用 AOI API 不得死锁
+    int cb_count = 0;
+    aoi_->set_callback([&](const aoi::AoiEvent& ev) {
+        ++cb_count;
+        aoi::Entity tmp;
+        (void)aoi_->get_entity(ev.target_id, tmp);
+        (void)aoi_->total_entities();
+    });
+
+    EXPECT_TRUE(aoi_->add_entity(aoi::Entity(1, 100, 100, aoi::EntityType::PLAYER)));
+    EXPECT_TRUE(aoi_->add_entity(aoi::Entity(2, 110, 110, aoi::EntityType::NPC)));
+    EXPECT_GT(cb_count, 0);
+
+    cb_count = 0;
+    EXPECT_TRUE(aoi_->update_entity(2, 300, 300));
+    EXPECT_TRUE(aoi_->remove_entity(1));
+}
+

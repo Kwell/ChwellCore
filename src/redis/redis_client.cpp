@@ -280,11 +280,16 @@ RedisReply RedisClient::execute(const std::vector<std::string>& args) {
     }
     else if (cmd == "EXISTS" && args.size() >= 2) {
         check_expire(args[1]);
+        bool exists = data_.count(args[1]) || hashes_.count(args[1]) ||
+                      lists_.count(args[1]) || sets_.count(args[1]) || zsets_.count(args[1]);
         reply.type = ReplyType::INTEGER;
-        reply.integer = data_.count(args[1]) ? 1 : 0;
+        reply.integer = exists ? 1 : 0;
     }
     else if (cmd == "EXPIRE" && args.size() >= 3) {
-        if (data_.count(args[1])) {
+        check_expire(args[1]);
+        bool exists = data_.count(args[1]) || hashes_.count(args[1]) ||
+                      lists_.count(args[1]) || sets_.count(args[1]) || zsets_.count(args[1]);
+        if (exists) {
             auto now = std::chrono::steady_clock::now().time_since_epoch().count() / 1000000000;
             expires_[args[1]] = now + std::stoll(args[2]);
             reply.type = ReplyType::INTEGER;
@@ -295,7 +300,10 @@ RedisReply RedisClient::execute(const std::vector<std::string>& args) {
         }
     }
     else if (cmd == "TTL" && args.size() >= 2) {
-        if (!data_.count(args[1])) {
+        check_expire(args[1]);
+        bool exists = data_.count(args[1]) || hashes_.count(args[1]) ||
+                      lists_.count(args[1]) || sets_.count(args[1]) || zsets_.count(args[1]);
+        if (!exists) {
             reply.type = ReplyType::INTEGER;
             reply.integer = -2;
         } else if (!expires_.count(args[1])) {
@@ -308,12 +316,14 @@ RedisReply RedisClient::execute(const std::vector<std::string>& args) {
         }
     }
     else if (cmd == "INCR" && args.size() >= 2) {
+        check_expire(args[1]);
         int64_t val = data_.count(args[1]) ? std::stoll(data_[args[1]]) : 0;
         data_[args[1]] = std::to_string(++val);
         reply.type = ReplyType::INTEGER;
         reply.integer = val;
     }
     else if (cmd == "INCRBY" && args.size() >= 3) {
+        check_expire(args[1]);
         int64_t val = data_.count(args[1]) ? std::stoll(data_[args[1]]) : 0;
         val += std::stoll(args[2]);
         data_[args[1]] = std::to_string(val);
@@ -321,11 +331,13 @@ RedisReply RedisClient::execute(const std::vector<std::string>& args) {
         reply.integer = val;
     }
     else if (cmd == "HSET" && args.size() >= 4) {
+        check_expire(args[1]);
         hashes_[args[1]][args[2]] = args[3];
         reply.type = ReplyType::INTEGER;
         reply.integer = 1;
     }
     else if (cmd == "HGET" && args.size() >= 3) {
+        check_expire(args[1]);
         auto it = hashes_.find(args[1]);
         if (it != hashes_.end() && it->second.count(args[2])) {
             reply.type = ReplyType::STRING;
@@ -335,6 +347,7 @@ RedisReply RedisClient::execute(const std::vector<std::string>& args) {
         }
     }
     else if (cmd == "HGETALL" && args.size() >= 2) {
+        check_expire(args[1]);
         reply.type = ReplyType::ARRAY;
         auto it = hashes_.find(args[1]);
         if (it != hashes_.end()) {
@@ -348,6 +361,7 @@ RedisReply RedisClient::execute(const std::vector<std::string>& args) {
         }
     }
     else if (cmd == "HEXISTS" && args.size() >= 3) {
+        check_expire(args[1]);
         auto it = hashes_.find(args[1]);
         if (it != hashes_.end() && it->second.count(args[2])) {
             reply.type = ReplyType::INTEGER;
@@ -358,6 +372,7 @@ RedisReply RedisClient::execute(const std::vector<std::string>& args) {
         }
     }
     else if (cmd == "HDEL" && args.size() >= 3) {
+        check_expire(args[1]);
         auto it = hashes_.find(args[1]);
         if (it != hashes_.end() && it->second.erase(args[2])) {
             reply.type = ReplyType::INTEGER;
@@ -368,21 +383,25 @@ RedisReply RedisClient::execute(const std::vector<std::string>& args) {
         }
     }
     else if (cmd == "HLEN" && args.size() >= 2) {
+        check_expire(args[1]);
         auto it = hashes_.find(args[1]);
         reply.type = ReplyType::INTEGER;
         reply.integer = it != hashes_.end() ? (int64_t)it->second.size() : 0;
     }
     else if (cmd == "LPUSH" && args.size() >= 3) {
+        check_expire(args[1]);
         lists_[args[1]].push_front(args[2]);
         reply.type = ReplyType::INTEGER;
         reply.integer = lists_[args[1]].size();
     }
     else if (cmd == "RPUSH" && args.size() >= 3) {
+        check_expire(args[1]);
         lists_[args[1]].push_back(args[2]);
         reply.type = ReplyType::INTEGER;
         reply.integer = lists_[args[1]].size();
     }
     else if (cmd == "LPOP" && args.size() >= 2) {
+        check_expire(args[1]);
         auto it = lists_.find(args[1]);
         if (it != lists_.end() && !it->second.empty()) {
             reply.type = ReplyType::STRING;
@@ -393,6 +412,7 @@ RedisReply RedisClient::execute(const std::vector<std::string>& args) {
         }
     }
     else if (cmd == "RPOP" && args.size() >= 2) {
+        check_expire(args[1]);
         auto it = lists_.find(args[1]);
         if (it != lists_.end() && !it->second.empty()) {
             reply.type = ReplyType::STRING;
@@ -403,6 +423,7 @@ RedisReply RedisClient::execute(const std::vector<std::string>& args) {
         }
     }
     else if (cmd == "LRANGE" && args.size() >= 4) {
+        check_expire(args[1]);
         reply.type = ReplyType::ARRAY;
         auto it = lists_.find(args[1]);
         if (it != lists_.end()) {
@@ -423,18 +444,22 @@ RedisReply RedisClient::execute(const std::vector<std::string>& args) {
         }
     }
     else if (cmd == "SADD" && args.size() >= 3) {
+        check_expire(args[1]);
         reply.type = ReplyType::INTEGER;
         reply.integer = sets_[args[1]].insert(args[2]).second ? 1 : 0;
     }
     else if (cmd == "SREM" && args.size() >= 3) {
+        check_expire(args[1]);
         reply.type = ReplyType::INTEGER;
         reply.integer = sets_[args[1]].erase(args[2]);
     }
     else if (cmd == "SISMEMBER" && args.size() >= 3) {
+        check_expire(args[1]);
         reply.type = ReplyType::INTEGER;
         reply.integer = sets_[args[1]].count(args[2]) ? 1 : 0;
     }
     else if (cmd == "SMEMBERS" && args.size() >= 2) {
+        check_expire(args[1]);
         reply.type = ReplyType::ARRAY;
         auto it = sets_.find(args[1]);
         if (it != sets_.end()) {
@@ -447,11 +472,13 @@ RedisReply RedisClient::execute(const std::vector<std::string>& args) {
         }
     }
     else if (cmd == "SCARD" && args.size() >= 2) {
+        check_expire(args[1]);
         auto it = sets_.find(args[1]);
         reply.type = ReplyType::INTEGER;
         reply.integer = it != sets_.end() ? (int64_t)it->second.size() : 0;
     }
     else if (cmd == "ZADD" && args.size() >= 4) {
+        check_expire(args[1]);
         double score = std::stod(args[2]);
         auto& zset = zsets_[args[1]];
         bool found = false;
@@ -470,6 +497,7 @@ RedisReply RedisClient::execute(const std::vector<std::string>& args) {
         reply.integer = found ? 0 : 1;
     }
     else if (cmd == "ZRANGE" && args.size() >= 4) {
+        check_expire(args[1]);
         reply.type = ReplyType::ARRAY;
         auto it = zsets_.find(args[1]);
         if (it != zsets_.end()) {
@@ -490,6 +518,7 @@ RedisReply RedisClient::execute(const std::vector<std::string>& args) {
         }
     }
     else if (cmd == "ZREM" && args.size() >= 3) {
+        check_expire(args[1]);
         auto it = zsets_.find(args[1]);
         reply.type = ReplyType::INTEGER;
         reply.integer = 0;
@@ -504,6 +533,7 @@ RedisReply RedisClient::execute(const std::vector<std::string>& args) {
         }
     }
     else if (cmd == "ZSCORE" && args.size() >= 3) {
+        check_expire(args[1]);
         auto it = zsets_.find(args[1]);
         if (it != zsets_.end()) {
             for (const auto& p : it->second) {
@@ -519,6 +549,7 @@ RedisReply RedisClient::execute(const std::vector<std::string>& args) {
         }
     }
     else if (cmd == "ZRANK" && args.size() >= 3) {
+        check_expire(args[1]);
         auto it = zsets_.find(args[1]);
         reply.type = ReplyType::INTEGER;
         reply.integer = -1;
@@ -532,11 +563,13 @@ RedisReply RedisClient::execute(const std::vector<std::string>& args) {
         }
     }
     else if (cmd == "ZCARD" && args.size() >= 2) {
+        check_expire(args[1]);
         auto it = zsets_.find(args[1]);
         reply.type = ReplyType::INTEGER;
         reply.integer = it != zsets_.end() ? (int64_t)it->second.size() : 0;
     }
     else if (cmd == "LLEN" && args.size() >= 2) {
+        check_expire(args[1]);
         auto it = lists_.find(args[1]);
         reply.type = ReplyType::INTEGER;
         reply.integer = it != lists_.end() ? (int64_t)it->second.size() : 0;

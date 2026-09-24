@@ -1,6 +1,8 @@
 #include <gtest/gtest.h>
 
 #include "chwell/redis/redis_client.h"
+#include <thread>
+#include <chrono>
 
 using namespace chwell;
 
@@ -177,3 +179,37 @@ TEST_F(RedisClientTest, ExecuteCommand) {
     EXPECT_TRUE(reply.ok());
     EXPECT_EQ(reply.str, "cmd_value");
 }
+TEST_F(RedisClientTest, LazyExpireOnHashAndList) {
+    client_->hset("exp_hash", "f", "v");
+    client_->execute({"EXPIRE", "exp_hash", "1"});
+    EXPECT_TRUE(client_->exists("exp_hash"));
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+    std::string v;
+    EXPECT_FALSE(client_->hget("exp_hash", "f", v));
+    EXPECT_FALSE(client_->exists("exp_hash"));
+
+    client_->execute({"RPUSH", "exp_list", "a"});
+    client_->execute({"EXPIRE", "exp_list", "1"});
+    std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+    auto r = client_->execute({"LLEN", "exp_list"});
+    EXPECT_TRUE(r.is_integer());
+    EXPECT_EQ(0, r.integer);
+}
+
+TEST_F(RedisClientTest, LazyExpireOnSetAndZset) {
+    client_->execute({"SADD", "exp_set", "m"});
+    client_->execute({"EXPIRE", "exp_set", "1"});
+    std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+    auto r1 = client_->execute({"SCARD", "exp_set"});
+    EXPECT_TRUE(r1.is_integer());
+    EXPECT_EQ(0, r1.integer);
+
+    client_->execute({"ZADD", "exp_z", "1", "m"});
+    client_->execute({"EXPIRE", "exp_z", "1"});
+    std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+    auto r2 = client_->execute({"ZCARD", "exp_z"});
+    EXPECT_TRUE(r2.is_integer());
+    EXPECT_EQ(0, r2.integer);
+}
+
