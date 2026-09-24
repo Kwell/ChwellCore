@@ -136,27 +136,6 @@ private:
     bool use_mock_{true};    // true=内存 mock，false=RESP/TCP
     int fd_{-1};             // RESP 连接 fd
     std::string rbuf_;       // RESP 读缓冲
-    bool use_mock_{true};    // true=内存 mock，false=RESP/TCP
-    int fd_{-1};             // RESP 连接 fd
-    std::string rbuf_;       // RESP 读缓冲
-    bool use_mock_{true};    // true=内存 mock，false=RESP/TCP
-    int fd_{-1};             // RESP 连接 fd
-    std::string rbuf_;       // RESP 读缓冲
-    bool use_mock_{true};    // true=内存 mock，false=RESP/TCP
-    int fd_{-1};             // RESP 连接 fd
-    std::string rbuf_;       // RESP 读缓冲
-    bool use_mock_{true};    // true=内存 mock，false=RESP/TCP
-    int fd_{-1};             // RESP 连接 fd
-    std::string rbuf_;       // RESP 读缓冲
-    bool use_mock_{true};    // true=内存 mock，false=RESP/TCP
-    int fd_{-1};             // RESP 连接 fd
-    std::string rbuf_;       // RESP 读缓冲
-    bool use_mock_{true};    // true=内存 mock，false=RESP/TCP
-    int fd_{-1};             // RESP 连接 fd
-    std::string rbuf_;       // RESP 读缓冲
-    bool use_mock_{true};    // true=内存 mock，false=RESP/TCP
-    int fd_{-1};             // RESP 连接 fd
-    std::string rbuf_;       // RESP 读缓冲
     
     // 内存模拟存储（无 hiredis 时使用）
     std::unordered_map<std::string, std::string> data_;
