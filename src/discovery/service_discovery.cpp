@@ -93,31 +93,48 @@ bool MemoryServiceDiscovery::register_service(const ServiceInstance& instance) {
 }
 
 bool MemoryServiceDiscovery::deregister_service(const std::string& instance_id) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<ServiceListener> listeners_to_notify;
+    ServiceInstance removed;
+    std::string service_id;
 
-    auto it = instances_.find(instance_id);
-    if (it == instances_.end()) {
-        CHWELL_LOG_WARN("Instance not found: " + instance_id);
-        return false;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        auto it = instances_.find(instance_id);
+        if (it == instances_.end()) {
+            CHWELL_LOG_WARN("Instance not found: " + instance_id);
+            return false;
+        }
+
+        removed = it->second;
+        service_id = removed.service_id;
+        removed.is_alive = false;
+
+        instances_.erase(it);
+
+        auto sit = service_index_.find(service_id);
+        if (sit != service_index_.end()) {
+            sit->second.erase(instance_id);
+            if (sit->second.empty()) {
+                service_index_.erase(sit);
+            }
+        }
+
+        auto lit = listeners_.find(service_id);
+        if (lit != listeners_.end()) {
+            listeners_to_notify = lit->second;
+        }
+
+        CHWELL_LOG_INFO("Service deregistered: " + service_id +
+                        ", instance: " + instance_id);
     }
 
-    ServiceInstance instance = it->second;
-    std::string service_id = instance.service_id;
-
-    // 从实例表移除
-    auto removed = it->second; it = instances_.erase(it); for (auto& lis : listeners_) { try { lis(removed, false); } catch (...) {} }
-
-    // 从服务索引移除
-    auto sit = service_index_.find(service_id);
-    if (sit != service_index_.end()) {
-        sit->second.erase(instance_id);
-        if (sit->second.empty()) {
-            service_index_.erase(sit);
+    for (const auto& listener : listeners_to_notify) {
+        try {
+            listener(service_id, removed);
+        } catch (...) {
         }
     }
-
-    CHWELL_LOG_INFO("Service deregistered: " + service_id +
-                    ", instance: " + instance_id);
 
     return true;
 }
@@ -217,10 +234,13 @@ bool MemoryServiceDiscovery::is_alive(const std::string& instance_id) {
 }
 
 void MemoryServiceDiscovery::cleanup_expired_instances() {
-    std::lock_guard<std::mutex> lock(mutex_);
-
     std::int64_t now = current_timestamp_ms();
     std::vector<std::string> expired_instances;
+    std::vector<std::pair<std::string, ServiceInstance>> removed_notify;
+    std::vector<ServiceListener> listeners_to_notify;
+
+    {
+    std::lock_guard<std::mutex> lock(mutex_);
 
     // 查找过期实例
     for (auto& pair : instances_) {
@@ -239,10 +259,10 @@ void MemoryServiceDiscovery::cleanup_expired_instances() {
         if (it != instances_.end()) {
             ServiceInstance instance = it->second;
             std::string service_id = instance.service_id;
+            instance.is_alive = false;
 
-            auto removed = it->second; it = instances_.erase(it); for (auto& lis : listeners_) { try { lis(removed, false); } catch (...) {} }
+            instances_.erase(it);
 
-            // 从服务索引移除
             auto sit = service_index_.find(service_id);
             if (sit != service_index_.end()) {
                 sit->second.erase(instance_id);
@@ -250,6 +270,13 @@ void MemoryServiceDiscovery::cleanup_expired_instances() {
                     service_index_.erase(sit);
                 }
             }
+
+            auto lit = listeners_.find(service_id);
+            if (lit != listeners_.end()) {
+                listeners_to_notify.insert(listeners_to_notify.end(),
+                                           lit->second.begin(), lit->second.end());
+            }
+            removed_notify.emplace_back(service_id, instance);
 
             CHWELL_LOG_WARN("Instance expired: " + instance_id +
                            ", service: " + service_id);
@@ -259,6 +286,16 @@ void MemoryServiceDiscovery::cleanup_expired_instances() {
     if (!expired_instances.empty()) {
         CHWELL_LOG_INFO("Cleaned up " + std::to_string(expired_instances.size()) +
                        " expired instances");
+    }
+    } // unlock
+
+    for (const auto& entry : removed_notify) {
+        for (const auto& listener : listeners_to_notify) {
+            try {
+                listener(entry.first, entry.second);
+            } catch (...) {
+            }
+        }
     }
 }
 
