@@ -10,6 +10,10 @@ namespace http {
 
 namespace {
 
+// 请求/响应体大小上限，防止恶意大包导致内存耗尽
+static const std::size_t MAX_BODY_SIZE = 10 * 1024 * 1024;      // 10MB
+static const std::size_t MAX_REQUEST_SIZE = 16 * 1024 * 1024;   // 16MB
+
 // 连接会话，负责读取并解析一个 HTTP 请求，然后调用用户 handler，最后发送响应并关闭。
 class HttpSession {
 public:
@@ -22,9 +26,6 @@ public:
     void run() {
         std::string request_data;
         request_data.reserve(8192);
-
-        // 限制请求总大小（含头部），防止慢速攻击和内存耗尽
-        static const std::size_t MAX_REQUEST_SIZE = 16 * 1024 * 1024;  // 16MB
 
         while (socket_.is_open()) {
             ssize_t n = socket_.read(buffer_.data(), buffer_.size());
@@ -156,9 +157,7 @@ private:
         std::string content_length_str = req.header("Content-Length");
         if (!content_length_str.empty()) {
             int len = std::atoi(content_length_str.c_str());
-            // 限制请求体大小，防止恶意大包导致内存耗尽
-            static const int MAX_BODY_SIZE = 10 * 1024 * 1024;  // 10MB
-            if (len > MAX_BODY_SIZE) {
+            if (len < 0 || static_cast<std::size_t>(len) > MAX_BODY_SIZE) {
                 CHWELL_LOG_WARN("HttpSession body too large: " << len);
                 return false;  // 解析失败，调用方会关闭连接
             }
