@@ -145,7 +145,7 @@ void LeakyBucketRateLimiter::reset(const std::string& key) {
 
     auto it = buckets_.find(key);
     if (it != buckets_.end()) {
-        it->second.tokens = capacity_;
+        it->second.tokens = 0;
         it->second.last_leak_time_ms = current_timestamp_ms();
     }
 }
@@ -154,7 +154,7 @@ void LeakyBucketRateLimiter::reset_all() {
     std::lock_guard<std::mutex> lock(mutex_);
 
     for (auto& pair : buckets_) {
-        pair.second.tokens = capacity_;
+        pair.second.tokens = 0;
         pair.second.last_leak_time_ms = current_timestamp_ms();
     }
 }
@@ -170,7 +170,8 @@ int64_t LeakyBucketRateLimiter::get_remaining(const std::string& key) {
     Bucket& bucket = it->second;
     leak_tokens(bucket);
 
-    return bucket.tokens;
+    // tokens 表示已占用水量；remaining = 容量 - 已占用
+    return capacity_ - bucket.tokens;
 }
 
 void LeakyBucketRateLimiter::leak_tokens(Bucket& bucket) {
