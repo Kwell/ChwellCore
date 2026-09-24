@@ -88,7 +88,7 @@ private:
     std::shared_ptr<discovery::ServiceDiscovery> discovery_;
     LoadBalanceStrategy strategy_ = LoadBalanceStrategy::ROUND_ROBIN;
     std::atomic<size_t> current_index_;
-    std::vector<discovery::ServiceInstance> instances_;
+    std::unordered_map<std::string, std::vector<discovery::ServiceInstance>> instances_by_service_;
     std::unordered_map<std::string, int> weights_;
     mutable std::shared_mutex mutex_;
 };
@@ -134,7 +134,7 @@ private:
     std::shared_ptr<discovery::ServiceDiscovery> discovery_;
     LoadBalanceStrategy strategy_ = LoadBalanceStrategy::RANDOM;
     std::mt19937 rng_;
-    std::vector<discovery::ServiceInstance> instances_;
+    std::unordered_map<std::string, std::vector<discovery::ServiceInstance>> instances_by_service_;
     std::unordered_map<std::string, int> weights_;
     mutable std::shared_mutex mutex_;
 };
@@ -196,7 +196,7 @@ private:
     LoadBalanceStrategy strategy_ = LoadBalanceStrategy::WEIGHTED_ROUND_ROBIN;
 
     // 配置层（写操作）
-    std::vector<discovery::ServiceInstance> instances_;
+    std::unordered_map<std::string, std::vector<discovery::ServiceInstance>> instances_by_service_;
     std::unordered_map<std::string, int> weights_;
 
     // 紧凑缓存层（读操作热点路径）

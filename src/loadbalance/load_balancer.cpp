@@ -15,9 +15,9 @@ bool RoundRobinLoadBalancer::select_instance(const std::string& service_id, disc
         std::shared_lock<std::shared_mutex> lock(mutex_);
 
         // 如果实例列表已缓存，直接轮询（快速路径）
-        if (!instances_.empty()) {
+        if (!instances_by_service_[service_id].empty()) {
             size_t index = current_index_.fetch_add(1, std::memory_order_relaxed) % instances_.size();
-            out = instances_[index];
+            out = instances_by_service_[service_id][index];
             return true;
         }
     }
@@ -27,21 +27,21 @@ bool RoundRobinLoadBalancer::select_instance(const std::string& service_id, disc
         std::unique_lock<std::shared_mutex> lock(mutex_);
 
         // 双重检查，可能其他线程已经填充了
-        if (!instances_.empty()) {
+        if (!instances_by_service_[service_id].empty()) {
             size_t index = current_index_.fetch_add(1, std::memory_order_relaxed) % instances_.size();
-            out = instances_[index];
+            out = instances_by_service_[service_id][index];
             return true;
         }
 
         CHWELL_LOG_DEBUG("Fetching instances for service: " << service_id);
-        instances_ = discovery_->discover_services(service_id);
+        instances_by_service_[service_id] = discovery_->discover_services(service_id); auto& instances_ = instances_by_service_[service_id];
         if (instances_.empty()) {
             CHWELL_LOG_WARN("No available instances for service: " + service_id);
             return false;
         }
 
         size_t index = current_index_.fetch_add(1, std::memory_order_relaxed) % instances_.size();
-        out = instances_[index];
+        out = instances_by_service_[service_id][index];
 
         CHWELL_LOG_DEBUG("Fetched " << instances_.size() << " instances for service: " << service_id);
         return true;
@@ -63,7 +63,7 @@ bool RandomLoadBalancer::select_instance(const std::string& service_id, discover
     std::unique_lock<std::shared_mutex> lock(mutex_);
 
     if (instances_.empty()) {
-        instances_ = discovery_->discover_services(service_id);
+        instances_by_service_[service_id] = discovery_->discover_services(service_id); auto& instances_ = instances_by_service_[service_id];
         if (instances_.empty()) {
             CHWELL_LOG_WARN("No available instances for service: " + service_id);
             return false;
@@ -72,7 +72,7 @@ bool RandomLoadBalancer::select_instance(const std::string& service_id, discover
 
     std::uniform_int_distribution<size_t> dist(0, instances_.size() - 1);
     size_t index = dist(rng_);
-    out = instances_[index];
+    out = instances_by_service_[service_id][index];
     return true;
 }
 
@@ -92,7 +92,7 @@ void WeightedRoundRobinLoadBalancer::rebuild_cache() {
     cache_.reserve(instances_.size());
     total_weight_ = 0;
 
-    for (const auto& inst : instances_) {
+    for (const auto& inst : instances_by_service_[service_id]) {
         auto it = weights_.find(inst.instance_id);
         int w = (it != weights_.end()) ? it->second : 1;
         cache_.push_back({inst, w, 0});
@@ -107,7 +107,7 @@ bool WeightedRoundRobinLoadBalancer::select_instance(const std::string& service_
 
     // 如果实例列表为空，从服务发现获取
     if (instances_.empty()) {
-        instances_ = discovery_->discover_services(service_id);
+        instances_by_service_[service_id] = discovery_->discover_services(service_id); auto& instances_ = instances_by_service_[service_id];
         if (instances_.empty()) {
             CHWELL_LOG_WARN("No available instances for service: " + service_id);
             return false;
