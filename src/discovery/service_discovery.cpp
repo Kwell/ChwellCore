@@ -105,7 +105,7 @@ bool MemoryServiceDiscovery::deregister_service(const std::string& instance_id) 
     std::string service_id = instance.service_id;
 
     // 从实例表移除
-    instances_.erase(it);
+    auto removed = it->second; it = instances_.erase(it); for (auto& lis : listeners_) { try { lis(removed, false); } catch (...) {} }
 
     // 从服务索引移除
     auto sit = service_index_.find(service_id);
@@ -240,7 +240,7 @@ void MemoryServiceDiscovery::cleanup_expired_instances() {
             ServiceInstance instance = it->second;
             std::string service_id = instance.service_id;
 
-            instances_.erase(it);
+            auto removed = it->second; it = instances_.erase(it); for (auto& lis : listeners_) { try { lis(removed, false); } catch (...) {} }
 
             // 从服务索引移除
             auto sit = service_index_.find(service_id);

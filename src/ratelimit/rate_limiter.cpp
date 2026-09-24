@@ -86,7 +86,7 @@ void TokenBucketRateLimiter::refill_tokens(Bucket& bucket) {
     if (elapsed_ms > 0) {
         // 计算应该补充的令牌数
         double tokens_to_add = (elapsed_ms / 1000.0) * refill_rate_per_second_;
-        bucket.tokens = std::min(capacity_, static_cast<int64_t>(bucket.tokens + static_cast<int64_t>(tokens_to_add)));
+        double whole = tokens_to_add; int64_t add = static_cast<int64_t>(whole); bucket.tokens = std::min(capacity_, bucket.tokens + add);
         bucket.last_refill_time_ms = now;
     }
 }
