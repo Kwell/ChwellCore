@@ -97,24 +97,22 @@ TEST(RoomComponentIntegrationTest, BasicOperations) {
     auto conn2 = test::MockConnectionFactoryV2::create();
     auto conn3 = test::MockConnectionFactoryV2::create();
 
-    // 创建两个房间
+    // join_room 实行一人一房（与 SessionManager 一致）：conn2 进 room2 会离开 room1
     room_comp.join_room(conn1, "room1");
     room_comp.join_room(conn2, "room1");
     room_comp.join_room(conn2, "room2");
     room_comp.join_room(conn3, "room1");
 
-    // 测试获取房间内的连接
     auto room1_conns = room_comp.get_connections_in_room("room1");
-    EXPECT_EQ(3u, room1_conns.size());
+    EXPECT_EQ(2u, room1_conns.size());  // conn1 + conn3
 
     auto room2_conns = room_comp.get_connections_in_room("room2");
-    EXPECT_EQ(1u, room2_conns.size());
+    EXPECT_EQ(1u, room2_conns.size());  // conn2
 
-    // 测试离开房间
     room_comp.leave_room(conn1);
 
     room1_conns = room_comp.get_connections_in_room("room1");
-    EXPECT_EQ(2u, room1_conns.size());
+    EXPECT_EQ(1u, room1_conns.size());  // conn3
 
     // 测试连接断开时自动离开房间
     room_comp.on_disconnect(conn2);
