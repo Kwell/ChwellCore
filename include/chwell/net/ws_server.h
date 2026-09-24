@@ -27,8 +27,6 @@ public:
     void start_accept();
     void stop();
     ~WsServer() { stop(); }
-    ~WsServer() { stop(); }
-    ~WsServer() { stop(); }
 
     void set_message_callback(const WsMessageCallback& cb) { message_cb_ = cb; }
     void set_connection_callback(const WsConnectionCallback& cb) { connection_cb_ = cb; }
