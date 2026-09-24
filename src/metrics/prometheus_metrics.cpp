@@ -148,9 +148,9 @@ PrometheusRegistry& get_prometheus_registry() {
 void PrometheusRegistry::reset() {
     std::lock_guard<std::mutex> lock(mutex_);
 
-    counters_.clear();
-    gauges_.clear();
-    histograms_.clear();
+    for (auto& kv : counters_) { kv.second->set(0); }
+    for (auto& kv : gauges_) { kv.second->set(0); }
+    
     summaries_.clear();
     metric_infos_.clear();
 }
