@@ -1,6 +1,8 @@
 #include <gtest/gtest.h>
 #include <thread>
 #include <chrono>
+#include <atomic>
+#include <mutex>
 
 #include "chwell/core/timer_wheel.h"
 
@@ -11,16 +13,16 @@ TEST(TimerWheelTest, AddOneShotTimer) {
     core::TimerWheel wheel(100, 60, 4);
     wheel.start();
     
-    int counter = 0;
+    std::atomic<int> counter{0};
     auto handle = wheel.add_timer(200, [&counter]() {
-        counter++;
+        counter.fetch_add(1, std::memory_order_relaxed);
     });
-    
+
     EXPECT_TRUE(handle.valid());
-    
+
     // 增加等待时间，确保定时器触发
     std::this_thread::sleep_for(400ms);
-    EXPECT_GE(counter, 1);
+    EXPECT_GE(counter.load(std::memory_order_relaxed), 1);
     
     wheel.stop();
 }
@@ -29,21 +31,21 @@ TEST(TimerWheelTest, AddRepeatingTimer) {
     core::TimerWheel wheel(100, 60, 4);
     wheel.start();
     
-    int counter = 0;
+    std::atomic<int> counter{0};
     // 间隔 > tick_ms（100），且不是整数倍，避免相位对齐问题
     auto handle = wheel.add_repeat_timer(150, [&counter]() {
-        counter++;
+        counter.fetch_add(1, std::memory_order_relaxed);
     });
-    
+
     EXPECT_TRUE(handle.valid());
-    
+
     std::this_thread::sleep_for(500ms);
-    EXPECT_GE(counter, 2);
-    
+    EXPECT_GE(counter.load(std::memory_order_relaxed), 2);
+
     wheel.cancel_timer(handle);
-    int prev = counter;
+    int prev = counter.load(std::memory_order_relaxed);
     std::this_thread::sleep_for(300ms);
-    EXPECT_EQ(counter, prev);
+    EXPECT_EQ(counter.load(std::memory_order_relaxed), prev);
     
     wheel.stop();
 }
@@ -52,16 +54,16 @@ TEST(TimerWheelTest, CancelTimer) {
     core::TimerWheel wheel(100, 60, 4);
     wheel.start();
     
-    int counter = 0;
+    std::atomic<int> counter{0};
     auto handle = wheel.add_timer(500, [&counter]() {
-        counter++;
+        counter.fetch_add(1, std::memory_order_relaxed);
     });
-    
+
     wheel.cancel_timer(handle);
     EXPECT_FALSE(handle.valid());
-    
+
     std::this_thread::sleep_for(600ms);
-    EXPECT_EQ(counter, 0);
+    EXPECT_EQ(counter.load(std::memory_order_relaxed), 0);
     
     wheel.stop();
 }
@@ -71,19 +73,27 @@ TEST(TimerWheelTest, MultipleTimers) {
     wheel.start();
 
     std::vector<int> order;
+    std::mutex order_mu;
 
     // 注意：由于时间精度问题，定时器的触发顺序可能会有细微偏差
     // 这个测试验证的是所有定时器都能正确触发，而不是严格的顺序
-    wheel.add_timer(300, [&order]() { order.push_back(3); });
-    wheel.add_timer(100, [&order]() { order.push_back(1); });
-    wheel.add_timer(200, [&order]() { order.push_back(2); });
+    auto push = [&](int v) {
+        std::lock_guard<std::mutex> lk(order_mu);
+        order.push_back(v);
+    };
+    wheel.add_timer(300, [&push]() { push(3); });
+    wheel.add_timer(100, [&push]() { push(1); });
+    wheel.add_timer(200, [&push]() { push(2); });
 
     // 等待 2000ms：给最长 300ms 定时器充足裕量
     // 同时考虑到系统负载和时间精度问题
     std::this_thread::sleep_for(2000ms);
 
     // 验证所有定时器都触发了
-    ASSERT_EQ(order.size(), 3u);
+    {
+        std::lock_guard<std::mutex> lk(order_mu);
+        ASSERT_EQ(order.size(), 3u);
+    }
 
     // 验证包含所有预期的值
     bool has_1 = std::find(order.begin(), order.end(), 1) != order.end();
@@ -100,13 +110,13 @@ TEST(TimerWheelTest, MultipleTimers) {
 TEST(TimerWheelTest, TimerWheelNotStarted) {
     core::TimerWheel wheel(100, 60, 4);
     
-    int counter = 0;
+    std::atomic<int> counter{0};
     wheel.add_timer(100, [&counter]() {
-        counter++;
+        counter.fetch_add(1, std::memory_order_relaxed);
     });
-    
+
     std::this_thread::sleep_for(200ms);
-    EXPECT_EQ(counter, 0);
+    EXPECT_EQ(counter.load(std::memory_order_relaxed), 0);
 }
 
 TEST(TimerWheelTest, IsTimerValid) {

@@ -46,11 +46,13 @@ public:
     static net::TcpConnectionPtr create() {
         int id = next_id();
         auto* mock_conn = new MockTcpConnection(id);
-        return net::TcpConnectionPtr(
-            reinterpret_cast<net::TcpConnection*>(mock_conn),
-            [](net::TcpConnection* ptr) {
-                delete reinterpret_cast<MockTcpConnection*>(ptr);
-            });
+        // 必须用 aliasing 构造：TcpConnection 继承 enable_shared_from_this，
+        // 若直接 shared_ptr<TcpConnection>(ptr, deleter) 会在 MockTcpConnection
+        // （仅数字段）上写 weak_this，造成 heap-buffer-overflow。
+        std::shared_ptr<void> owner(mock_conn, [](void* p) {
+            delete reinterpret_cast<MockTcpConnection*>(p);
+        });
+        return net::TcpConnectionPtr(owner, reinterpret_cast<net::TcpConnection*>(mock_conn));
     }
 
     static MockTcpConnection* unwrap(const net::TcpConnectionPtr& conn) {

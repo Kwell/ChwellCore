@@ -92,7 +92,8 @@ bool Document::from_string(const std::string& data) {
         data_.clear();
         for (YAML::const_iterator it = node.begin(); it != node.end(); ++it) {
             std::string key = it->first.as<std::string>();
-            const YAML::Node& val = it->second;
+            // 必须按值持有：it->second 返回临时 Node，绑定引用会 use-after-scope
+            YAML::Node val = it->second;
             std::string value;
             if (val.IsScalar()) {
                 value = val.as<std::string>();
