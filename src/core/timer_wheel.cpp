@@ -103,9 +103,16 @@ void TimerWheel::cancel_timer(TimerHandle& handle) {
     if (it != task_map_.end()) {
         auto task = it->second.lock();
         if (task) {
-            // 仅标记取消。list_iter/layer/slot 在 cascade 与 re-arm 后会失效，
-            // 直接 erase 悬垂迭代器是 UB；由 process_slot 清理 cancelled 节点。
             task->cancelled = true;
+            // 仍在链表上时 O(1) 摘除；已弹出（due/回调中）则只标记，避免悬垂迭代器
+            if (task->in_wheel && task->layer >= 0 &&
+                task->layer < static_cast<int>(wheels_.size())) {
+                auto& tasks = wheels_[task->layer].slots[task->slot].tasks;
+                tasks.erase(task->list_iter);
+                task->in_wheel = false;
+                task->layer = -1;
+                task->slot = -1;
+            }
         }
         task_map_.erase(it);
     }
@@ -140,13 +147,12 @@ std::pair<int, int> TimerWheel::add_task_to_wheel(std::shared_ptr<TimerTask> tas
 
             task->rounds_left = ticks / wheel.wheel_size;
 
-            // 🆕 记录定位信息
+            // 记录定位信息与迭代器
             task->layer = static_cast<int>(i);
             task->slot = slot;
-
-            // 🆕 记录迭代器
             wheel.slots[slot].tasks.push_back(task);
             task->list_iter = std::prev(wheel.slots[slot].tasks.end());
+            task->in_wheel = true;
 
             target_layer = static_cast<int>(i);
             target_slot = slot;
@@ -165,6 +171,7 @@ std::pair<int, int> TimerWheel::add_task_to_wheel(std::shared_ptr<TimerTask> tas
 
     last_wheel.slots[slot].tasks.push_back(task);
     task->list_iter = std::prev(last_wheel.slots[slot].tasks.end());
+    task->in_wheel = true;
 
     return {static_cast<int>(wheels_.size() - 1), slot};
 }
@@ -179,6 +186,9 @@ void TimerWheel::process_slot(int layer, int slot, std::vector<std::shared_ptr<T
 
         if (task->cancelled) {
             it = tasks.erase(it);
+            task->in_wheel = false;
+            task->layer = -1;
+            task->slot = -1;
             continue;
         }
 
@@ -190,6 +200,9 @@ void TimerWheel::process_slot(int layer, int slot, std::vector<std::shared_ptr<T
 
         due_tasks.push_back(task);
         it = tasks.erase(it);
+        task->in_wheel = false;
+        task->layer = -1;
+        task->slot = -1;
     }
 }
 
@@ -215,6 +228,7 @@ void TimerWheel::cascade(int layer) {
             task->slot = next_slot;
             wheels_[0].slots[next_slot].tasks.push_back(task);
             task->list_iter = std::prev(wheels_[0].slots[next_slot].tasks.end());
+            task->in_wheel = true;
         } else {
             add_task_to_wheel(task);
         }
@@ -244,6 +258,11 @@ void TimerWheel::tick() {
 
     // 在锁外执行回调
     for (auto& task : due_tasks) {
+        // 弹出后仍可能被 cancel：跳过回调
+        if (task->cancelled) {
+            continue;
+        }
+
         if (task->callback) {
             try {
                 task->callback();
@@ -256,16 +275,20 @@ void TimerWheel::tick() {
 
         // 重复定时器重新添加
         if (task->interval > 0 && !task->cancelled) {
-            // 🆕 重新计算 expire_time，基于当前时间而非上次到期时间
+            // 重新计算 expire_time，基于当前时间而非上次到期时间
             // 这样即使回调执行耗时较长，也不会导致重复定时器堆积
             task->expire_time = current_time_ms() + task->interval;
             auto new_task = std::make_shared<TimerTask>(*task);
-            // 重置无效的迭代器（add_task_to_wheel 会重新设置）
+            new_task->in_wheel = false;
             new_task->list_iter = {};
             new_task->layer = -1;
             new_task->slot = -1;
             {
                 std::lock_guard<std::mutex> lock2(mutex_);
+                // 回调期间可能已 cancel：不得复活已删除的 id
+                if (task->cancelled) continue;
+                auto map_it = task_map_.find(task->id);
+                if (map_it == task_map_.end()) continue;
                 add_task_to_wheel(new_task);
                 task_map_[task->id] = new_task;
             }

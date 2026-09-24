@@ -53,10 +53,11 @@ private:
  * - 多层时间轮，支持大范围延迟
  * - O(1) 添加、O(1) 取消（侵入式链表 + 定位信息）
  *
- * P2 改进：
- * - TimerTask 包含链表节点信息（prev/next 迭代器）
- * - TimerHandle 包含层号+槽号，cancel 时直接定位
- * - 取消操作从"标记 cancelled"升级为"直接从链表移除"
+ * 取消语义：
+ * - cancel 经 task_map_ 定位后，若任务仍挂在链表上（in_wheel），
+ *   用 list_iter 做 O(1) erase；否则仅标记 cancelled，由 process_slot 清理。
+ * - list_iter 只在 in_wheel==true 期间有效；cascade/re-arm 会同步刷新它。
+ * - TimerHandle 中的 layer/slot 为创建时快照，之后可能过期，不参与取消。
  */
 class TimerWheel {
 public:
@@ -68,15 +69,16 @@ public:
         int interval;             // 重复间隔（0表示一次性）
         int rounds_left;          // 剩余轮数（用于多层时间轮）
         bool cancelled;           // 是否已取消
+        bool in_wheel;            // 当前是否挂在某个 wheel slot 链表上（list_iter 仅此时有效）
 
-        // 🆕 链表定位信息（用于 O(1) 移除）
+        // 链表定位信息（用于 O(1) 移除）
         int layer;                // 所在层级
         int slot;                 // 所在槽位
-        typename std::list<std::shared_ptr<TimerTask>>::iterator list_iter;  // 🆕 链表迭代器
+        typename std::list<std::shared_ptr<TimerTask>>::iterator list_iter;  // 链表迭代器
 
         TimerTask()
             : id(0), expire_time(0), interval(0),
-              rounds_left(0), cancelled(false), layer(-1), slot(-1) {}
+              rounds_left(0), cancelled(false), in_wheel(false), layer(-1), slot(-1) {}
     };
 
     // 构造函数
@@ -97,10 +99,10 @@ public:
     TimerHandle add_repeat_timer(int interval_ms, TimerCallback callback);
 
     /**
-     * @brief 取消定时器（O(1) 优化）
+     * @brief 取消定时器
      *
-     * 如果 TimerHandle 含有层号+槽号，直接定位到链表并用迭代器移除。
-     * 否则 fallback 到 task_map_ 查找。
+     * task_map_ 哈希定位 + in_wheel 时 list_iter 链表 erase，均为 O(1)。
+     * 任务已弹出（回调前）则仅置 cancelled，跳过回调/续期。
      */
     void cancel_timer(TimerHandle& handle);
 
