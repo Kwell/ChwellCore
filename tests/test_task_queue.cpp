@@ -2,6 +2,7 @@
 #include <thread>
 #include <chrono>
 #include <atomic>
+#include <memory>
 
 #include "chwell/task/task_queue.h"
 
@@ -116,23 +117,29 @@ TEST_F(TaskQueueTest, TaskPriority) {
 
 TEST_F(TaskQueueTest, TaskWithTimeout) {
     queue_->start();
-    
-    std::atomic<bool> completed{false};
-    
+
+    // shared_ptr 持有：任务体 sleep 500ms，TestBody 只等 200ms 就返回，
+    // 回调在 TearDown join 之前触发，若捕获栈对象即 stack-use-after-return
+    auto completed = std::make_shared<std::atomic<bool>>(false);
+
     int64_t id = queue_->submit<void>(
         []() {
             std::this_thread::sleep_for(500ms);
         },
-        [&completed](const task::TaskResult<void>& r) {
-            completed = true;
+        [completed](const task::TaskResult<void>& r) {
+            (void)r;
+            completed->store(true, std::memory_order_relaxed);
         },
         task::TaskPriority::NORMAL,
         100  // 100ms timeout
     );
-    
+
     std::this_thread::sleep_for(200ms);
     // Task may or may not timeout depending on implementation
     EXPECT_GT(id, 0);
+
+    // 在 TestBody 内等慢任务收尾，避免把回调留到对象析构之后
+    queue_->stop();
 }
 
 TEST_F(TaskQueueTest, CancelTask) {
