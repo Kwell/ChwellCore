@@ -69,7 +69,7 @@ private:
     TcpConnectionPtr conn_;
 };
 
-// WsConnection 适配器
+// WsRawConnection 适配器（对外统一 IConnection）
 class WsConnectionAdapter : public IConnection {
 public:
     explicit WsConnectionAdapter(WsConnectionPtr conn) : conn_(conn) {}
@@ -110,7 +110,7 @@ inline ConnectionPtr make_connection(TcpConnectionPtr conn) {
     return std::make_shared<TcpConnectionAdapter>(conn);
 }
 
-// 工厂函数：从 WsConnection 创建 IConnection
+// 工厂函数：从 WsConnectionPtr 创建 IConnection
 inline ConnectionPtr make_connection(WsConnectionPtr conn) {
     return std::make_shared<WsConnectionAdapter>(conn);
 }

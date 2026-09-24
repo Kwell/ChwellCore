@@ -29,8 +29,6 @@ public:
     void start_accept();
     void stop();
     ~TcpServer() { stop(); }
-    ~TcpServer() { stop(); }
-    ~TcpServer() { stop(); }
 
     /// Returns true if the acceptor's listen socket is valid and ready to accept.
     bool is_valid() const { return acceptor_.listen_fd() >= 0; }

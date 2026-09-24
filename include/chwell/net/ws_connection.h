@@ -22,7 +22,7 @@ typedef std::shared_ptr<WsRawConnection> WsConnectionPtr;
 typedef std::function<void(const WsConnectionPtr&, const std::string&)> WsMessageCallback;
 typedef std::function<void(const WsConnectionPtr&)> WsConnectionCallback;
 
-// 非完整实现的 WebSocket 连接封装骨架（实际为原始 TCP 流）
+// RFC6455 WebSocket 连接（握手 + 帧编解码）
 class WsRawConnection : public std::enable_shared_from_this<WsRawConnection> {
 public:
     explicit WsRawConnection(TcpSocket socket);
