@@ -85,6 +85,13 @@ void TcpConnection::close() {
         CHWELL_LOG_DEBUG("Connection already closed");
         return;
     }
+    // 必须先 shutdown 再抢 send_mutex_：send() 会持 send_mutex_ 阻塞在 io_mu_ 上，
+    // 若先抢锁再 shutdown，close 等 send，send 等 io_mu_，形成死锁。
+    ErrorCode ec;
+    socket_.shutdown(SHUT_RDWR, ec);
+    if (ec) {
+        CHWELL_LOG_WARN("Shutdown failed: " + ec.message());
+    }
     std::lock_guard<std::mutex> lock(send_mutex_);
     if (closed_) {
         CHWELL_LOG_DEBUG("Connection already closed (after lock)");
@@ -92,11 +99,6 @@ void TcpConnection::close() {
     }
     CHWELL_LOG_INFO("Closing connection");
     closed_ = true;
-    ErrorCode ec;
-    socket_.shutdown(SHUT_RDWR, ec);
-    if (ec) {
-        CHWELL_LOG_WARN("Shutdown failed: " + ec.message());
-    }
     socket_.close(ec);
     if (ec) {
         CHWELL_LOG_WARN("Close failed: " + ec.message());
