@@ -108,40 +108,111 @@ cd ../examples/h5_game && python3 -m http.server 8080
 
 ## 架构设计
 
+### 分层结构
+
+```mermaid
+flowchart TB
+    subgraph APP["应用层 Application"]
+        direction LR
+        GC["Game Components<br/>登录 · 聊天 · 房间 · 心跳 · 移动"]
+        SS["FrameSync / StateSync"]
+        GW["Gateway / RPC"]
+    end
+
+    subgraph SVC["服务层 Service"]
+        direction LR
+        SVC1["Service 容器"]
+        COMP["Component 系统"]
+        SM["SessionManager"]
+        PR["ProtocolRouter"]
+        EB["EventBus"]
+    end
+
+    subgraph PROTO["协议层 Protocol"]
+        direction LR
+        PARSER["Parser 粘包解析"]
+        MSG["Message cmd+body"]
+        CODEC["Codec<br/>LengthHeader / Protobuf / JSON"]
+    end
+
+    subgraph NET["网络层 Network"]
+        direction LR
+        POSIX["posix_io<br/>socket / poll"]
+        TCP["TcpServer / TcpConnection"]
+        EPOLL["EpollTcpServer<br/>多 Reactor"]
+        UDP["UdpSocket / UdpServer"]
+        WS["WsServer"]
+        HTTP["HttpServer"]
+        POOL["ConnectionPool · TLS"]
+    end
+
+    subgraph INFRA["基础设施 Infrastructure"]
+        direction LR
+        CORE["ThreadPool · TimerWheel<br/>TaskQueue · ObjectPool"]
+        STOR["Storage<br/>Memory / MySQL / MongoDB"]
+        RDS["Redis · DistributedLock"]
+        CLUS["ServiceDiscovery · LoadBalancer<br/>CircuitBreaker · ConsistentHash"]
+        OBS["Metrics · RateLimit<br/>AOI · SlgMap"]
+    end
+
+    APP --> SVC
+    SVC --> PROTO
+    PROTO --> NET
+    NET --> INFRA
 ```
-+---------------------------------------------------------------+
-|                     应用层 (Application)                      |
-|  Game Components · FrameSync / StateSync · Gateway / RPC      |
-+---------------------------------------------------------------+
-                               │
-+---------------------------------------------------------------+
-|                      服务层 (Service)                         |
-|   Service 容器 · Component · SessionManager                   |
-|   ProtocolRouterComponent · EventBus                         |
-+---------------------------------------------------------------+
-                               │
-+---------------------------------------------------------------+
-|                      协议层 (Protocol)                        |
-|   Parser（粘包） · Message（cmd + body）                      |
-|   Codec: LengthHeader / Protobuf / JSON                       |
-+---------------------------------------------------------------+
-                               │
-+---------------------------------------------------------------+
-|                      网络层 (Network)                         |
-|   posix_io (socket / poll) · TcpServer / TcpConnection        |
-|   EpollTcpServer（多 Reactor）· EpollDemuxer · EpollConnection|
-|   UdpSocket / UdpServer · WsServer · HttpServer               |
-|   ConnectionPool · TLS（可选）                                |
-+---------------------------------------------------------------+
-                               │
-+---------------------------------------------------------------+
-|                    基础设施 (Infrastructure)                  |
-|  ThreadPool · TimerWheel · TaskQueue · ObjectPool             |
-|  Storage(Memory/MySQL/MongoDB) · Redis · DistributedLock      |
-|  ServiceDiscovery · LoadBalancer · CircuitBreaker             |
-|  Metrics · RateLimit · AOI · SlgMap · ConsistentHash          |
-+---------------------------------------------------------------+
+
+### 一条消息的处理链路
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Client
+    participant N as Network<br/>(TcpServer / Epoll)
+    participant S as Service
+    participant R as ProtocolRouter
+    participant H as 业务 Handler<br/>(Game Components)
+    participant SM as SessionManager
+
+    C->>N: TCP 帧 [cmd:2][len:2][body]
+    N->>S: on_message(conn, bytes)
+    S->>R: 广播给各 Component
+    R->>R: Parser.feed() 粘包/拆包
+    R->>H: 按 cmd 分发 Message
+    H->>SM: login / join_room 等
+    H->>C: send_message(conn, resp)
 ```
+
+### Epoll 多 Reactor 模型
+
+```mermaid
+flowchart LR
+    subgraph ACC["Accept Thread"]
+        A["accept()"]
+    end
+
+    subgraph RS["Reactor Threads"]
+        direction TB
+        R0["Reactor 0<br/>epoll_wait + eventfd"]
+        R1["Reactor 1"]
+        R2["Reactor N"]
+    end
+
+    subgraph CONN["Connections"]
+        direction TB
+        C0["Conn × M"]
+        C1["Conn × M"]
+        C2["Conn × M"]
+    end
+
+    A -- "round-robin 分配 fd" --> R0
+    A --> R1
+    A --> R2
+    R0 --- C0
+    R1 --- C1
+    R2 --- C2
+```
+
+> 对比：传统 `TcpServer` 为每条连接占一个阻塞读线程（并发 ≈ 线程数）；`EpollTcpServer` 用少量 Reactor 线程复用海量连接，详见[网络模型对比](#网络模型对比)。
 
 ### 组件化设计
 
@@ -225,7 +296,30 @@ public:
 
 ### 同步系统 (`chwell/sync`)
 
-- **帧同步 `FrameSyncRoom`**：`submit_input` / `get_all_inputs` / `create_snapshot` / `get_snapshot` / `all_inputs_ready`；`FrameSyncComponent` 与 Service 集成。
+- ### 同步数据流
+
+```mermaid
+flowchart LR
+    subgraph FS["帧同步 FrameSync"]
+        IN["玩家输入<br/>submit_input"]
+        FR["FrameSyncRoom<br/>all_inputs_ready"]
+        SNAP["帧快照<br/>create_snapshot"]
+        OUT["S2C_FRAME_SYNC / SNAPSHOT"]
+        IN --> FR --> SNAP --> OUT
+    end
+
+    subgraph ST["状态同步 StateSync"]
+        UP["update_state"]
+        DF["StateDiff 增量"]
+        SS2["StateSnapshot 全量"]
+        SUB["subscribe 订阅推送"]
+        UP --> DF --> SUB
+        UP --> SS2 --> SUB
+    end
+```
+
+
+**帧同步 `FrameSyncRoom`**：`submit_input` / `get_all_inputs` / `create_snapshot` / `get_snapshot` / `all_inputs_ready`；`FrameSyncComponent` 与 Service 集成。
 - **状态同步 `StateSyncRoom`**：int32 / int64 / float / double / string / binary 六种值类型；`update_state` / `query_state` / `create_snapshot` / `subscribe`；增量 `StateDiff` + 全量 `StateSnapshot`。
 
 ### 编解码 (`chwell/codec`)
