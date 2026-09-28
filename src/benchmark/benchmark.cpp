@@ -430,8 +430,8 @@ void benchmark_protocol_router_dispatch(size_t iterations, size_t handlers_count
     protocol::Message msg(static_cast<std::uint16_t>(1000), std::string(100, 'x'));
     std::vector<char> raw = protocol::serialize(msg);
 
-    // 使用空连接作为 key（不解引用）
-    net::TcpConnectionPtr bench_conn;
+    // 必须是真正的 TcpConnection：on_message 会调用 conn->conn_id()
+    auto bench_conn = std::make_shared<net::TcpConnection>(net::TcpSocket());
 
     for (size_t i = 0; i < iterations; ++i) {
         router.on_message(bench_conn,

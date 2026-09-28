@@ -28,19 +28,15 @@ public:
         return ++counter;
     }
 
-    // 创建虚拟连接（返回 TcpConnectionPtr，内部使用 MockConnId）
+    // 创建虚拟连接：必须是真正的 TcpConnection，conn_id() 会读成员
     static net::TcpConnectionPtr create() {
-        int id = next_id();
-        return net::TcpConnectionPtr(
-            reinterpret_cast<net::TcpConnection*>(static_cast<uintptr_t>(id)),
-            [](net::TcpConnection*) {
-                // 空删除器，不释放内存
-            });
+        (void)next_id();
+        return std::make_shared<net::TcpConnection>(net::TcpSocket());
     }
 
     // 从 TcpConnectionPtr 获取连接 ID
     static int get_id(const net::TcpConnectionPtr& conn) {
-        return static_cast<int>(reinterpret_cast<uintptr_t>(conn.get()));
+        return static_cast<int>(conn->conn_id());
     }
 };
 

@@ -89,22 +89,23 @@ TEST(TimerWheelTest, MultipleTimers) {
     // 同时考虑到系统负载和时间精度问题
     std::this_thread::sleep_for(2000ms);
 
-    // 验证所有定时器都触发了
+    wheel.stop();
+
+    // stop() 后线程已退出；仍持锁拷贝，避免与回调并发读 order
+    std::vector<int> snapshot;
     {
         std::lock_guard<std::mutex> lk(order_mu);
-        ASSERT_EQ(order.size(), 3u);
+        snapshot = order;
     }
+    ASSERT_EQ(snapshot.size(), 3u);
 
-    // 验证包含所有预期的值
-    bool has_1 = std::find(order.begin(), order.end(), 1) != order.end();
-    bool has_2 = std::find(order.begin(), order.end(), 2) != order.end();
-    bool has_3 = std::find(order.begin(), order.end(), 3) != order.end();
+    bool has_1 = std::find(snapshot.begin(), snapshot.end(), 1) != snapshot.end();
+    bool has_2 = std::find(snapshot.begin(), snapshot.end(), 2) != snapshot.end();
+    bool has_3 = std::find(snapshot.begin(), snapshot.end(), 3) != snapshot.end();
 
     EXPECT_TRUE(has_1);
     EXPECT_TRUE(has_2);
     EXPECT_TRUE(has_3);
-
-    wheel.stop();
 }
 
 TEST(TimerWheelTest, TimerWheelNotStarted) {
