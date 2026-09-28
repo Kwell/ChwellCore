@@ -7,6 +7,8 @@
 [![CMake](https://img.shields.io/badge/CMake-3.11+-brightgreen.svg)](https://cmake.org/)
 [![CI](https://img.shields.io/badge/CI-ASan%20%2B%20TSan-green.svg)](.github/workflows/ci.yml)
 
+**English**：[README_EN.md](README_EN.md)
+
 > **平台要求**：Linux / POSIX（依赖 `epoll`、`sys/socket.h`、`poll` 等）。Windows 上仅能做有限的语法级编译检查，完整构建与测试请在 Linux 上进行。
 
 ---
