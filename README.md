@@ -483,6 +483,70 @@ cfg.measurement_iterations = 1000;
 auto results = suite.run(cfg);
 std::string csv = suite.export_csv();   // 或 export_json()
 ```
+### 组件生命周期与事件
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as 业务代码
+    participant S as Service
+    participant C as Component
+    participant N as Network
+
+    U->>S: add_component<T>()
+    U->>S: start()
+    S->>C: on_register(svc)
+    S->>N: 监听端口 / 启动线程池
+
+    loop 每条消息
+        N->>S: on_message(conn, data)
+        S->>C: on_message(...)
+    end
+
+    N->>S: 连接断开
+    S->>C: on_disconnect(conn)
+
+    U->>S: stop()
+    S->>N: 停止 accept、回收连接
+```
+
+> 回调约定：`on_message` 的 `data` 仅在回调返回前有效；耗时逻辑请投递到线程池/任务队列，避免阻塞网络线程。
+
+### 存储读写路径
+
+```mermaid
+flowchart TB
+    BIZ["业务代码"] --> REPO["Repository&lt;T&gt;<br/>ORM"]
+    BIZ --> ASYNC["AsyncStorageAdapter<br/>Future / Callback"]
+    BIZ --> IF["StorageInterface"]
+
+    REPO --> IF
+    ASYNC --> TPOOL["线程池"] --> IF
+
+    IF --> MEM["MemoryStorage<br/>TTL 惰性过期"]
+    IF --> MYSQL["MySQLStorage"]
+    IF --> MONGO["MongoDBStorage"]
+
+    FAC["StorageFactory<br/>create_from_yaml"] --> IF
+```
+
+### 熔断器状态机
+
+```mermaid
+stateDiagram-v2
+    [*] --> Closed
+    Closed --> Open: 失败次数/失败率达到阈值
+    Open --> HalfOpen: timeout_ms 后允许探测
+    HalfOpen --> Closed: 探测成功
+    HalfOpen --> Open: 探测失败 / 超过 half_open_calls 名额
+    Open --> Open: 未到超时，直接拒绝
+```
+
+- `Closed`：正常放行，累计失败
+- `Open`：直接拒绝（`execute` / `execute_with_result` 返回失败）
+- `HalfOpen`：限量探测（`half_open_calls`），成功即回到 `Closed`
+
+
 
 ---
 
