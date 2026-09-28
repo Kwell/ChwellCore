@@ -79,7 +79,9 @@ public:
 
     void close(ErrorCode& ec) {
         ec = ErrorCode(0);
-        // exchange 保证只 close 一次，且与读线程无数据竞争
+        // io_mu_ 与 read/write 互斥：tsan 将 close(fd)/read(fd) 视为同一 fd 资源竞争。
+        // shutdown() 不拿 io_mu_，以便唤醒阻塞在 read 上的线程后再 close。
+        std::lock_guard<std::mutex> lk(io_mu_);
         int fd = fd_.exchange(-1, std::memory_order_acq_rel);
         if (fd >= 0) {
             ::close(fd);
@@ -94,26 +96,30 @@ public:
         }
     }
 
-    // 阻塞读
+    // 阻塞读：持 io_mu_ 覆盖整个 ::read，close 会等待其返回
     ssize_t read(void* buf, std::size_t len) {
+        std::lock_guard<std::mutex> lk(io_mu_);
         int fd = fd_.load(std::memory_order_acquire);
         return fd >= 0 ? ::read(fd, buf, len) : -1;
     }
 
     // 阻塞写
     ssize_t write(const void* buf, std::size_t len) {
+        std::lock_guard<std::mutex> lk(io_mu_);
         int fd = fd_.load(std::memory_order_acquire);
         return fd >= 0 ? ::write(fd, buf, len) : -1;
     }
 
 private:
     void close_fd() {
+        std::lock_guard<std::mutex> lk(io_mu_);
         int fd = fd_.exchange(-1, std::memory_order_acq_rel);
         if (fd >= 0) {
             ::close(fd);
         }
     }
     std::atomic<int> fd_;
+    mutable std::mutex io_mu_;
     friend class TcpAcceptor;
 };
 
