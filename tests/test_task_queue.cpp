@@ -3,6 +3,7 @@
 #include <chrono>
 #include <atomic>
 #include <memory>
+#include <vector>
 
 #include "chwell/task/task_queue.h"
 
@@ -104,15 +105,21 @@ TEST_F(TaskQueueTest, TaskPriority) {
     queue.start();
 
     std::this_thread::sleep_for(300ms);
+    queue.stop();
+
+    // stop 后仍持锁拷贝，避免与回调并发读 order
+    std::vector<int> snapshot;
+    {
+        std::lock_guard<std::mutex> lk(mtx);
+        snapshot = order;
+    }
 
     // 由于优先级队列实现，任务应该全部执行完成
-    ASSERT_EQ(order.size(), 3u);
+    ASSERT_EQ(snapshot.size(), 3u);
     // 高优先级任务应该先执行：URGENT(2) > HIGH(3) > NORMAL(1)
-    EXPECT_EQ(order[0], 2);
-    EXPECT_EQ(order[1], 3);
-    EXPECT_EQ(order[2], 1);
-
-    queue.stop();
+    EXPECT_EQ(snapshot[0], 2);
+    EXPECT_EQ(snapshot[1], 3);
+    EXPECT_EQ(snapshot[2], 1);
 }
 
 TEST_F(TaskQueueTest, TaskWithTimeout) {
