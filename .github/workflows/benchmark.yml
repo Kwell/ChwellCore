@@ -1,0 +1,54 @@
+name: benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: "seconds per stress-test point"
+        required: false
+        default: "10"
+
+jobs:
+  epoll-stress:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Machine info
+        run: |
+          uname -a
+          lscpu | egrep 'Model name|CPU\(s\)|Thread|MHz|Cache'
+          free -h
+          nproc
+
+      - name: Build epoll_stress_test
+        run: g++ -O2 -std=c++17 -pthread tests/epoll_stress_test.cpp -o epoll_stress_test
+
+      - name: Run stress matrix
+        run: |
+          DUR="${{ github.event.inputs.duration || '10' }}"
+          for c in 100 1000 5000 10000; do
+            echo "======== concurrency=$c msg=1024 duration=${DUR}s ========"
+            ./epoll_stress_test "$c" 1024 "$DUR" || true
+            sleep 2
+          done
+
+  protocol-bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake g++ libyaml-cpp-dev
+
+      - name: Configure and build bench_runner
+        run: |
+          cmake -B build -DCHWELL_BUILD_TESTS=OFF -DCHWELL_BUILD_EXAMPLES=ON -DCHWELL_USE_PROTOBUF=OFF
+          cmake --build build --target bench_runner -j2
+
+      - name: Run bench_runner
+        run: ./build/bench_runner || true
