@@ -165,7 +165,6 @@ flowchart TB
 
 ```mermaid
 sequenceDiagram
-    autonumber
     participant C as Client
     participant N as Network<br/>(TcpServer / Epoll)
     participant S as Service
@@ -173,7 +172,7 @@ sequenceDiagram
     participant H as Business Handler<br/>(Game Components)
     participant SM as SessionManager
 
-    C->>N: TCP frame [cmd:2][len:2][body]
+    C->>N: TCP frame cmd:2 / len:2 / body
     N->>S: on_message(conn, bytes)
     S->>R: broadcast to components
     R->>R: Parser.feed() un-stick frames
@@ -487,13 +486,12 @@ std::string csv = suite.export_csv();   // or export_json()
 
 ```mermaid
 sequenceDiagram
-    autonumber
     participant U as App code
     participant S as Service
     participant C as Component
     participant N as Network
 
-    U->>S: add_component<T>()
+    U->>S: add_component(T)
     U->>S: start()
     S->>C: on_register(svc)
     S->>N: listen + start thread pool
@@ -516,7 +514,7 @@ sequenceDiagram
 
 ```mermaid
 flowchart TB
-    BIZ["Business code"] --> REPO["Repository&lt;T&gt;<br/>ORM"]
+    BIZ["Business code"] --> REPO["Repository ORM"]
     BIZ --> ASYNC["AsyncStorageAdapter<br/>Future / Callback"]
     BIZ --> IF["StorageInterface"]
 
@@ -545,6 +543,74 @@ stateDiagram-v2
 - `Closed`: allow traffic, accumulate failures
 - `Open`: reject immediately (`execute` / `execute_with_result` return failure)
 - `HalfOpen`: limited probes (`half_open_calls`); success returns to `Closed`
+
+
+### Distributed lock timeline (SET NX EX + auto-renew)
+
+```mermaid
+sequenceDiagram
+    participant A as Holder A
+    participant R as RedisClient
+    participant B as Contender B
+
+    A->>R: SET key token NX EX ttl
+    R-->>A: OK (locked, record fencing token)
+    A->>A: start renew thread (every ttl/2)
+
+    B->>R: SET key tokenB NX EX ttl
+    R-->>B: nil (retry with backoff)
+
+    loop every ttl/2
+        A->>R: compare_and_expire(key, token, ttl)
+        R-->>A: OK renewed
+    end
+
+    A->>R: compare_and_del(key, token)
+    R-->>A: 1 (released)
+
+    B->>R: SET key tokenB NX EX ttl
+    R-->>B: OK (B holds the lock)
+```
+
+> Unlock uses CAS (`compare_and_del`) so it never deletes someone else's lock. Failed renewal (stolen/expired) marks the lock lost locally. Fencing token is currently a process-local counter; cross-process fencing needs server-side `INCR`.
+
+### Connection pool checkout / return
+
+```mermaid
+flowchart TB
+    APP["App thread"] -->|get_connection / sync| API["ConnectionPool"]
+    API --> IDLE{"try_get_idle<br/>has idle conn"}
+    IDLE -- yes --> VALID{"validate_connection<br/>still alive"}
+    VALID -- yes --> HAND["return PooledConnection<br/>update last_used_time"]
+    VALID -- no --> DESTROY["destroy connection"]
+    IDLE -- no --> CAP{"pool size below max_connections"}
+    CAP -- no --> WAIT["wait queue<br/>with timeout_ms"]
+    CAP -- yes --> CREATE["async create<br/>pending_creates_++"]
+    CREATE --> HAND
+    HAND --> BIZ["business use"]
+    BIZ -->|return_connection / ConnectionGuard| RET["back to idle pool"]
+    RET --> GC["cleanup_expired()<br/>idle_timeout / max_lifetime"]
+```
+
+- `ConnectionGuard`: RAII checkout/return; returns automatically at scope end
+- `get_connection(cb, timeout_ms)` is async; `get_connection_sync(timeout_ms)` blocks
+
+### H5 demo deployment topology
+
+```mermaid
+flowchart LR
+    subgraph LOCAL["Local demo topology"]
+        BR["Browser<br/>examples/h5_game"]
+        STATIC["python3 -m http.server :8080<br/>static frontend"]
+        BR -->|GET pages| STATIC
+        BR -->|WebSocket| BRIDGE["ws_tcp_bridge<br/>needs OpenSSL"]
+        GW["example_game_gateway_server"] --> GS["example_game_server"]
+        BRIDGE -->|TCP frames| GW
+        GW --> GS
+    end
+```
+
+Start order: `example_game_server` → `example_game_gateway_server` → `ws_tcp_bridge` → static server → open `http://localhost:8080`.
 
 
 
