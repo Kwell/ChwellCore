@@ -108,40 +108,111 @@ cd ../examples/h5_game && python3 -m http.server 8080
 
 ## Architecture
 
+### Layered structure
+
+```mermaid
+flowchart TB
+    subgraph APP["Application Layer"]
+        direction LR
+        GC["Game Components<br/>login · chat · room · heartbeat · move"]
+        SS["FrameSync / StateSync"]
+        GW["Gateway / RPC"]
+    end
+
+    subgraph SVC["Service Layer"]
+        direction LR
+        SVC1["Service container"]
+        COMP["Component system"]
+        SM["SessionManager"]
+        PR["ProtocolRouter"]
+        EB["EventBus"]
+    end
+
+    subgraph PROTO["Protocol Layer"]
+        direction LR
+        PARSER["Parser (sticky packets)"]
+        MSG["Message cmd+body"]
+        CODEC["Codec<br/>LengthHeader / Protobuf / JSON"]
+    end
+
+    subgraph NET["Network Layer"]
+        direction LR
+        POSIX["posix_io<br/>socket / poll"]
+        TCP["TcpServer / TcpConnection"]
+        EPOLL["EpollTcpServer<br/>multi-Reactor"]
+        UDP["UdpSocket / UdpServer"]
+        WS["WsServer"]
+        HTTP["HttpServer"]
+        POOL["ConnectionPool · TLS"]
+    end
+
+    subgraph INFRA["Infrastructure"]
+        direction LR
+        CORE["ThreadPool · TimerWheel<br/>TaskQueue · ObjectPool"]
+        STOR["Storage<br/>Memory / MySQL / MongoDB"]
+        RDS["Redis · DistributedLock"]
+        CLUS["ServiceDiscovery · LoadBalancer<br/>CircuitBreaker · ConsistentHash"]
+        OBS["Metrics · RateLimit<br/>AOI · SlgMap"]
+    end
+
+    APP --> SVC
+    SVC --> PROTO
+    PROTO --> NET
+    NET --> INFRA
 ```
-+---------------------------------------------------------------+
-|                     Application Layer                         |
-|  Game Components · FrameSync / StateSync · Gateway / RPC      |
-+---------------------------------------------------------------+
-                               │
-+---------------------------------------------------------------+
-|                       Service Layer                           |
-|   Service container · Component · SessionManager              |
-|   ProtocolRouterComponent · EventBus                         |
-+---------------------------------------------------------------+
-                               │
-+---------------------------------------------------------------+
-|                       Protocol Layer                          |
-|   Parser (sticky packets) · Message (cmd + body)              |
-|   Codec: LengthHeader / Protobuf / JSON                       |
-+---------------------------------------------------------------+
-                               │
-+---------------------------------------------------------------+
-|                        Network Layer                          |
-|   posix_io (socket / poll) · TcpServer / TcpConnection        |
-|   EpollTcpServer (multi-Reactor) · EpollDemuxer               |
-|   EpollConnection · UdpSocket / UdpServer                     |
-|   WsServer · HttpServer · ConnectionPool · TLS (optional)     |
-+---------------------------------------------------------------+
-                               │
-+---------------------------------------------------------------+
-|                     Infrastructure                            |
-|  ThreadPool · TimerWheel · TaskQueue · ObjectPool             |
-|  Storage(Memory/MySQL/MongoDB) · Redis · DistributedLock      |
-|  ServiceDiscovery · LoadBalancer · CircuitBreaker             |
-|  Metrics · RateLimit · AOI · SlgMap · ConsistentHash          |
-+---------------------------------------------------------------+
+
+### Message path
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Client
+    participant N as Network<br/>(TcpServer / Epoll)
+    participant S as Service
+    participant R as ProtocolRouter
+    participant H as Business Handler<br/>(Game Components)
+    participant SM as SessionManager
+
+    C->>N: TCP frame [cmd:2][len:2][body]
+    N->>S: on_message(conn, bytes)
+    S->>R: broadcast to components
+    R->>R: Parser.feed() un-stick frames
+    R->>H: dispatch Message by cmd
+    H->>SM: login / join_room / ...
+    H->>C: send_message(conn, resp)
 ```
+
+### Epoll multi-Reactor
+
+```mermaid
+flowchart LR
+    subgraph ACC["Accept Thread"]
+        A["accept()"]
+    end
+
+    subgraph RS["Reactor Threads"]
+        direction TB
+        R0["Reactor 0<br/>epoll_wait + eventfd"]
+        R1["Reactor 1"]
+        R2["Reactor N"]
+    end
+
+    subgraph CONN["Connections"]
+        direction TB
+        C0["Conn × M"]
+        C1["Conn × M"]
+        C2["Conn × M"]
+    end
+
+    A -- "round-robin fd assignment" --> R0
+    A --> R1
+    A --> R2
+    R0 --- C0
+    R1 --- C1
+    R2 --- C2
+```
+
+> Contrast: legacy `TcpServer` pins one blocking read thread per connection (concurrency ≈ thread count); `EpollTcpServer` multiplexes many connections over a few reactor threads. See [Network Model Comparison](#network-model-comparison).
 
 ### Component model
 
@@ -225,7 +296,30 @@ public:
 
 ### Sync (`chwell/sync`)
 
-- **Frame sync `FrameSyncRoom`**: `submit_input` / `get_all_inputs` / `create_snapshot` / `get_snapshot` / `all_inputs_ready`; `FrameSyncComponent` integrates with Service.
+- ### Sync data flow
+
+```mermaid
+flowchart LR
+    subgraph FS["Frame sync"]
+        IN["player input<br/>submit_input"]
+        FR["FrameSyncRoom<br/>all_inputs_ready"]
+        SNAP["frame snapshot<br/>create_snapshot"]
+        OUT["S2C_FRAME_SYNC / SNAPSHOT"]
+        IN --> FR --> SNAP --> OUT
+    end
+
+    subgraph ST["State sync"]
+        UP["update_state"]
+        DF["StateDiff incremental"]
+        SS2["StateSnapshot full"]
+        SUB["subscribe push"]
+        UP --> DF --> SUB
+        UP --> SS2 --> SUB
+    end
+```
+
+
+**Frame sync `FrameSyncRoom`**: `submit_input` / `get_all_inputs` / `create_snapshot` / `get_snapshot` / `all_inputs_ready`; `FrameSyncComponent` integrates with Service.
 - **State sync `StateSyncRoom`**: int32 / int64 / float / double / string / binary; `update_state` / `query_state` / `create_snapshot` / `subscribe`; incremental `StateDiff` + full `StateSnapshot`.
 
 ### Codecs (`chwell/codec`)
