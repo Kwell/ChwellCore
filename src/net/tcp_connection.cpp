@@ -11,6 +11,13 @@ TcpConnection::TcpConnection(TcpSocket socket)
     CHWELL_LOG_DEBUG("TcpConnection created");
 }
 
+TcpConnection::~TcpConnection() {
+    // 读循环退出后 socket 已 close；未 start 的连接在此释放 fd
+    std::lock_guard<std::mutex> lock(send_mutex_);
+    ErrorCode ec;
+    socket_.close(ec);
+}
+
 void TcpConnection::start() {
     // P0 #3: set a 30-second send timeout so send() cannot block forever
     // on a slow/malicious peer (prevents thread-pool exhaustion).
@@ -43,7 +50,13 @@ void TcpConnection::run_read_loop() {
 
     // P0 #1: call close_cb_ exactly once – no CloseGuard needed.
     closed_ = true;
-    { ErrorCode ec; socket_.shutdown(SHUT_RDWR, ec); socket_.close(ec); }
+    {
+        // 与 send() 串行：避免 write(fd) 与 close(fd) 并发
+        std::lock_guard<std::mutex> lock(send_mutex_);
+        ErrorCode ec;
+        socket_.shutdown(SHUT_RDWR, ec);
+        socket_.close(ec);
+    }
     closed_ = true;
     if (close_cb_) {
         close_cb_(shared_from_this());
@@ -85,8 +98,8 @@ void TcpConnection::close() {
         CHWELL_LOG_DEBUG("Connection already closed");
         return;
     }
-    // 必须先 shutdown 再抢 send_mutex_：send() 会持 send_mutex_ 阻塞在 io_mu_ 上，
-    // 若先抢锁再 shutdown，close 等 send，send 等 io_mu_，形成死锁。
+    // 只 shutdown 唤醒读循环。真正 ::close(fd) 由 run_read_loop 收尾或析构完成，
+    // 避免与阻塞中的 read(fd) 并发 close（tsan fd 资源竞争）以及 io 锁死锁。
     ErrorCode ec;
     socket_.shutdown(SHUT_RDWR, ec);
     if (ec) {
@@ -99,10 +112,6 @@ void TcpConnection::close() {
     }
     CHWELL_LOG_INFO("Closing connection");
     closed_ = true;
-    socket_.close(ec);
-    if (ec) {
-        CHWELL_LOG_WARN("Close failed: " + ec.message());
-    }
 }
 
 } // namespace net

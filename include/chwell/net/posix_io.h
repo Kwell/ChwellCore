@@ -77,11 +77,10 @@ public:
     int native_handle() const { return fd_.load(std::memory_order_acquire); }
     bool is_open() const { return fd_.load(std::memory_order_acquire) >= 0; }
 
+    // 只允许读循环线程/析构调用 ::close(fd)：shutdown() 可并发唤醒阻塞读，
+    // 避免 close(fd) 与 read(fd) 的 tsan fd 资源竞争，也避免读写锁死锁。
     void close(ErrorCode& ec) {
         ec = ErrorCode(0);
-        // io_mu_ 与 read/write 互斥：tsan 将 close(fd)/read(fd) 视为同一 fd 资源竞争。
-        // shutdown() 不拿 io_mu_，以便唤醒阻塞在 read 上的线程后再 close。
-        std::lock_guard<std::mutex> lk(io_mu_);
         int fd = fd_.exchange(-1, std::memory_order_acq_rel);
         if (fd >= 0) {
             ::close(fd);
@@ -96,30 +95,26 @@ public:
         }
     }
 
-    // 阻塞读：持 io_mu_ 覆盖整个 ::read，close 会等待其返回
+    // 阻塞读
     ssize_t read(void* buf, std::size_t len) {
-        std::lock_guard<std::mutex> lk(io_mu_);
         int fd = fd_.load(std::memory_order_acquire);
         return fd >= 0 ? ::read(fd, buf, len) : -1;
     }
 
     // 阻塞写
     ssize_t write(const void* buf, std::size_t len) {
-        std::lock_guard<std::mutex> lk(io_mu_);
         int fd = fd_.load(std::memory_order_acquire);
         return fd >= 0 ? ::write(fd, buf, len) : -1;
     }
 
 private:
     void close_fd() {
-        std::lock_guard<std::mutex> lk(io_mu_);
         int fd = fd_.exchange(-1, std::memory_order_acq_rel);
         if (fd >= 0) {
             ::close(fd);
         }
     }
     std::atomic<int> fd_;
-    mutable std::mutex io_mu_;
     friend class TcpAcceptor;
 };
 

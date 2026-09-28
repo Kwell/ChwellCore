@@ -22,6 +22,7 @@ typedef std::function<void(const TcpConnectionPtr&)> ConnectionCallback;
 class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
 public:
     explicit TcpConnection(TcpSocket socket);
+    virtual ~TcpConnection();
 
     virtual void start();
     virtual void send(const std::vector<char>& data);
