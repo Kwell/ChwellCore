@@ -483,6 +483,70 @@ cfg.measurement_iterations = 1000;
 auto results = suite.run(cfg);
 std::string csv = suite.export_csv();   // or export_json()
 ```
+### Component lifecycle
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as App code
+    participant S as Service
+    participant C as Component
+    participant N as Network
+
+    U->>S: add_component<T>()
+    U->>S: start()
+    S->>C: on_register(svc)
+    S->>N: listen + start thread pool
+
+    loop per message
+        N->>S: on_message(conn, data)
+        S->>C: on_message(...)
+    end
+
+    N->>S: connection closed
+    S->>C: on_disconnect(conn)
+
+    U->>S: stop()
+    S->>N: stop accept, drain connections
+```
+
+> Callback contract: `data` in `on_message` is valid only for the duration of the call. Hand long work to the thread pool / task queue so you do not block the network thread.
+
+### Storage read/write path
+
+```mermaid
+flowchart TB
+    BIZ["Business code"] --> REPO["Repository&lt;T&gt;<br/>ORM"]
+    BIZ --> ASYNC["AsyncStorageAdapter<br/>Future / Callback"]
+    BIZ --> IF["StorageInterface"]
+
+    REPO --> IF
+    ASYNC --> TPOOL["Thread pool"] --> IF
+
+    IF --> MEM["MemoryStorage<br/>lazy TTL"]
+    IF --> MYSQL["MySQLStorage"]
+    IF --> MONGO["MongoDBStorage"]
+
+    FAC["StorageFactory<br/>create_from_yaml"] --> IF
+```
+
+### Circuit breaker state machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> Closed
+    Closed --> Open: failure count / rate threshold
+    Open --> HalfOpen: after timeout_ms
+    HalfOpen --> Closed: probe succeeds
+    HalfOpen --> Open: probe fails / exceeds half_open_calls
+    Open --> Open: not timed out yet, reject
+```
+
+- `Closed`: allow traffic, accumulate failures
+- `Open`: reject immediately (`execute` / `execute_with_result` return failure)
+- `HalfOpen`: limited probes (`half_open_calls`); success returns to `Closed`
+
+
 
 ---
 
