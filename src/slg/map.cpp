@@ -82,7 +82,11 @@ void SlgMapManager::generate_resources(int count) {
 
 void SlgMapManager::generate_cities(int count) {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
-    
+
+    if (count <= 0) {
+        return;
+    }
+
     // 边界保护：确保地图足够大
     int margin = std::min(50, std::min(config_.width, config_.height) / 4);
     int x_range = config_.width - 2 * margin;
@@ -91,46 +95,73 @@ void SlgMapManager::generate_cities(int count) {
         CHWELL_LOG_WARN("Map too small for city generation");
         return;
     }
-    
+
     int created = 0;
     int attempts = 0;
-    int max_attempts = count * 100;
-    
+    int max_attempts = std::max(count * 100, 1000);
+    int min_spacing = 20;
+
+    auto place_city = [this](int x, int y) {
+        auto& cell = cells_[cell_index(x, y)];
+        if (cell.terrain == TerrainType::CITY) {
+            return false;
+        }
+        City city;
+        city.city_id = next_city_id_++;
+        city.x = x;
+        city.y = y;
+        city.name = "City_" + std::to_string(city.city_id);
+        city.level = 1 + thread_safe_rand(5);
+
+        cell.terrain = TerrainType::CITY;
+        cell.owner_id = city.city_id;
+
+        cities_[city.city_id] = city;
+        return true;
+    };
+
+    // 随机撒点：间距逐轮放宽，尽量保持自然分布
     while (created < count && attempts < max_attempts) {
         int x = margin + thread_safe_rand(x_range);
         int y = margin + thread_safe_rand(y_range);
-        
-        auto& cell = cells_[cell_index(x, y)];
-        
-        // 检查周围是否有城池
+
         bool too_close = false;
         for (const auto& pair : cities_) {
             int dx = std::abs(pair.second.x - x);
             int dy = std::abs(pair.second.y - y);
-            if (dx < 20 && dy < 20) {
+            if (dx < min_spacing && dy < min_spacing) {
                 too_close = true;
                 break;
             }
         }
-        
-        if (!too_close && cell.terrain == TerrainType::PLAIN) {
-            City city;
-            city.city_id = next_city_id_++;
-            city.x = x;
-            city.y = y;
-            city.name = "City_" + std::to_string(city.city_id);
-            city.level = 1 + thread_safe_rand(5);
-            
-            cell.terrain = TerrainType::CITY;
-            cell.owner_id = city.city_id;
-            
-            cities_[city.city_id] = city;
+
+        if (!too_close && place_city(x, y)) {
             ++created;
         }
-        
+
         ++attempts;
+        if (attempts % std::max(count * 20, 100) == 0 && min_spacing > 2) {
+            min_spacing /= 2;
+        }
     }
-    
+
+    // 网格兜底：随机放不满时按网格补足，保证 total_cities()==count
+    if (created < count) {
+        int cols = std::max(1, static_cast<int>(std::sqrt(static_cast<double>(count))) + 1);
+        int rows = (count + cols - 1) / cols;
+        int cell_w = std::max(1, x_range / cols);
+        int cell_h = std::max(1, y_range / rows);
+        for (int r = 0; r < rows && created < count; ++r) {
+            for (int c = 0; c < cols && created < count; ++c) {
+                int x = std::min(margin + c * cell_w + cell_w / 2, margin + x_range - 1);
+                int y = std::min(margin + r * cell_h + cell_h / 2, margin + y_range - 1);
+                if (place_city(x, y)) {
+                    ++created;
+                }
+            }
+        }
+    }
+
     CHWELL_LOG_INFO("Cities generated: " << created);
 }
 
