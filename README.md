@@ -165,7 +165,6 @@ flowchart TB
 
 ```mermaid
 sequenceDiagram
-    autonumber
     participant C as Client
     participant N as Network<br/>(TcpServer / Epoll)
     participant S as Service
@@ -173,7 +172,7 @@ sequenceDiagram
     participant H as 业务 Handler<br/>(Game Components)
     participant SM as SessionManager
 
-    C->>N: TCP 帧 [cmd:2][len:2][body]
+    C->>N: TCP 帧 cmd:2 / len:2 / body
     N->>S: on_message(conn, bytes)
     S->>R: 广播给各 Component
     R->>R: Parser.feed() 粘包/拆包
@@ -487,13 +486,12 @@ std::string csv = suite.export_csv();   // 或 export_json()
 
 ```mermaid
 sequenceDiagram
-    autonumber
     participant U as 业务代码
     participant S as Service
     participant C as Component
     participant N as Network
 
-    U->>S: add_component<T>()
+    U->>S: add_component(T)
     U->>S: start()
     S->>C: on_register(svc)
     S->>N: 监听端口 / 启动线程池
@@ -516,7 +514,7 @@ sequenceDiagram
 
 ```mermaid
 flowchart TB
-    BIZ["业务代码"] --> REPO["Repository&lt;T&gt;<br/>ORM"]
+    BIZ["业务代码"] --> REPO["Repository ORM"]
     BIZ --> ASYNC["AsyncStorageAdapter<br/>Future / Callback"]
     BIZ --> IF["StorageInterface"]
 
@@ -545,6 +543,74 @@ stateDiagram-v2
 - `Closed`：正常放行，累计失败
 - `Open`：直接拒绝（`execute` / `execute_with_result` 返回失败）
 - `HalfOpen`：限量探测（`half_open_calls`），成功即回到 `Closed`
+
+
+### 分布式锁时序（SET NX EX + 自动续租）
+
+```mermaid
+sequenceDiagram
+    participant A as 持有者 A
+    participant R as RedisClient
+    participant B as 竞争者 B
+
+    A->>R: SET key token NX EX ttl
+    R-->>A: OK（加锁成功，记 fencing token）
+    A->>A: 启动续租线程（每 ttl/2）
+
+    B->>R: SET key tokenB NX EX ttl
+    R-->>B: nil（失败，退避重试）
+
+    loop 每 ttl/2
+        A->>R: compare_and_expire(key, token, ttl)
+        R-->>A: OK 续租
+    end
+
+    A->>R: compare_and_del(key, token)
+    R-->>A: 1（释放）
+
+    B->>R: SET key tokenB NX EX ttl
+    R-->>B: OK（B 获得锁）
+```
+
+> 解锁用 CAS（`compare_and_del`）避免误删他人锁；续租失败（锁被抢/过期）时本地立即标记失锁。fencing token 目前是进程内递增，跨进程栅栏需服务端 `INCR`。
+
+### 连接池借还
+
+```mermaid
+flowchart TB
+    APP["业务线程"] -->|get_connection / sync| API["ConnectionPool"]
+    API --> IDLE{"try_get_idle<br/>has idle conn"}
+    IDLE -- 有 --> VALID{"validate_connection<br/>still alive"}
+    VALID -- 是 --> HAND["返回 PooledConnection<br/>last_used_time 更新"]
+    VALID -- 否 --> DESTROY["销毁连接"]
+    IDLE -- 无 --> CAP{"pool size below max_connections"}
+    CAP -- 否 --> WAIT["进入等待队列<br/>带 timeout_ms"]
+    CAP -- 是 --> CREATE["异步创建连接<br/>pending_creates_++"]
+    CREATE --> HAND
+    HAND --> BIZ["业务使用"]
+    BIZ -->|return_connection / ConnectionGuard| RET["归还空闲池"]
+    RET --> GC["cleanup_expired()<br/>idle_timeout / max_lifetime"]
+```
+
+- `ConnectionGuard`：RAII 借还，作用域结束自动 `return_connection`
+- `get_connection(cb, timeout_ms)` 异步；`get_connection_sync(timeout_ms)` 同步
+
+### H5 对战 Demo 部署拓扑
+
+```mermaid
+flowchart LR
+    subgraph LOCAL["本机演示拓扑"]
+        BR["浏览器<br/>examples/h5_game"]
+        STATIC["python3 -m http.server :8080<br/>静态前端"]
+        BR -->|GET 页面| STATIC
+        BR -->|WebSocket| BRIDGE["ws_tcp_bridge<br/>需 OpenSSL"]
+        GW["example_game_gateway_server"] --> GS["example_game_server"]
+        BRIDGE -->|TCP 协议帧| GW
+        GW --> GS
+    end
+```
+
+启动顺序：`example_game_server` → `example_game_gateway_server` → `ws_tcp_bridge` → 静态服 → 浏览器访问 `http://localhost:8080`。
 
 
 
