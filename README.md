@@ -990,13 +990,13 @@ TcpServer（传统）                EpollTcpServer（高性能）
 
 | 项目 | 单次调用内操作数 | 平均耗时/调用 | 真实 ops/sec |
 |------|------------------|---------------|--------------|
-| serialize 100B | 1000 | 0.386 ms | **≈2.59 M/s** |
-| serialize 1KB | 1000 | 0.458 ms | **≈2.18 M/s** |
+| serialize 100B | 1000 | 0.379 ms | **≈2.64 M/s** |
+| serialize 1KB | 1000 | 0.428 ms | **≈2.34 M/s** |
 | serialize 10KB | 100 | 0.111 ms | **≈0.90 M/s** |
-| deserialize 100B | 1000 | 0.135 ms | **≈7.42 M/s** |
-| deserialize 1KB | 1000 | 0.163 ms | **≈6.14 M/s** |
-| deserialize 10KB | 100 | 0.369 ms | **≈0.27 M/s** |
-| parser 10×1KB | 1000 批 | 3.16 ms | **≈316 批/s（≈3.2K msg/s）** |
+| deserialize 100B | 1000 | 0.142 ms | **≈7.07 M/s** |
+| deserialize 1KB | 1000 | 0.151 ms | **≈6.64 M/s** |
+| deserialize 10KB | 100 | 0.370 ms | **≈0.27 M/s** |
+| parser 10×1KB | 1000 批/次 | 3.38 ms | **≈296 K 批/s（≈2.96 M msg/s）** |
 
 > 历史文档 `BENCHMARK_REPORT.md` 中的绝对值口径错误，已作废，请以本节数字为准。
 
