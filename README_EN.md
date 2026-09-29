@@ -1009,6 +1009,32 @@ TcpServer (legacy)               EpollTcpServer (high performance)
 - 10k connections: still ~60K msg/s, but tail latency needs app-level sharding/limits
 
 
+### LogicThreadPool sharding (conn_id hash)
+
+> A single LogicThread serializes all business callbacks — that was the scaling wall.
+> `LogicThreadPool` shards by `conn_id % N`: per-connection ordering preserved,
+> different connections processed in parallel.
+> Env: GitHub Actions ubuntu-latest, AMD EPYC 7763 / 4 vCPU, 2026-09-29.
+
+| Scenario | logic workers | Throughput | p50 | p99 | p999 |
+|----------|---------------|------------|-----|-----|------|
+| 200 conn, inflight=1, 1KB | 1 (baseline) | 69.8K/s | 2.42 ms | 5.77 ms | 7.65 ms |
+| 200 conn, inflight=1, 1KB | 2 | **125.2K/s** | **1.40 ms** | **3.36 ms** | 4.52 ms |
+| 200 conn, inflight=1, 1KB | 4 | 115.7K/s | 1.54 ms | 4.36 ms | 6.16 ms |
+| 5000 conn, inflight=1, 256B | 1 (baseline) | 58.2K/s | 79.8 ms | 122.8 ms | 550 ms |
+| 5000 conn, inflight=1, 256B | 2 | **117.2K/s** | **38.9 ms** | **64.6 ms** | **230 ms** |
+| 5000 conn, inflight=1, 256B | 4 | 105.7K/s | 45.0 ms | 61.9 ms | 308 ms |
+| 200 conn, inflight=16, 1KB | 1 (baseline) | 84.1K/s | 33.5 ms | 57.3 ms | 66.6 ms |
+| 200 conn, inflight=16, 1KB | 2 | **172.0K/s** | **17.0 ms** | **27.6 ms** | **34.3 ms** |
+
+**Takeaways**:
+- 2 logic workers is the sweet spot on 4 vCPU: **~2× throughput, ~½ p50, ~½–2/5 p999**
+- 4 workers is slightly worse — on 4 vCPU, reactors + logic + client threads oversubscribe
+- Usage: `Service(port, workers, use_epoll=true, reactor_threads, logic_workers)`, `logic_workers=0` follows reactor count
+
+**Note**: `post_task` is round-robin (no affinity). For DB/RPC callbacks mutating per-connection state use `logic_pool().post_task_for(conn_id, fn)` so they run on the same worker as that connection.
+
+
 ### Protocol micro-benchmarks (CI re-run, units fixed)
 
 > `ops/sec` previously treated one benchmark-function call as a single op, while the function
