@@ -17,6 +17,7 @@
 
 #include "chwell/service/component.h"
 #include "chwell/service/protocol_router.h"
+#include "chwell/service/service.h"
 #include "chwell/protocol/message.h"
 #include "chwell/metrics/instrumentation.h"
 #include "chwell/core/logger.h"
