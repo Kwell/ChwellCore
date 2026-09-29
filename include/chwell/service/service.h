@@ -42,7 +42,7 @@ namespace service {
 class Service {
 public:
     Service(unsigned short listen_port, std::size_t worker_threads, bool use_epoll = false,
-            int reactor_threads = 1)
+            int reactor_threads = 1, int logic_workers = 0)
         : use_epoll_(use_epoll),
           thread_pool_(worker_threads),
           worker_threads_(worker_threads),
@@ -52,13 +52,16 @@ public:
           io_service_(*io_service_ptr_) {
 
         if (use_epoll_) {
-            // 初始化 Logic Thread（单线程消费业务逻辑）
-            logic_thread_ = std::make_unique<net::LogicThread>();
-            logic_thread_->set_message_handler(
+            // LogicThreadPool：按 conn_id 分片，多 worker 并行消费业务逻辑
+            // logic_workers=0 表示与 reactor_threads 相同（至少 1）
+            int lw = logic_workers > 0 ? logic_workers
+                    : (reactor_threads > 0 ? reactor_threads : 1);
+            logic_pool_ = std::unique_ptr<net::LogicThreadPool>(new net::LogicThreadPool(static_cast<std::size_t>(lw)));
+            logic_pool_->set_message_handler(
                 [this](const net::TcpConnectionPtr& conn, std::string_view data) {
                     for (auto& comp : components_) comp->on_message(conn, data);
                 });
-            logic_thread_->set_disconnect_handler(
+            logic_pool_->set_disconnect_handler(
                 [this](const net::TcpConnectionPtr& conn) {
                     for (auto& comp : components_) comp->on_disconnect(conn);
                 });
@@ -225,9 +228,10 @@ public:
         init_stage_ = 4;
 
         // 启动 Logic Thread（epoll 模式）
-        if (use_epoll_ && logic_thread_) {
-            logic_thread_->start();
-            CHWELL_LOG_INFO("Service: LogicThread started");
+        if (use_epoll_ && logic_pool_) {
+            logic_pool_->start();
+            CHWELL_LOG_INFO("Service: LogicThreadPool started (workers="
+                            << logic_pool_->size() << ")");
         }
 
         // 启动网络
@@ -271,13 +275,13 @@ public:
         PreShut();
 
         // Step 3: 排空 Logic Thread 队列（保证残余消息全部处理完）
-        if (logic_thread_) {
-            CHWELL_LOG_INFO("Step 3: Draining LogicThread queue (pending="
-                            << logic_thread_->pending_count() << ")");
-            bool drained = logic_thread_->drain(shutdown_drain_timeout_ms_);
+        if (logic_pool_) {
+            CHWELL_LOG_INFO("Step 3: Draining LogicThreadPool queue (pending="
+                            << logic_pool_->pending_count() << ")");
+            bool drained = logic_pool_->drain(shutdown_drain_timeout_ms_);
             if (!drained) {
-                CHWELL_LOG_WARN("LogicThread drain timeout! pending="
-                                << logic_thread_->pending_count() << " messages dropped");
+                CHWELL_LOG_WARN("LogicThreadPool drain timeout! pending="
+                                << logic_pool_->pending_count() << " messages dropped");
             }
         }
 
@@ -288,9 +292,9 @@ public:
         }
 
         // Step 5: 停止 Logic Thread
-        if (logic_thread_) {
-            CHWELL_LOG_INFO("Step 5: Stopping LogicThread");
-            logic_thread_->stop();
+        if (logic_pool_) {
+            CHWELL_LOG_INFO("Step 5: Stopping LogicThreadPool");
+            logic_pool_->stop();
         }
 
         // Step 6: 停止 IoService（legacy 模式）
@@ -341,7 +345,9 @@ public:
     net::IoService& io_service() { return io_service_; }
     net::TcpServer* tcp_server() { return legacy_server_.get(); }
     net::EpollTcpServer* epoll_server() { return epoll_server_.get(); }
-    net::LogicThread* logic_thread() { return logic_thread_.get(); }
+    // 兼容旧接口：返回分片 0（DB/RPC 回调建议用 logic_pool().post_task_for）
+    net::LogicThread* logic_thread() { return logic_pool_ ? logic_pool_->worker(0) : nullptr; }
+    net::LogicThreadPool* logic_pool() { return logic_pool_.get(); }
     bool is_running() const { return running_; }
     bool use_epoll() const { return use_epoll_; }
     PluginManager& plugin_manager() { return plugin_manager_; }
@@ -355,9 +361,9 @@ private:
      */
     void dispatch_message(const net::TcpConnectionPtr& conn,
                           std::string_view data) {
-        if (logic_thread_) {
-            // epoll 模式：投递到 Logic Thread，保证单线程消费
-            logic_thread_->post(conn, data);
+        if (logic_pool_) {
+            // epoll 模式：按 conn_id 分片投递，同连接保序
+            logic_pool_->post(conn, data);
         } else {
             // legacy 模式：直接调用
             for (auto& comp : components_) comp->on_message(conn, data);
@@ -368,8 +374,8 @@ private:
      * @brief 分发断连事件到 Component
      */
     void dispatch_disconnect(const net::TcpConnectionPtr& conn) {
-        if (logic_thread_) {
-            logic_thread_->post_disconnect(conn);
+        if (logic_pool_) {
+            logic_pool_->post_disconnect(conn);
         } else {
             for (auto& comp : components_) comp->on_disconnect(conn);
         }
@@ -382,8 +388,8 @@ private:
     std::unique_ptr<net::TcpServer> legacy_server_;
     std::unique_ptr<net::EpollTcpServer> epoll_server_;
 
-    // Logic Thread：epoll 模式下的单线程逻辑消费
-    std::unique_ptr<net::LogicThread> logic_thread_;
+    // LogicThreadPool：epoll 模式下按 conn_id 分片的多 worker 逻辑消费
+    std::unique_ptr<net::LogicThreadPool> logic_pool_;
 
     // epoll 模式下：fd → bridge 的映射
     std::mutex bridge_mutex_;

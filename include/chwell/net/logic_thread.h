@@ -7,6 +7,7 @@
 #include <condition_variable>
 #include <thread>
 #include <atomic>
+#include <memory>
 #include <chrono>
 #include <cstring>
 
@@ -421,6 +422,141 @@ private:
     std::atomic<uint64_t> slow_count_;
     std::atomic<uint64_t> blocked_count_;
     std::atomic<uint64_t> total_processed_;
+};
+
+/**
+ * @brief LogicThreadPool：多 LogicThread 分片，按 conn_id 哈希保序
+ *
+ * 单 LogicThread 是吞吐/延迟天花板：业务回调串行执行，
+ * 并发请求全部排队（实测 5000 连接 p50 ~80ms）。
+ *
+ * 分片规则：
+ * - post / post_disconnect: worker[conn_id % N]，同一连接恒定同一 worker，保序
+ * - post_task: 轮询（无连接亲和性）
+ * - post_task_for(key, task): worker[key % N]，用于 DB/RPC 回调回灌到
+ *   与该玩家连接相同的 worker，保证可变状态串行
+ */
+class LogicThreadPool {
+public:
+    using MessageHandler = LogicThread::MessageHandler;
+    using DisconnectHandler = LogicThread::DisconnectHandler;
+    using StallHandler = LogicThread::StallHandler;
+
+    explicit LogicThreadPool(size_t workers = 1, size_t queue_capacity = 65536)
+        : rr_(0) {
+        if (workers == 0) workers = 1;
+        workers_.reserve(workers);
+        for (size_t i = 0; i < workers; ++i) {
+            workers_.push_back(std::unique_ptr<LogicThread>(new LogicThread(queue_capacity)));
+        }
+    }
+
+    LogicThreadPool(const LogicThreadPool&) = delete;
+    LogicThreadPool& operator=(const LogicThreadPool&) = delete;
+
+    size_t size() const { return workers_.size(); }
+
+    LogicThread* worker(size_t i) {
+        return (i < workers_.size()) ? workers_[i].get() : nullptr;
+    }
+
+    void set_message_handler(MessageHandler cb) {
+        for (auto& w : workers_) w->set_message_handler(cb);
+    }
+    void set_disconnect_handler(DisconnectHandler cb) {
+        for (auto& w : workers_) w->set_disconnect_handler(cb);
+    }
+    void set_stall_handler(StallHandler cb) {
+        for (auto& w : workers_) w->set_stall_handler(cb);
+    }
+    void set_slow_threshold_ms(int64_t ms) {
+        for (auto& w : workers_) w->set_slow_threshold_ms(ms);
+    }
+    void set_frame_threshold_ms(int64_t ms) {
+        for (auto& w : workers_) w->set_frame_threshold_ms(ms);
+    }
+    void set_max_batch(size_t n) {
+        for (auto& w : workers_) w->set_max_batch(n);
+    }
+
+    void start() {
+        for (auto& w : workers_) w->start();
+    }
+
+    void stop() {
+        for (auto& w : workers_) w->stop();
+    }
+
+    bool drain(int timeout_ms = 5000) {
+        bool ok = true;
+        for (auto& w : workers_) {
+            ok = w->drain(timeout_ms) && ok;
+        }
+        return ok;
+    }
+
+    bool is_running() const {
+        if (workers_.empty()) return false;
+        for (auto& w : workers_) {
+            if (!w->is_running()) return false;
+        }
+        return true;
+    }
+
+    bool post(const TcpConnectionPtr& conn, std::string_view data) {
+        return pick(conn)->post(conn, data);
+    }
+
+    bool post_disconnect(const TcpConnectionPtr& conn) {
+        return pick(conn)->post_disconnect(conn);
+    }
+
+    bool post_task(std::function<void()> task) {
+        size_t n = workers_.size();
+        size_t i = rr_.fetch_add(1, std::memory_order_relaxed) % n;
+        return workers_[i]->post_task(std::move(task));
+    }
+
+    // 亲和投递：同一 key 恒定同一 worker（DB/RPC 回调串行化）
+    bool post_task_for(uint64_t key, std::function<void()> task) {
+        size_t n = workers_.size();
+        return workers_[key % n]->post_task(std::move(task));
+    }
+
+    size_t pending_count() const {
+        size_t total = 0;
+        for (auto& w : workers_) total += w->pending_count();
+        return total;
+    }
+
+    uint64_t total_processed() const {
+        uint64_t total = 0;
+        for (auto& w : workers_) total += w->total_processed();
+        return total;
+    }
+
+    uint64_t slow_count() const {
+        uint64_t total = 0;
+        for (auto& w : workers_) total += w->slow_count();
+        return total;
+    }
+
+    uint64_t blocked_count() const {
+        uint64_t total = 0;
+        for (auto& w : workers_) total += w->blocked_count();
+        return total;
+    }
+
+private:
+    LogicThread* pick(const TcpConnectionPtr& conn) {
+        size_t n = workers_.size();
+        if (n == 1) return workers_[0].get();
+        uint64_t key = conn ? conn->conn_id() : 0;
+        return workers_[key % n].get();
+    }
+
+    std::vector<std::unique_ptr<LogicThread>> workers_;
+    std::atomic<size_t> rr_;
 };
 
 } // namespace net

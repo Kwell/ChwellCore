@@ -4,10 +4,12 @@
 // requests, so measured RTT is true round-trip (no open-loop flood).
 // Client uses one epoll loop per thread (fixes the old single-recv bottleneck).
 //
-// Usage: ./framework_bench [conns] [inflight] [msg_size] [duration_s] [reactor_threads]
-// Example:
-//   ./framework_bench 200 1 1024 10 2     # latency mode
-//   ./framework_bench 200 16 1024 10 2    # throughput mode
+// Usage: ./framework_bench [conns] [inflight] [msg_size] [duration_s] [reactor_threads] [logic_workers]
+// logic_workers=0 means same as reactor_threads.
+// Examples:
+//   ./framework_bench 200 1 1024 10 2 1     # single logic worker (baseline)
+//   ./framework_bench 200 1 1024 10 2 4     # sharded logic workers
+//   ./framework_bench 200 16 1024 10 2 4    # throughput
 
 #include "chwell/service/service.h"
 #include "chwell/service/protocol_router.h"
@@ -242,17 +244,19 @@ int main(int argc, char* argv[]) {
     int msg_size = 1024;
     int duration_s = 10;
     int reactors = 2;
+    int logic_workers = 0;
     if (argc > 1) conns = std::stoi(argv[1]);
     if (argc > 2) inflight = std::stoi(argv[2]);
     if (argc > 3) msg_size = std::stoi(argv[3]);
     if (argc > 4) duration_s = std::stoi(argv[4]);
     if (argc > 5) reactors = std::stoi(argv[5]);
+    if (argc > 6) logic_workers = std::stoi(argv[6]);
     if (msg_size < 1) msg_size = 1;
     if (conns < 1) conns = 1;
     if (inflight < 1) inflight = 1;
 
     // ---- real framework server ----
-    service::Service svc(kPort, /*worker_threads=*/4, /*use_epoll=*/true, reactors);
+    service::Service svc(kPort, /*worker_threads=*/4, /*use_epoll=*/true, reactors, logic_workers);
     auto* router = svc.add_component<service::ProtocolRouterComponent>();
     router->register_handler(kCmdEcho,
         [](const net::TcpConnectionPtr& conn, const protocol::Message& msg) {
@@ -295,7 +299,9 @@ int main(int argc, char* argv[]) {
     std::printf("================================================================\n");
     std::printf(" Framework E2E Benchmark  (Service + ProtocolRouter echo)\n");
     std::printf("================================================================\n");
-    std::printf(" Server            : Service use_epoll=1, workers=4, reactors=%d\n", reactors);
+    std::printf(" Server            : Service use_epoll=1, workers=4, reactors=%d, logic=%s\n",
+                reactors,
+                (logic_workers > 0 ? std::to_string(logic_workers).c_str() : "auto"));
     std::printf(" Client            : %d threads, %d conns, inflight=%d\n", client_threads, conns, inflight);
     std::printf(" Message size      : %d bytes (frame ~%zu B)\n", msg_size, (std::size_t)msg_size + 4);
     std::printf(" Duration          : %.2f s\n", wall_s);
