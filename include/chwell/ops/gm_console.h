@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <mutex>
@@ -111,6 +112,15 @@ public:
     std::size_t command_count() const {
         std::lock_guard<std::mutex> lock(mu_);
         return commands_.size();
+    }
+
+    std::vector<std::string> command_names() const {
+        std::lock_guard<std::mutex> lock(mu_);
+        std::vector<std::string> out;
+        out.reserve(commands_.size());
+        for (const auto& kv : commands_) out.push_back(kv.first);
+        std::sort(out.begin(), out.end());
+        return out;
     }
 
     bool has_command(const std::string& name) const {
