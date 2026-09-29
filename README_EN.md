@@ -1139,22 +1139,29 @@ TcpServer (legacy)               EpollTcpServer (high performance)
 - Component service layer (login / chat / room / heartbeat / move)
 - Frame sync / state sync
 - Timer wheel / thread pool / object pool / task queue / event bus
-- Storage (Memory / MySQL / MongoDB) + ORM + async adapter
-- Cluster registry + consistent hash + RPC + gateway
+- Storage (Memory / MySQL / MongoDB) + ORM + async adapter + **write-back cache (field dirty marks)**
+- Cluster registry + consistent-hash virtual nodes + RPC + gateway + **`RpcRouter` cross-server forward / `SessionLocator`**
 - Discovery + load balancing (per-`service_id` cache isolation)
 - Circuit breaker (HALF_OPEN probe budget) + rate limiters + Prometheus
+- **Observability**: structured logging / Trace / latency histogram / GM ops commands
+- **Distributed transactions**: TCC two-phase + Saga compensation
+- **Plugin hot reload** (dlopen safe swap + mtime check)
+- **Config**: JSON / env profile / hot reload / snapshot rollback
 - Redis RESP client (mock fallback) + distributed lock (SET NX EX / CAS)
 - AOI (callbacks fired outside lock) + SLG map / battle
-- Benchmark framework
+- **Game systems**: leaderboard / mail / wallet (TCC holds) / social / match / anti-cheat / replay / load-bot planner
+- Benchmark framework + E2E closed-loop load test
 - H5 battle demo (frontend + backend)
 - CI green: build-and-test + ASan + TSan
 
-### Planned
+### Planned (P3 / later)
 
-- Structured logging (spdlog option)
-- More game components (friends, guild, leaderboard)
-- Hot reload
-- More integration test scenarios
+- Business codegen (scaffolding / protocol stubs)
+- GM admin panel
+- Gray release & traffic steering
+- Ops analytics pipeline
+- Payment SDK integration
+- More integration tests and multi-process cluster cases
 
 ---
 
