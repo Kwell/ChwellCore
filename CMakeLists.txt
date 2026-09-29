@@ -113,6 +113,7 @@ add_library(chwell_core
     src/cluster/node.cpp
     src/service/service.cpp
     src/service/plugin.cpp
+    src/service/hot_reload.cpp
     src/protocol/message.cpp
     src/protocol/parser.cpp
     src/service/protocol_router.cpp
@@ -164,6 +165,7 @@ target_compile_definitions(chwell_core PRIVATE
 if(CHWELL_USE_YAML)
     if(TARGET yaml-cpp::yaml-cpp)
         target_link_libraries(chwell_core PRIVATE yaml-cpp::yaml-cpp)
+    target_link_libraries(chwell_core PRIVATE ${CMAKE_DL_LIBS})
     elseif(TARGET yaml-cpp)
         target_link_libraries(chwell_core PRIVATE yaml-cpp)
     elseif(yaml-cpp_FOUND)
@@ -244,6 +246,7 @@ if (CHWELL_BUILD_TESTS)
             tests/test_task_queue.cpp
             tests/test_logic_thread.cpp
             tests/test_observability.cpp
+            tests/test_hot_reload.cpp
             tests/test_slg.cpp
             tests/test_game_components.cpp
             tests/test_player_move.cpp
@@ -259,6 +262,14 @@ if (CHWELL_BUILD_TESTS)
             tests/test_udp_socket.cpp
         )
         target_link_libraries(chwell_core_tests PRIVATE chwell_core ${CHWELL_GTEST_LIB})
+
+        # 热加载测试插件（SHARED），供 test_hot_reload 加载
+        add_library(test_hot_plugin SHARED tests/test_hot_plugin.cpp)
+        target_include_directories(test_hot_plugin PRIVATE ${CMAKE_SOURCE_DIR}/include)
+        target_link_libraries(test_hot_plugin PRIVATE ${CMAKE_DL_LIBS})
+        add_dependencies(chwell_core_tests test_hot_plugin)
+        target_compile_definitions(chwell_core_tests PRIVATE
+            TEST_HOT_PLUGIN_PATH="$<TARGET_FILE:test_hot_plugin>")
         target_compile_definitions(chwell_core_tests PRIVATE
             $<$<BOOL:${CHWELL_USE_YAML}>:CHWELL_USE_YAML>
             $<$<BOOL:${CHWELL_USE_MYSQL}>:CHWELL_USE_MYSQL>
