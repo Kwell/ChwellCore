@@ -481,7 +481,17 @@ bool Config::reload() {
 std::int64_t Config::file_mtime(const std::string& path) {
     struct stat st;
     if (::stat(path.c_str(), &st) != 0) return 0;
+#if defined(_WIN32)
+    // MSVC stat 只有秒级精度
     return static_cast<std::int64_t>(st.st_mtime);
+#elif defined(__APPLE__)
+    return static_cast<std::int64_t>(st.st_mtimespec.tv_sec) * 1000000000LL +
+           static_cast<std::int64_t>(st.st_mtimespec.tv_nsec);
+#else
+    // Linux 等：用纳秒，同秒内改写也能检出
+    return static_cast<std::int64_t>(st.st_mtime) * 1000000000LL +
+           static_cast<std::int64_t>(st.st_mtim.tv_nsec);
+#endif
 }
 
 void Config::record_mtimes(const std::vector<std::string>& paths) {

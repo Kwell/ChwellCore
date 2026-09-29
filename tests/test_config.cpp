@@ -95,13 +95,13 @@ TEST(ConfigTest, ReloadPicksUpChanges) {
     int changed = 0;
     cfg.add_change_listener([&]() { ++changed; });
 
-    // 修改文件
+    // 先 sleep 再写：兼容只有秒级 mtime 的文件系统，保证改写落在下一秒
+    std::this_thread::sleep_for(std::chrono::milliseconds(1100));
     {
         std::ofstream out(p.c_str());
         out << R"({"v": "new"})";
+        out.flush();
     }
-    // mtime 粒度为秒，sleep 确保变化
-    std::this_thread::sleep_for(std::chrono::milliseconds(1100));
     EXPECT_TRUE(cfg.check_reload());
     EXPECT_EQ("new", cfg.get_string("v"));
     EXPECT_GE(changed, 1);
