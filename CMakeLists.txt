@@ -238,6 +238,7 @@ if (CHWELL_BUILD_TESTS)
             tests/test_orm_repository.cpp
             tests/test_persist_cache.cpp
             tests/test_cross_server.cpp
+            tests/test_game_systems.cpp
             tests/test_storage.cpp
             tests/test_session_manager.cpp
             tests/test_timer_wheel.cpp

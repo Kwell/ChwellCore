@@ -37,7 +37,8 @@ public:
         return true;
     }
 
-    bool healthy() const override { return !fail; }
+    // 连接对象始终视为存活：fail 只影响 call，避免 router 对同节点重建连接掩盖 failover
+    bool healthy() const override { return true; }
 
     std::string node_id_;
     bool fail = false;
