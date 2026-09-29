@@ -38,7 +38,7 @@
 | **协议** | 自定义二进制帧 `[cmd:2B][len:2B][body]`；Protobuf 帧；JSON 帧；流式粘包解析器 |
 | **服务层** | 组件化 `Service` 容器（可切换 epoll / 传统模型）；按命令字路由；`SessionManager` 多维会话映射 |
 | **同步** | `FrameSyncRoom`（帧同步 + 快照）；`StateSyncRoom`（K/V 状态 + 增量差异 + 订阅） |
-| **游戏组件** | 登录（token 校验）、聊天、房间（一人一房）、心跳、玩家移动；**排行榜 / 邮件 / 钱包（TCC 冻结）** |
+| **游戏组件** | 登录（token 校验）、聊天、房间（一人一房）、心跳、玩家移动；**排行榜 / 邮件 / 钱包（TCC 冻结） / 社交 / 匹配 / 反作弊** |
 | **基础设施** | 分层时间轮（O(1) 添加/取消）、线程池、任务队列（延时/重复/取消）、对象池、类型安全事件总线 |
 | **空间** | 格子 AOI（GridAoi）、十字链表 AOI（CrossListAoi）；SLG 地图与战斗 |
 | **存储** | 统一 KV 接口（Memory / MySQL / MongoDB）；模板 ORM `Repository<T>`；**写回缓存 `WriteBackCache<T>` + 字段级脏标**；同步 + 异步两套 API |
@@ -304,6 +304,9 @@ public:
 | 排行榜 | `game/leaderboard.h` | `Leaderboard`：update / top(n) / rank_of / score_of；同分按更新时间再按 id 稳定排序 |
 | 邮件 | `game/mail.h` | `Mailbox`：发送 / 列表 / 已读 / 删除 / 未读数 / TTL 过期 / 附件 |
 | 钱包 | `game/wallet.h` | `Wallet`：多币种 add / spend；**TCC 预留** `try_hold` → `confirm_hold` / `cancel_hold` |
+| 社交 | `game/social_match.h` | `SocialGraph`：单向关注 / 双向好友 / 黑名单 |
+| 匹配 | `game/social_match.h` | `Matchmaker`：按分数分段 FIFO 排队，凑满 `team_size` 成局 |
+| 反作弊 | `game/anti_cheat.h` | `AntiCheat`：移动速度 / 瞬移 / 操作频率滑动窗口检测 |
 
 ### 同步系统 (`chwell/sync`)
 
