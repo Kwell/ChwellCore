@@ -38,7 +38,7 @@
 | **协议** | 自定义二进制帧 `[cmd:2B][len:2B][body]`；Protobuf 帧；JSON 帧；流式粘包解析器 |
 | **服务层** | 组件化 `Service` 容器（可切换 epoll / 传统模型）；按命令字路由；`SessionManager` 多维会话映射 |
 | **同步** | `FrameSyncRoom`（帧同步 + 快照）；`StateSyncRoom`（K/V 状态 + 增量差异 + 订阅） |
-| **游戏组件** | 登录（token 校验）、聊天、房间（一人一房）、心跳、玩家移动；**排行榜 / 邮件 / 钱包（TCC 冻结） / 社交 / 匹配 / 反作弊** |
+| **游戏组件** | 登录（token 校验）、聊天、房间（一人一房）、心跳、玩家移动；**排行榜 / 邮件 / 钱包（TCC 冻结） / 社交 / 匹配 / 反作弊 / 回放 / 压测机器人** |
 | **基础设施** | 分层时间轮（O(1) 添加/取消）、线程池、任务队列（延时/重复/取消）、对象池、类型安全事件总线 |
 | **空间** | 格子 AOI（GridAoi）、十字链表 AOI（CrossListAoi）；SLG 地图与战斗 |
 | **存储** | 统一 KV 接口（Memory / MySQL / MongoDB）；模板 ORM `Repository<T>`；**写回缓存 `WriteBackCache<T>` + 字段级脏标**；同步 + 异步两套 API |
@@ -307,6 +307,8 @@ public:
 | 社交 | `game/social_match.h` | `SocialGraph`：单向关注 / 双向好友 / 黑名单 |
 | 匹配 | `game/social_match.h` | `Matchmaker`：按分数分段 FIFO 排队，凑满 `team_size` 成局 |
 | 反作弊 | `game/anti_cheat.h` | `AntiCheat`：移动速度 / 瞬移 / 操作频率滑动窗口检测 |
+| 回放 / 观战 | `game/replay.h` | `ReplayRecorder` 时间序事件流；`SpectatorFeed` 增量帧推送 |
+| 压测机器人 | `game/load_bot.h` | `LoadBotPlanner` 生成模拟玩家行为时间表（登录/心跳/移动/聊天） |
 
 ### 同步系统 (`chwell/sync`)
 
@@ -1192,22 +1194,29 @@ TcpServer（传统）                EpollTcpServer（高性能）
 - 组件化服务层（登录 / 聊天 / 房间 / 心跳 / 移动）
 - 帧同步 / 状态同步
 - 时间轮 / 线程池 / 对象池 / 任务队列 / 事件总线
-- 存储抽象（Memory / MySQL / MongoDB）+ ORM + 异步适配器
-- 集群节点注册 + 一致性哈希 + RPC + 网关转发
+- 存储抽象（Memory / MySQL / MongoDB）+ ORM + 异步适配器 + **写回缓存（字段脏标）**
+- 集群节点注册 + 一致性哈希虚拟节点 + RPC + 网关转发 + **`RpcRouter` 跨服透传 / `SessionLocator` 会话定位**
 - 服务发现 + 负载均衡（按 service_id 隔离缓存）
 - 熔断器（含 HALF_OPEN 探测名额）+ 限流器（三种策略）+ Prometheus 指标
+- **可观测性**：结构化日志 / Trace / 延迟直方图 / GM 运维指令
+- **分布式事务**：TCC 两阶段 + Saga 补偿
+- **插件热加载**（dlopen 安全切换 + mtime 检测）
+- **配置中心能力**：JSON / 环境 profile / 热加载 / 快照回滚
 - Redis RESP 客户端（Mock 回落）+ 分布式锁（SET NX EX / CAS）
 - AOI（回调锁外派发）+ SLG 地图 / 战斗
-- Benchmark 框架
+- **游戏系统**：排行榜 / 邮件 / 钱包（TCC 冻结）/ 社交 / 匹配 / 反作弊 / 回放 / 压测机器人规划器
+- Benchmark 框架 + E2E 闭环压测
 - H5 对战 Demo（前后端）
 - CI：build-and-test + ASan + TSan 全绿
 
-### 规划中
+### 规划中（P3 / 远期）
 
-- 结构化日志（spdlog 选项）
-- 更多游戏组件（好友、公会、排行榜）
-- 热更新
-- 更多集成测试场景
+- 业务代码生成（脚手架 / 协议代码）
+- GM 后台管理面板
+- 灰度发布与流量调度
+- 运营数据分析管道
+- 支付 SDK 对接
+- 更多集成测试场景与多进程集群用例
 
 ---
 

@@ -78,21 +78,25 @@ TEST(LoadBotPlannerTest, DeterministicWithSameSeed) {
 TEST(LoadBotPlannerTest, DifferentSeedDiffers) {
     LoadBotPlanner::Config c1;
     c1.bot_count = 3;
-    c1.duration_ms = 2000;
+    c1.duration_ms = 5000;
+    c1.jitter_ms = 200;
     c1.seed = 1;
     LoadBotPlanner::Config c2 = c1;
-    c2.seed = 2;
+    c2.seed = 99991;
     LoadBotPlanner p1(c1);
     LoadBotPlanner p2(c2);
 
     auto a1 = p1.plan();
     auto a2 = p2.plan();
-    ASSERT_EQ(a1.size(), a2.size());
-    bool differ = false;
-    for (std::size_t i = 0; i < a1.size(); ++i) {
-        if (a1[i].time_ms != a2[i].time_ms || a1[i].x != a2[i].x) {
+    bool differ = a1.size() != a2.size();
+    const std::size_t n = a1.size() < a2.size() ? a1.size() : a2.size();
+    for (std::size_t i = 0; i < n && !differ; ++i) {
+        if (a1[i].time_ms != a2[i].time_ms ||
+            a1[i].x != a2[i].x ||
+            a1[i].y != a2[i].y ||
+            a1[i].cmd != a2[i].cmd ||
+            a1[i].text != a2[i].text) {
             differ = true;
-            break;
         }
     }
     EXPECT_TRUE(differ);
