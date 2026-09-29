@@ -244,6 +244,7 @@ if (CHWELL_BUILD_TESTS)
             tests/test_replay.cpp
             tests/test_load_bot.cpp
             tests/test_gray_release.cpp
+            tests/test_ops_pay_codegen.cpp
             tests/test_storage.cpp
             tests/test_session_manager.cpp
             tests/test_timer_wheel.cpp

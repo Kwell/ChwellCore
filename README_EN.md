@@ -48,6 +48,10 @@ Modular, high-performance C++17 game server framework for SLG / MMO titles.
 | **Transactions** | TCC two-phase (Try→Confirm / reverse Cancel); Saga forward compensation (optional compensate of failed step) |
 | **Hot reload** | `dlopen`/`LoadLibrary` plugins with safe swap, mtime auto-check, path prefix allowlist |
 | **Config** | key=value + flat JSON; env profile overlay; hot reload (ns mtime baseline + change callbacks); snapshot rollback; required-key validation |
+| **Gray release** | `TrafficSplitter` weighted version routing (sticky by key + random); `ConfigVersionStore` multi-version config atomic switch |
+| **GM / Analytics** | `GmConsole` command registry + permission levels + audit log; `AnalyticsPipeline` event aggregation / funnel / top events |
+| **Payment** | `PaymentGateway` channel abstraction; `MemoryPaymentGateway` order create / signed callback / idempotent / refund |
+| **Codegen** | `SchemaCodegen` field table → `PersistableEntity` skeleton |
 | **Redis** | Hand-rolled RESP/TCP client with in-memory **mock fallback**; distributed lock (`SET NX EX` / CAS delete / CAS renew + RAII) |
 | **Benchmark** | Built-in `BenchmarkSuite`: warmup + multi-sample runs + CSV/JSON export |
 
