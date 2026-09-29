@@ -41,9 +41,13 @@
 | **游戏组件** | 登录（token 校验）、聊天、房间（一人一房）、心跳、玩家移动 |
 | **基础设施** | 分层时间轮（O(1) 添加/取消）、线程池、任务队列（延时/重复/取消）、对象池、类型安全事件总线 |
 | **空间** | 格子 AOI（GridAoi）、十字链表 AOI（CrossListAoi）；SLG 地图与战斗 |
-| **存储** | 统一 KV 接口（Memory / MySQL / MongoDB）；模板 ORM `Repository<T>`；同步 + 异步（Future / Callback）两套 API |
-| **集群** | 节点注册表（YAML + 一致性哈希）；轻量 RPC（cmd 寻址）；网关转发 |
+| **存储** | 统一 KV 接口（Memory / MySQL / MongoDB）；模板 ORM `Repository<T>`；**写回缓存 `WriteBackCache<T>` + 字段级脏标**；同步 + 异步两套 API |
+| **集群** | 节点注册表（YAML + 一致性哈希虚拟节点）；轻量 RPC；**`RpcRouter` 跨服透传 + 故障转移**；**`SessionLocator` 跨服会话定位** |
 | **可靠性** | 熔断器（计数 / 失败率 / 混合 + HALF_OPEN 探测名额）；令牌桶 / 漏桶 / 固定窗口限流；Prometheus 指标 |
+| **可观测** | 结构化日志（分类过滤 / JSON / 文件）；`TraceContext` / `ScopedSpan`；QPS / 延迟直方图 / 连接数；GM 运维指令（token 鉴权） |
+| **事务** | TCC 两阶段（Try→Confirm / Cancel 全量回滚）；Saga 正向补偿（失败步骤可选补偿） |
+| **热加载** | `dlopen`/`LoadLibrary` 动态插件，安全切换 + mtime 自动检测 + 前缀白名单 |
+| **配置** | key=value + 扁平 JSON；环境 profile 叠加；热加载（mtime 基线 + 变更回调）；快照回滚；必填键校验 |
 | **Redis** | 自研 RESP/TCP 客户端，连接失败自动回落**内存 Mock**；分布式锁（`SET NX EX` / CAS 删除 / CAS 续租 + RAII） |
 | **Benchmark** | 内置 `BenchmarkSuite`：预热 + 多次采样 + CSV/JSON 导出 |
 
@@ -336,7 +340,7 @@ flowchart LR
 |------|--------|------|
 | `chwell/core` | `TimerWheel` | 分层时间轮：添加 / 取消均为 O(1)（`list_iter` + `in_wheel`），支持一次性 / 重复 |
 | `chwell/core` | `ThreadPool` | 固定线程池，`post()` 提交 |
-| `chwell/core` | `Config` | key=value 配置 + 多文件覆盖 + 环境变量 |
+| `chwell/core` | `Config` | key=value + 扁平 JSON + 环境 profile 叠加；热加载 / 快照回滚 / 键校验 |
 | `chwell/task` | `TaskQueue` / `DelayedTaskQueue` | 优先级队列；延时 / 重复 / 取消 |
 | `chwell/pool` | `ObjectPool<T>` | 模板对象池 |
 | `chwell/event` | `EventBus` | 类型安全发布/订阅，线程安全，支持优先级 |
@@ -466,6 +470,120 @@ auto val = redis->get("key");
 ```
 
 > **多实例部署**：内存 Mock 仅保证单进程语义正确；跨进程锁依赖真实 Redis（RESP 路径）。fencing token 目前为进程内序号，跨进程需服务端 `INCR`。
+
+### 可观测性 (`chwell/trace`, `chwell/metrics`, `chwell/service/ops_component.h`)
+
+```cpp
+#include "chwell/trace/trace.h"
+#include "chwell/metrics/instrumentation.h"
+#include "chwell/service/ops_component.h"
+
+// 分布式追踪上下文 + 作用域 Span
+trace::TraceContext ctx = trace::TraceContext::new_trace();
+trace::ScopedSpan span(ctx, "handle_login");
+span.set_tag("uid", "10001");
+
+// 指标：QPS 计数 + 延迟直方图 + 连接数，Prometheus 文本导出
+metrics::instrumentation().record_qps("login");
+metrics::instrumentation().record_latency("login", /*ms=*/12.0);
+std::string prom = metrics::get_prometheus_registry().export_metrics();
+
+// GM 运维指令（cmd 0x0301/0303/0305/0307，token 鉴权）
+service::OpsComponent ops(/*token=*/"secret");
+```
+
+### 热加载插件 (`chwell/service/hot_reload.h`)
+
+```cpp
+#include "chwell/service/hot_reload.h"
+
+service::HotReloadManager mgr;
+mgr.set_allowed_prefix("myplugin");          // 限制可加载路径前缀
+mgr.load("./plugins/myplugin.so");           // dlopen + chwell_create_plugin
+mgr.check_updates();                         // mtime 变化则安全切换（失败自动回滚）
+// ABI：extern "C" Plugin* chwell_create_plugin(); void chwell_destroy_plugin(Plugin*);
+```
+
+### 分布式事务 (`chwell/transaction`)
+
+```cpp
+#include "chwell/transaction/tcc.h"
+#include "chwell/transaction/saga.h"
+
+// TCC：Try 全成功才 Confirm；任一 Try 失败则对已参与方逆序 Cancel
+transaction::TccTransaction tcc("order-1");
+tcc.try_phase("gold",    [&]{ return reserve_gold(); });
+tcc.try_phase("item",    [&]{ return reserve_item(); });
+if (!tcc.commit()) { /* 内部已 Cancel */ }
+
+// Saga：失败时对已完成步骤逆序补偿
+transaction::Saga saga("pay-flow");
+saga.step("debit",   [&]{ return debit(); },   [&]{ return credit(); });
+saga.step("ship",    [&]{ return ship(); },    [&]{ return recall(); });
+saga.set_compensate_failed(false);  // 失败步骤本身不补偿（默认）
+saga.execute();
+```
+
+### 业务层持久化 (`chwell/storage/orm/writeback_cache.h`)
+
+字段级脏标 + 写回缓存，减少无效落盘：
+
+```cpp
+#include "chwell/storage/orm/writeback_cache.h"
+
+class Player : public storage::orm::PersistableEntity {
+public:
+    std::string table_name() const override { return "players"; }
+    std::string id() const override { return id_; }
+    storage::orm::Document to_document() const override { /* ... */ }
+    void from_document(const Document& d) override { /* ... */ clear_dirty(); }
+
+    CHWELL_FIELD(std::string, id_, player_id)
+    CHWELL_FIELD(int, level_, level)
+    CHWELL_FIELD(int, gold_, gold)
+private:
+    std::string id_; int level_ = 1; int gold_ = 0;
+};
+
+storage::MemoryStorage mem;
+storage::orm::Repository<Player> repo(&mem, "players");
+storage::orm::WriteBackCache<Player> cache(&repo);
+// Options: max_entries / flush_interval_ms / write_through_on_save
+
+Player p;
+p.set_level(5);           // 自动打脏标
+cache.put(p);             // 进缓存并标记脏
+cache.flush();            // 仅写回脏实体，成功后清脏标
+cache.auto_flush_if_due(); // 挂定时器周期写回
+```
+
+### 跨服路由与会话 (`chwell/cluster/rpc_router.h`, `session_locator.h`)
+
+```cpp
+#include "chwell/cluster/rpc_router.h"
+#include "chwell/cluster/session_locator.h"
+
+auto reg = std::make_shared<cluster::NodeRegistry>();
+reg->register_node("logic-1", "10.0.0.1", 9001, "logic");
+
+cluster::RpcRouter router(reg);
+router.set_transport_factory([](const cluster::NodeInfo& n) -> cluster::RpcTransportPtr {
+    // 返回绑定 RpcClient 的 RpcTransport 实现
+    return make_rpc_transport(n);
+});
+router.set_failover_retries(1);
+
+// 按 service_type + 路由 key 一致性哈希选节点并透传
+std::vector<char> resp;
+router.forward("logic", player_id, /*cmd=*/100, payload, resp);
+
+// 会话定位：网查会话在哪个节点，再定向转发
+cluster::SessionLocator locator;
+locator.bind("sess-1", "logic-1", "logic");
+locator.migrate("sess-1", "logic-1", "logic-2");
+auto node_id = locator.node_of("sess-1");
+locator.drop_node("logic-2");  // 节点下线清理
+```
 
 ### Benchmark (`chwell/benchmark`)
 

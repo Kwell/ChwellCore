@@ -116,7 +116,7 @@ TEST(WriteBackCacheTest, MissLoadsFromStorage) {
     Player p;
     p.set_name("bob");
     p.set_level(3);
-    ASSERT_TRUE(repo.save(p));
+    ASSERT_TRUE(repo.save(p).ok);
 
     Player got;
     ASSERT_TRUE(cache.get("p1", got));
@@ -147,7 +147,7 @@ TEST(WriteBackCacheTest, FlushAllWritesCleanEntries) {
     Player p;
     p.set_name("dave");
     ASSERT_TRUE(cache.put(p));
-    ASSERT_TRUE(cache.flush());
+    ASSERT_TRUE(cache.flush() > 0);
     EXPECT_EQ(0u, cache.dirty_count());
 
     // flush_all 对 clean 项也会强制落盘（底层被删后可补写）
@@ -180,7 +180,7 @@ TEST(WriteBackCacheTest, EvictPrefersCleanEntries) {
     a.set_id("a");
     a.set_name("a");
     ASSERT_TRUE(cache.put(a));
-    ASSERT_TRUE(cache.flush());  // a clean
+    ASSERT_TRUE(cache.flush() > 0);  // a clean
 
     Player b;
     b.set_id("b");

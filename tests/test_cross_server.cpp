@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -12,6 +13,11 @@
 using namespace chwell::cluster;
 
 namespace {
+
+std::string node_of_resp(const std::vector<char>& resp) {
+    auto it = std::find(resp.begin(), resp.end(), ':');
+    return std::string(resp.begin(), it);
+}
 
 class MockTransport : public RpcTransport {
 public:
@@ -111,12 +117,12 @@ TEST(RpcRouterTest, FailoverUsesAnotherNode) {
     ASSERT_TRUE(router.forward("logic", "k1", 0x20, req, resp));
 
     // 让当前节点变坏，再调用应 failover 到另一节点
-    std::string used_node(resp.begin(), resp.begin() + resp.find(':'));
+    std::string used_node = node_of_resp(resp);
     factory->created[used_node]->fail = true;
 
     std::vector<char> resp2;
     ASSERT_TRUE(router.forward("logic", "k1", 0x20, req, resp2));
-    std::string used_node2(resp2.begin(), resp2.begin() + resp2.find(':'));
+    std::string used_node2 = node_of_resp(resp2);
     EXPECT_NE(used_node, used_node2);
 }
 
@@ -147,7 +153,7 @@ TEST(RpcRouterTest, UnhealthyTransportRecreated) {
     int before = factory->create_count;
 
     // drop 后重建
-    std::string used_node(resp.begin(), resp.begin() + resp.find(':'));
+    std::string used_node = node_of_resp(resp);
     router.drop(used_node);
     ASSERT_TRUE(router.forward("logic", "k2", 1, req, resp));
     EXPECT_GT(factory->create_count, before);
