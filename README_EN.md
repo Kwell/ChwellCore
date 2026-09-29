@@ -956,16 +956,51 @@ TcpServer (legacy)               EpollTcpServer (high performance)
 | Use case | internal tools, low concurrency | production high concurrency |
 | Service switch | `use_epoll=false` | `use_epoll=true` |
 
-### Epoll echo benchmark (reference)
+### Epoll echo benchmark (CI re-run)
 
-> Environment-dependent, for order-of-magnitude only. Tool: `epoll_stress_test <concurrency> <msg_size> <duration_s>`.
+> **Source**: GitHub Actions `ubuntu-latest`, AMD EPYC 7763 / 4 vCPU, 2026-09-28.
+> Shared runners are noisy — treat as order-of-magnitude only; bare metal is usually faster.
+> **Reproduce**: Actions → `benchmark` → Run workflow (or `./epoll_stress_test <conc> 1024 10`).
 
-| Concurrency | Msg | Send QPS | Recv QPS | Bandwidth | Avg latency |
-|-------------|-----|----------|----------|-----------|-------------|
-| 100 | 1KB | 347,648 | 103,550 | 339 MB/s | ~1 ms |
-| 1,000 | 1KB | 740,286 | 94,471 | 684 MB/s | ~11 ms |
-| 5,000 | 1KB | 148,391 | 148,169 | 145 MB/s | ~34 ms |
-| 10,000 | 1KB | 125,802 | 109,313 | 122 MB/s | ~92 ms |
+**Metric definitions (important)**:
+
+| Metric | Meaning | How to read |
+|--------|---------|-------------|
+| Send QPS | successful client `send()` calls / s (**open-loop flood**) | not completed echos |
+| Recv QPS | client `recv()` calls that returned data / s | capped by the single polling recv thread |
+| Bandwidth | bytes actually received | real goodput |
+| Avg Latency | `(wall time × concurrency) / recv count` | **not real RTT**; derived queueing residence |
+
+| Concurrency | Connect | Send QPS | Recv QPS | BW | Derived residence | Recv/conn |
+|-------------|---------|----------|----------|----|-------------------|-----------|
+| 100 | 203 ms | 317,945 | 71,872 | 310 MB/s | 1.4 ms | 719 /s |
+| 1,000 | 268 ms | 605,362 | 68,573 | 532 MB/s | 14.6 ms | 69 /s |
+| 5,000 | 396 ms | 109,304 | 89,375 | 106 MB/s | 55.9 ms | 18 /s |
+| 10,000 | 557 ms | 101,858 | 64,564 | 99 MB/s | 154.9 ms | 6 /s |
+
+**How to read**:
+- Recv QPS stays ~65–90k regardless of concurrency — the harness recv thread is the bottleneck
+- Send QPS peaks at 1000 conns then falls back — socket-buffer backpressure
+- At 10000 conns Send≈Recv — send side is already throttled by receive
+
+### Protocol micro-benchmarks (CI re-run, units fixed)
+
+> `ops/sec` previously treated one benchmark-function call as a single op, while the function
+> internally ran 100–10000 real ops. That under-reported by 2–3 orders of magnitude and produced
+> the impossible "10KB faster than 100B" artifact. Now corrected via `ops_per_call`.
+
+| Case | Ops per call | Time / call | Real ops/sec |
+|------|--------------|-------------|--------------|
+| serialize 100B | 1000 | 0.386 ms | **≈2.59 M/s** |
+| serialize 1KB | 1000 | 0.458 ms | **≈2.18 M/s** |
+| serialize 10KB | 100 | 0.111 ms | **≈0.90 M/s** |
+| deserialize 100B | 1000 | 0.135 ms | **≈7.42 M/s** |
+| deserialize 1KB | 1000 | 0.163 ms | **≈6.14 M/s** |
+| deserialize 10KB | 100 | 0.369 ms | **≈0.27 M/s** |
+| parser 10×1KB | 1000 batches | 3.16 ms | **≈316 batches/s (≈3.2K msg/s)** |
+
+> Absolute values in `BENCHMARK_REPORT.md` used the wrong units and are deprecated; trust this table.
+
 
 ---
 

@@ -328,44 +328,44 @@ int main() {
     // ============ 协议层 ============
     {
         BenchmarkSuite suite("Protocol");
-        suite.add_benchmark("serialize_100B",     []() { bench_message_serialize(1000, 100); });
-        suite.add_benchmark("serialize_1KB",      []() { bench_message_serialize(1000, 1024); });
-        suite.add_benchmark("serialize_10KB",     []() { bench_message_serialize(100, 10240); });
-        suite.add_benchmark("deserialize_100B",   []() { bench_message_deserialize(1000, 100); });
-        suite.add_benchmark("deserialize_1KB",    []() { bench_message_deserialize(1000, 1024); });
-        suite.add_benchmark("deserialize_10KB",   []() { bench_message_deserialize(100, 10240); });
-        suite.add_benchmark("parser_10x1KB",      []() { bench_protocol_parser_parse(1000, 1024); });
-        suite.add_benchmark("create_destroy_1KB", []() { bench_message_create_destroy(10000, 1024); });
+        suite.add_benchmark("serialize_100B",     []() { bench_message_serialize(1000, 100); }, 1000);
+        suite.add_benchmark("serialize_1KB",      []() { bench_message_serialize(1000, 1024); }, 1000);
+        suite.add_benchmark("serialize_10KB",     []() { bench_message_serialize(100, 10240); }, 100);
+        suite.add_benchmark("deserialize_100B",   []() { bench_message_deserialize(1000, 100); }, 1000);
+        suite.add_benchmark("deserialize_1KB",    []() { bench_message_deserialize(1000, 1024); }, 1000);
+        suite.add_benchmark("deserialize_10KB",   []() { bench_message_deserialize(100, 10240); }, 100);
+        suite.add_benchmark("parser_10x1KB",      []() { bench_protocol_parser_parse(1000, 1024); }, 1000);
+        suite.add_benchmark("create_destroy_1KB", []() { bench_message_create_destroy(10000, 1024); }, 10000);
         print_suite_results("Protocol Layer", suite.run(fast_config));
     }
 
     // ============ 编解码器 ============
     {
         BenchmarkSuite suite("Codec");
-        suite.add_benchmark("protobuf_enc_dec_1KB",  []() { bench_codec_encode_decode(1000, 1024); });
-        suite.add_benchmark("protobuf_enc_dec_10KB", []() { bench_codec_encode_decode(100, 10240); });
-        suite.add_benchmark("length_enc_dec_1KB",    []() { bench_length_codec(1000, 1024); });
-        suite.add_benchmark("length_enc_dec_10KB",   []() { bench_length_codec(100, 10240); });
+        suite.add_benchmark("protobuf_enc_dec_1KB",  []() { bench_codec_encode_decode(1000, 1024); }, 1000);
+        suite.add_benchmark("protobuf_enc_dec_10KB", []() { bench_codec_encode_decode(100, 10240); }, 100);
+        suite.add_benchmark("length_enc_dec_1KB",    []() { bench_length_codec(1000, 1024); }, 1000);
+        suite.add_benchmark("length_enc_dec_10KB",   []() { bench_length_codec(100, 10240); }, 100);
         print_suite_results("Codec Layer", suite.run(fast_config));
     }
 
     // ============ 负载均衡 ============
     {
         BenchmarkSuite suite("LoadBalance");
-        suite.add_benchmark("round_robin",       []() { bench_round_robin(10000); });
-        suite.add_benchmark("consistent_hash",   []() { bench_consistent_hash(10000); });
-        suite.add_benchmark("weighted_rr",       []() { bench_weighted_round_robin(10000); });
+        suite.add_benchmark("round_robin",       []() { bench_round_robin(10000); }, 10000);
+        suite.add_benchmark("consistent_hash",   []() { bench_consistent_hash(10000); }, 10000);
+        suite.add_benchmark("weighted_rr",       []() { bench_weighted_round_robin(10000); }, 10000);
         print_suite_results("Load Balancing", suite.run(fast_config));
     }
 
     // ============ 内存 ============
     {
         BenchmarkSuite suite("Memory");
-        suite.add_benchmark("vector_alloc_10K",    []() { bench_vector_alloc(10000, 10000); });
-        suite.add_benchmark("map_insert_1K",       []() { bench_map_insert(1000); });
-        suite.add_benchmark("unordered_map_1K",    []() { bench_unordered_map(1000); });
-        suite.add_benchmark("string_concat_1K",    []() { bench_string_concat(1000); });
-        suite.add_benchmark("shared_ptr_copy_10K", []() { bench_shared_ptr_copy(10000); });
+        suite.add_benchmark("vector_alloc_10K",    []() { bench_vector_alloc(10000, 10000); }, 10000);
+        suite.add_benchmark("map_insert_1K",       []() { bench_map_insert(1000); }, 1000);
+        suite.add_benchmark("unordered_map_1K",    []() { bench_unordered_map(1000); }, 1000);
+        suite.add_benchmark("string_concat_1K",    []() { bench_string_concat(1000); }, 1000);
+        suite.add_benchmark("shared_ptr_copy_10K", []() { bench_shared_ptr_copy(10000); }, 10000);
         print_suite_results("Memory Operations", suite.run(fast_config));
     }
 
@@ -380,15 +380,15 @@ int main() {
     // ============ 并发 ============
     {
         BenchmarkSuite suite("Concurrency");
-        suite.add_benchmark("atomic_inc_1M",       []() { bench_atomic_increment(1000000); });
-        suite.add_benchmark("mutex_contention_1M", []() { bench_mutex_contention(1000000); });
+        suite.add_benchmark("atomic_inc_1M",       []() { bench_atomic_increment(1000000); }, 1000000);
+        suite.add_benchmark("mutex_contention_1M", []() { bench_mutex_contention(1000000); }, 1000000);
         print_suite_results("Concurrency Primitives", suite.run(fast_config));
     }
 
     // ============ 时钟 ============
     {
         BenchmarkSuite suite("Clock");
-        suite.add_benchmark("steady_clock_1M", []() { bench_steady_clock_now(1000000); });
+        suite.add_benchmark("steady_clock_1M", []() { bench_steady_clock_now(1000000); }, 1000000);
         print_suite_results("Timer/Clock", suite.run(fast_config));
     }
 

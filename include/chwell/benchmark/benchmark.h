@@ -15,14 +15,15 @@ namespace benchmark {
 struct BenchmarkResult {
     std::string name;
     std::string description;
-    size_t iterations;
-    double avg_time_ms;
-    double min_time_ms;
-    double max_time_ms;
-    double ops_per_second;
-    double ops_per_second_min;
-    double ops_per_second_max;
-    double ops_per_second_stddev;
+    size_t iterations = 0;
+    size_t ops_per_call = 1;  // 单次 benchmark 函数内部包含多少个真实操作
+    double avg_time_ms = 0;
+    double min_time_ms = 0;
+    double max_time_ms = 0;
+    double ops_per_second = 0;
+    double ops_per_second_min = 0;
+    double ops_per_second_max = 0;
+    double ops_per_second_stddev = 0;
 };
 
 // Benchmark 配置
@@ -40,6 +41,7 @@ struct BenchmarkDescriptor {
     std::string name;
     std::string description;
     BenchmarkFunction func;
+    size_t ops_per_call = 1;
 };
 
 // Benchmark Suite
@@ -51,11 +53,13 @@ public:
     // 添加基准测试
     void add_benchmark(const std::string& name,
                         const std::string& description,
-                        BenchmarkFunction benchmark);
+                        BenchmarkFunction benchmark,
+                        size_t ops_per_call = 1);
 
     void add_benchmark(const std::string& name,
-                        BenchmarkFunction benchmark) {
-        add_benchmark(name, "", benchmark);
+                        BenchmarkFunction benchmark,
+                        size_t ops_per_call = 1) {
+        add_benchmark(name, "", benchmark, ops_per_call);
     }
 
     // 运行所有基准测试
