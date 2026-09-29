@@ -247,6 +247,7 @@ if (CHWELL_BUILD_TESTS)
             tests/test_logic_thread.cpp
             tests/test_observability.cpp
             tests/test_hot_reload.cpp
+            tests/test_transaction.cpp
             tests/test_slg.cpp
             tests/test_game_components.cpp
             tests/test_player_move.cpp
