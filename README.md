@@ -1209,17 +1209,20 @@ TcpServer（传统）                EpollTcpServer（高性能）
 - Redis RESP 客户端（Mock 回落）+ 分布式锁（SET NX EX / CAS）
 - AOI（回调锁外派发）+ SLG 地图 / 战斗
 - **游戏系统**：排行榜 / 邮件 / 钱包（TCC 冻结）/ 社交 / 匹配 / 反作弊 / 回放 / 压测机器人规划器
+- **灰度发布**：`TrafficSplitter` 加权路由 + `ConfigVersionStore` 多版本配置
+- **GM 中枢**：`GmConsole` 指令注册 / 权限 / 审计
+- **运营分析**：`AnalyticsPipeline` 埋点 / 漏斗 / top 事件
+- **支付抽象**：`PaymentGateway` + `MemoryPaymentGateway`（验签 / 幂等 / 退款）
+- **代码生成**：`SchemaCodegen` 字段表 → Entity 骨架
 - Benchmark 框架 + E2E 闭环压测
 - H5 对战 Demo（前后端）
 - CI：build-and-test + ASan + TSan 全绿
 
-### 规划中（P3 / 远期）
+### 规划中（产品级集成，框架能力已就绪）
 
-- 业务代码生成（脚手架 / 协议代码）
-- GM 后台管理面板
-- 灰度发布与流量调度
-- 运营数据分析管道
-- 支付 SDK 对接
+- GM 管理后台 **Web UI**（对接 `GmConsole`）
+- 真实支付渠道适配（微信 / 支付宝，对接 `PaymentGateway`）
+- 运营数据分析落库 / 报表（对接 `AnalyticsPipeline`）
 - 更多集成测试场景与多进程集群用例
 
 ---
