@@ -243,6 +243,7 @@ if (CHWELL_BUILD_TESTS)
             tests/test_object_pool.cpp
             tests/test_task_queue.cpp
             tests/test_logic_thread.cpp
+            tests/test_observability.cpp
             tests/test_slg.cpp
             tests/test_game_components.cpp
             tests/test_player_move.cpp
