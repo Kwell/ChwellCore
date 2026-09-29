@@ -48,6 +48,7 @@
 | **事务** | TCC 两阶段（Try→Confirm / Cancel 全量回滚）；Saga 正向补偿（失败步骤可选补偿） |
 | **热加载** | `dlopen`/`LoadLibrary` 动态插件，安全切换 + mtime 自动检测 + 前缀白名单 |
 | **配置** | key=value + 扁平 JSON；环境 profile 叠加；热加载（mtime 基线 + 变更回调）；快照回滚；必填键校验 |
+| **灰度** | `TrafficSplitter` 加权版本路由（会话粘滞 + 随机）；`ConfigVersionStore` 多版本配置原子切换 |
 | **Redis** | 自研 RESP/TCP 客户端，连接失败自动回落**内存 Mock**；分布式锁（`SET NX EX` / CAS 删除 / CAS 续租 + RAII） |
 | **Benchmark** | 内置 `BenchmarkSuite`：预热 + 多次采样 + CSV/JSON 导出 |
 
