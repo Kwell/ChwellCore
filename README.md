@@ -1009,6 +1009,31 @@ TcpServer（传统）                EpollTcpServer（高性能）
 - 万级连接：吞吐仍 ~60K msg/s，但尾延迟需业务侧限流/分片
 
 
+### LogicThreadPool 分片效果（conn_id 哈希）
+
+> 单 LogicThread 会把所有业务回调串行化，是扩展墙。改为 `LogicThreadPool` 按
+> `conn_id % N` 分片后，同一连接仍保序，不同连接并行处理。
+> 环境：GitHub Actions ubuntu-latest，AMD EPYC 7763 / 4 vCPU，2026-09-29。
+
+| 场景 | logic workers | 吞吐 | p50 | p99 | p999 |
+|------|---------------|------|-----|-----|------|
+| 200 conn, inflight=1, 1KB | 1（基线） | 69.8K/s | 2.42 ms | 5.77 ms | 7.65 ms |
+| 200 conn, inflight=1, 1KB | 2 | **125.2K/s** | **1.40 ms** | **3.36 ms** | 4.52 ms |
+| 200 conn, inflight=1, 1KB | 4 | 115.7K/s | 1.54 ms | 4.36 ms | 6.16 ms |
+| 5000 conn, inflight=1, 256B | 1（基线） | 58.2K/s | 79.8 ms | 122.8 ms | 550 ms |
+| 5000 conn, inflight=1, 256B | 2 | **117.2K/s** | **38.9 ms** | **64.6 ms** | **230 ms** |
+| 5000 conn, inflight=1, 256B | 4 | 105.7K/s | 45.0 ms | 61.9 ms | 308 ms |
+| 200 conn, inflight=16, 1KB | 1（基线） | 84.1K/s | 33.5 ms | 57.3 ms | 66.6 ms |
+| 200 conn, inflight=16, 1KB | 2 | **172.0K/s** | **17.0 ms** | **27.6 ms** | **34.3 ms** |
+
+**结论**：
+- 2 个 logic worker 在 4 vCPU 上是甜点位：**吞吐约 2×，p50 约 ½，p999 约 ½~2/5**
+- 4 worker 反而略差——4 vCPU 上 reactors + logic + client 线程超订，上下文切换吃掉收益
+- 用法：`Service(port, workers, use_epoll=true, reactor_threads, logic_workers)`，`logic_workers=0` 表示跟随 reactor 数
+
+**注意**：`post_task` 是轮询（无亲和）；DB/RPC 回调改可变状态请用 `logic_pool().post_task_for(conn_id, fn)`，保证与该连接同 worker 串行。
+
+
 ### 协议微基准（CI 复测，口径已修正）
 
 > `ops/sec` 此前把「一次 benchmark 函数调用」当成 1 次操作，而函数内部跑 100–10000 次真实操作，
