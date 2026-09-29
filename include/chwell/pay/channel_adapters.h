@@ -78,7 +78,8 @@ public:
             message = "sign verify failed";
             return false;
         }
-        return local_.handle_callback(cb, message);
+        // 自有验签已通过，走已验签直通
+        return local_.settle_verified(cb, message);
     }
 
     bool query_order(const std::string& order_id, PaymentOrder& out) override {
@@ -154,7 +155,7 @@ public:
             message = "sign verify failed";
             return false;
         }
-        return local_.handle_callback(cb, message);
+        return local_.settle_verified(cb, message);
     }
 
     bool query_order(const std::string& order_id, PaymentOrder& out) override {
