@@ -27,26 +27,28 @@ struct BotAction {
     std::string text;
 };
 
+struct LoadBotConfig {
+    int bot_count = 10;
+    std::int64_t duration_ms = 10000;
+    std::int64_t heartbeat_interval_ms = 3000;
+    std::int64_t move_interval_ms = 200;
+    std::int64_t chat_interval_ms = 5000;
+    std::int64_t jitter_ms = 50;
+    std::uint32_t seed = 1;
+    double map_width = 1000;
+    double map_height = 1000;
+};
+
 class LoadBotPlanner {
 public:
+    using Config = LoadBotConfig;
+
     enum ActionType : std::uint16_t {
         LOGIN = 1,
         HEARTBEAT = 2,
         MOVE = 3,
         CHAT = 4,
         LOGOUT = 5,
-    };
-
-    struct Config {
-        int bot_count = 10;
-        std::int64_t duration_ms = 10000;
-        std::int64_t heartbeat_interval_ms = 3000;
-        std::int64_t move_interval_ms = 200;
-        std::int64_t chat_interval_ms = 5000;
-        std::int64_t jitter_ms = 50;
-        std::uint32_t seed = 1;
-        double map_width = 1000;
-        double map_height = 1000;
     };
 
     explicit LoadBotPlanner(Config cfg = Config()) : cfg_(cfg) {}
