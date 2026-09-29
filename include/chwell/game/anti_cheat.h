@@ -24,17 +24,20 @@ struct CheatVerdict {
     std::string reason;
 };
 
+struct AntiCheatSpeedRule {
+    double max_speed = 100.0;      // 单位/秒，0 表示不限制
+    double max_jump_dist = 500.0;  // 单次瞬移阈值，0 不限制
+};
+
+struct AntiCheatRateRule {
+    int max_count = 30;            // 窗口内最大次数
+    std::int64_t window_ms = 1000;
+};
+
 class AntiCheat {
 public:
-    struct SpeedRule {
-        double max_speed = 100.0;   // 单位/秒，0 表示不限制
-        double max_jump_dist = 500.0; // 单次瞬移阈值
-    };
-
-    struct RateRule {
-        int max_count = 30;         // 窗口内最大次数
-        std::int64_t window_ms = 1000;
-    };
+    using SpeedRule = AntiCheatSpeedRule;
+    using RateRule = AntiCheatRateRule;
 
     explicit AntiCheat(SpeedRule speed = SpeedRule(), RateRule rate = RateRule())
         : speed_(speed), rate_(rate) {}
