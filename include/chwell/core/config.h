@@ -46,7 +46,8 @@ public:
     // ========== JSON 配置 ==========
     // 扁平 JSON：{"a": {"b": 1}} 展开为 a.b=1；string/number/bool 均转字符串
     bool load_json_from_file(const std::string& path);
-    bool load_json_from_files(const std::vector<std::string>& paths);
+    // reset=true 时先清空已有 KV（整表替换）；false 时叠加覆盖（与 conf 混载）
+    bool load_json_from_files(const std::vector<std::string>& paths, bool reset = true);
 
     // ========== 环境 profile ==========
     // 依次加载 default.{ext} 与 {env}.{ext}（ext 为 conf/json 自动探测）
@@ -134,6 +135,8 @@ private:
     bool parse_json_text(const std::string& text);
     static std::string detect_format(const std::string& path);  // "json" | "conf"
     void notify_change();
+    void record_mtimes(const std::vector<std::string>& paths);
+    static std::int64_t file_mtime(const std::string& path);  // 0 表示 stat 失败
 
     // 基础字段
     int listen_port_;
@@ -147,6 +150,7 @@ private:
 
     // 热加载 / 回滚
     std::vector<std::string> loaded_files_;
+    std::unordered_map<std::string, std::int64_t> file_mtimes_;  // 每实例基线，避免跨对象串扰
     std::vector<std::unordered_map<std::string, std::string>> snapshots_;
     std::vector<std::function<void()>> change_listeners_;
 

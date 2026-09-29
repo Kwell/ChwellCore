@@ -6,6 +6,14 @@
 #include <thread>
 #include <chrono>
 
+#ifdef _WIN32
+#include <direct.h>
+#define CHWELL_MKDIR(p) _mkdir(p)
+#else
+#include <sys/stat.h>
+#define CHWELL_MKDIR(p) mkdir(p, 0755)
+#endif
+
 #include "chwell/core/config.h"
 
 using namespace chwell;
@@ -118,6 +126,47 @@ TEST(ConfigTest, JsonParseRejectsGarbage) {
     core::Config cfg;
     EXPECT_FALSE(cfg.load_json_from_file(p));
     std::remove(p.c_str());
+}
+
+TEST(ConfigTest, ReloadReplacesKeysNotMerge) {
+    auto p = write_temp("rep.json", R"({"keep": "1", "gone": "x"})");
+    core::Config cfg;
+    ASSERT_TRUE(cfg.load_json_from_file(p));
+    EXPECT_EQ("x", cfg.get_string("gone"));
+
+    {
+        std::ofstream out(p.c_str());
+        out << R"({"keep": "2"})";
+    }
+    ASSERT_TRUE(cfg.reload());
+    EXPECT_EQ("2", cfg.get_string("keep"));
+    // 已删除的键不应残留
+    EXPECT_EQ("", cfg.get_string("gone", ""));
+    std::remove(p.c_str());
+}
+
+TEST(ConfigTest, EnvProfileOverlay) {
+    // default + prod 两层，放到独立子目录避免与 cwd 下其他文件冲突
+    CHWELL_MKDIR("cfg_env_dir");
+    {
+        std::ofstream d("cfg_env_dir/default.json");
+        d << R"({"mode": "dev", "port": 1000})";
+    }
+    {
+        std::ofstream e("cfg_env_dir/prod.json");
+        e << R"({"mode": "prod"})";
+    }
+    core::Config cfg;
+    ASSERT_TRUE(cfg.load_for_env("cfg_env_dir", "prod"));
+    EXPECT_EQ("prod", cfg.get_string("mode"));  // env 覆盖 default
+    EXPECT_EQ(1000, cfg.get_int("port", 0));    // default 保留
+    std::remove("cfg_env_dir/default.json");
+    std::remove("cfg_env_dir/prod.json");
+}
+
+TEST(ConfigTest, CheckReloadWithoutPriorLoadDoesNothing) {
+    core::Config cfg;
+    EXPECT_FALSE(cfg.check_reload());
 }
 
 }  // namespace

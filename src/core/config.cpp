@@ -107,6 +107,8 @@ bool Config::load_from_files(const std::vector<std::string>& paths) {
     parse_components();
     // 环境变量最终覆盖
     apply_env_overrides();
+    // 记录 mtime 基线，供 check_reload 对比
+    record_mtimes(paths);
 
     CHWELL_LOG_INFO("Config: server_name=" << server_name_unlocked()
                     << ", bus_id=" << bus_id_unlocked()
@@ -379,12 +381,16 @@ bool Config::parse_json_text(const std::string& text) {
 }
 
 bool Config::load_json_from_file(const std::string& path) {
-    return load_json_from_files({path});
+    return load_json_from_files({path}, /*reset=*/true);
 }
 
-bool Config::load_json_from_files(const std::vector<std::string>& paths) {
+bool Config::load_json_from_files(const std::vector<std::string>& paths, bool reset) {
     std::unique_lock lock(mutex_);
     loaded_files_ = paths;
+    if (reset) {
+        kv_.clear();
+        components_.clear();
+    }
     bool ok = false;
     for (const auto& p : paths) {
         std::ifstream in(p.c_str());
@@ -401,6 +407,7 @@ bool Config::load_json_from_files(const std::vector<std::string>& paths) {
         apply_kv_to_fields();
         parse_components();
         apply_env_overrides();
+        record_mtimes(paths);
     }
     return ok;
 }
@@ -431,7 +438,8 @@ bool Config::load_for_env(const std::string& dir, const std::string& env) {
         else confs.push_back(f);
     }
     if (!confs.empty()) ok = load_from_files(confs) && ok;
-    if (!jsons.empty()) ok = load_json_from_files(jsons) && ok;
+    // conf 已清过表则 json 叠加；否则 json 整表替换
+    if (!jsons.empty()) ok = load_json_from_files(jsons, /*reset=*/confs.empty()) && ok;
     // 合并记录所有已加载文件
     {
         std::unique_lock lock(mutex_);
@@ -458,7 +466,7 @@ bool Config::reload() {
         else confs.push_back(f);
     }
     if (!confs.empty()) ok = load_from_files(confs) && ok;
-    if (!jsons.empty()) ok = load_json_from_files(jsons) && ok;
+    if (!jsons.empty()) ok = load_json_from_files(jsons, /*reset=*/confs.empty()) && ok;
     {
         std::unique_lock lock(mutex_);
         loaded_files_ = files;
@@ -470,29 +478,41 @@ bool Config::reload() {
     return ok;
 }
 
-bool Config::check_reload() {
-    static std::unordered_map<std::string, std::int64_t> last_mtime;
-    std::vector<std::string> files;
-    {
-        std::shared_lock lock(mutex_);
-        files = loaded_files_;
-    }
-    if (files.empty()) return false;
+std::int64_t Config::file_mtime(const std::string& path) {
+    struct stat st;
+    if (::stat(path.c_str(), &st) != 0) return 0;
+    return static_cast<std::int64_t>(st.st_mtime);
+}
 
-    bool changed = false;
-    for (auto& f : files) {
-        struct stat st;
-        if (::stat(f.c_str(), &st) != 0) continue;
-        auto mt = static_cast<std::int64_t>(st.st_mtime);
-        auto it = last_mtime.find(f);
-        if (it == last_mtime.end()) {
-            last_mtime[f] = mt;
-        } else if (it->second != mt) {
-            it->second = mt;
-            changed = true;
+void Config::record_mtimes(const std::vector<std::string>& paths) {
+    for (const auto& p : paths) {
+        std::int64_t mt = file_mtime(p);
+        if (mt != 0) file_mtimes_[p] = mt;
+    }
+}
+
+bool Config::check_reload() {
+    std::vector<std::string> files;
+    std::vector<std::string> stale;
+    {
+        std::unique_lock lock(mutex_);
+        files = loaded_files_;
+        if (files.empty()) return false;
+
+        for (auto& f : files) {
+            std::int64_t mt = file_mtime(f);
+            if (mt == 0) continue;
+            auto it = file_mtimes_.find(f);
+            if (it == file_mtimes_.end()) {
+                // 首次见到：建立基线，不视为变更（加载时应已 record）
+                file_mtimes_[f] = mt;
+            } else if (it->second != mt) {
+                it->second = mt;
+                stale.push_back(f);
+            }
         }
     }
-    if (changed) {
+    if (!stale.empty()) {
         CHWELL_LOG_INFO("Config: file change detected, reloading");
         return reload();
     }
