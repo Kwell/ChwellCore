@@ -246,6 +246,7 @@ if (CHWELL_BUILD_TESTS)
             tests/test_gray_release.cpp
             tests/test_ops_pay_codegen.cpp
             tests/test_gm_api_pay_channels.cpp
+            tests/test_analytics_store.cpp
             tests/test_storage.cpp
             tests/test_session_manager.cpp
             tests/test_timer_wheel.cpp
@@ -415,6 +416,12 @@ if (CHWELL_BUILD_EXAMPLES)
     )
     target_link_libraries(example_new_modules PRIVATE chwell_core)
     target_compile_features(example_new_modules PRIVATE cxx_std_11)
+
+    # GM 管理服务示例
+    add_executable(example_gm_admin
+        examples/gm_admin_demo.cpp
+    )
+    target_link_libraries(example_gm_admin PRIVATE chwell_core)
 
     # 游戏组件示例
     add_executable(example_game_components_demo
