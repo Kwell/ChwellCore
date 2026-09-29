@@ -242,6 +242,7 @@ if (CHWELL_BUILD_TESTS)
             tests/test_social_match.cpp
             tests/test_anti_cheat.cpp
             tests/test_replay.cpp
+            tests/test_load_bot.cpp
             tests/test_storage.cpp
             tests/test_session_manager.cpp
             tests/test_timer_wheel.cpp
