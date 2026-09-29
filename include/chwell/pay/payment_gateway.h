@@ -149,6 +149,38 @@ public:
         return true;
     }
 
+    // 渠道适配器在完成自有验签后走此入口（跳过 Memory 渠道的固定 ok_ 签名校验）
+    bool settle_verified(const PaymentCallback& cb, std::string& message) {
+        std::lock_guard<std::mutex> lock(mu_);
+        auto it = orders_.find(cb.order_id);
+        if (it == orders_.end()) {
+            message = "order not found";
+            return false;
+        }
+        PaymentOrder& o = it->second;
+        if (o.status == OrderStatus::Paid) {
+            message = "already paid";
+            return true;
+        }
+        if (o.status != OrderStatus::Created) {
+            message = "invalid state";
+            return false;
+        }
+        if (cb.amount_cents != o.amount_cents) {
+            message = "amount mismatch";
+            return false;
+        }
+        if (!cb.success) {
+            o.status = OrderStatus::Closed;
+            message = "closed by channel";
+            return true;
+        }
+        o.status = OrderStatus::Paid;
+        o.pay_time = o.create_time;
+        message = "ok";
+        return true;
+    }
+
     // 主动退款（测试/管理台）
     bool refund(const std::string& order_id) {
         std::lock_guard<std::mutex> lock(mu_);

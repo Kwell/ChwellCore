@@ -49,8 +49,8 @@
 | **热加载** | `dlopen`/`LoadLibrary` 动态插件，安全切换 + mtime 自动检测 + 前缀白名单 |
 | **配置** | key=value + 扁平 JSON；环境 profile 叠加；热加载（mtime 基线 + 变更回调）；快照回滚；必填键校验 |
 | **灰度** | `TrafficSplitter` 加权版本路由（会话粘滞 + 随机）；`ConfigVersionStore` 多版本配置原子切换 |
-| **GM / 分析** | `GmConsole` 指令注册 + 权限等级 + 审计日志；`AnalyticsPipeline` 埋点聚合 / 漏斗 / top 事件 |
-| **支付** | `PaymentGateway` 渠道抽象；`MemoryPaymentGateway` 订单创建 / 回调验签 / 幂等 / 退款 |
+| **GM / 分析** | `GmConsole` 指令注册 + 权限等级 + 审计日志；`GmAdminApi` HTTP/JSON 管理接口；`AnalyticsPipeline` 埋点聚合 / 漏斗 / top 事件 |
+| **支付** | `PaymentGateway` 渠道抽象；`MemoryPaymentGateway`；**微信/支付宝适配骨架**（可注入签名与 HTTP） |
 | **代码生成** | `SchemaCodegen` 字段表 → PersistableEntity 骨架 |
 | **Redis** | 自研 RESP/TCP 客户端，连接失败自动回落**内存 Mock**；分布式锁（`SET NX EX` / CAS 删除 / CAS 续租 + RAII） |
 | **Benchmark** | 内置 `BenchmarkSuite`：预热 + 多次采样 + CSV/JSON 导出 |
