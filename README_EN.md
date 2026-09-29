@@ -983,6 +983,32 @@ TcpServer (legacy)               EpollTcpServer (high performance)
 - Send QPS peaks at 1000 conns then falls back — socket-buffer backpressure
 - At 10000 conns Send≈Recv — send side is already throttled by receive
 
+### Framework E2E benchmark (Service + ProtocolRouter, closed-loop)
+
+> **Vs raw epoll above**: full path `EpollTcpServer → EpollTcpBridge → Service →
+> ProtocolRouter → send_message`. Client is closed-loop (at most `inflight`
+> unanswered requests per connection), so **RTT is true round-trip**, and the
+> client uses one epoll loop per thread (no single-recv bottleneck).
+>
+> Env: GitHub Actions ubuntu-latest, AMD EPYC 7763 / 4 vCPU, 2026-09-29.
+> Reproduce: Actions → `benchmark`, or `./framework_bench <conns> <inflight> <msg> <sec> <reactors>`.
+
+| Scenario | Conns | Inflight | Msg | Throughput | RTT p50 | p99 | p999 | max |
+|----------|-------|----------|-----|------------|---------|-----|------|-----|
+| **Latency-first** | 200 | 1 | 1KB | **69.8K req/s** | **2.42 ms** | **5.77 ms** | 7.65 ms | 19 ms |
+| Throughput | 200 | 16 | 1KB | 84.1K req/s | 33.5 ms | 57.3 ms | 66.6 ms | 89 ms |
+| High concurrency | 5000 | 1 | 256B | 58.2K req/s | 79.8 ms | 122.8 ms | 550 ms | 620 ms |
+
+**Reading**:
+- At 200 conns / inflight=1, throughput ≈ conns ÷ p50 (`200 / 2.42ms ≈ 82K`) — closed-loop consistent
+- inflight=16 buys only +20% throughput while RTT stacks to ~32ms (≈16×2ms) — **LogicThread (single-threaded business loop) is the bottleneck**, not the network
+- 5000 conns: p50 80ms / p999 550ms — queueing in the single logic thread inflates tail latency
+
+**For game servers** (1KB messages):
+- ~200 connections: p99 < 6ms — fine for room-based / turn-based SLG
+- 10k connections: still ~60K msg/s, but tail latency needs app-level sharding/limits
+
+
 ### Protocol micro-benchmarks (CI re-run, units fixed)
 
 > `ops/sec` previously treated one benchmark-function call as a single op, while the function
