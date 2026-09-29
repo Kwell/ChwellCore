@@ -983,6 +983,32 @@ TcpServer（传统）                EpollTcpServer（高性能）
 - Send QPS 在 1000 并发冲到 60 万后回落，是 socket 缓冲背压
 - 10000 并发时 Send≈Recv，说明发送侧已被接收速度限流
 
+### 框架全链路压测（Service + ProtocolRouter 闭环）
+
+> **与上面裸 epoll 的区别**：这里走完整链路
+> `EpollTcpServer → EpollTcpBridge → Service → ProtocolRouter → send_message`，
+> 客户端闭环（每连接最多 inflight 个未答请求），**RTT 是真实往返**，
+> 且客户端多线程 epoll（不再是单线程轮询）。
+>
+> 环境：GitHub Actions ubuntu-latest，AMD EPYC 7763 / 4 vCPU，2026-09-29。
+> 复现：Actions → `benchmark`，或 `./framework_bench <conns> <inflight> <msg> <sec> <reactors>`。
+
+| 场景 | 并发 | inflight | 消息 | 吞吐 | RTT p50 | p99 | p999 | max |
+|------|------|----------|------|------|---------|-----|------|-----|
+| **延迟优先** | 200 | 1 | 1KB | **69.8K req/s** | **2.42 ms** | **5.77 ms** | 7.65 ms | 19 ms |
+| 吞吐优先 | 200 | 16 | 1KB | 84.1K req/s | 33.5 ms | 57.3 ms | 66.6 ms | 89 ms |
+| 高并发 | 5000 | 1 | 256B | 58.2K req/s | 79.8 ms | 122.8 ms | 550 ms | 620 ms |
+
+**解读**：
+- 200 连接 / inflight=1 时吞吐 ≈ 并发 ÷ p50（`200 / 2.42ms ≈ 82K`），闭环自洽
+- inflight=16 只多 20% 吞吐，RTT 线性堆到 ~32ms（≈16×2ms），说明**瓶颈在单线程 LogicThread**，不是网络
+- 5000 连接 p50 80ms / p999 550ms：业务逻辑单线程排队，尾延迟被放大
+
+**对游戏服的意义**（1KB 消息）：
+- 200 连接规模：p99 < 6ms，足够房间制 / SLG 回合制
+- 万级连接：吞吐仍 ~60K msg/s，但尾延迟需业务侧限流/分片
+
+
 ### 协议微基准（CI 复测，口径已修正）
 
 > `ops/sec` 此前把「一次 benchmark 函数调用」当成 1 次操作，而函数内部跑 100–10000 次真实操作，
