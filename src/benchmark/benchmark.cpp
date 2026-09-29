@@ -29,12 +29,14 @@ namespace benchmark {
 void BenchmarkSuite::add_benchmark(
     const std::string& name,
     const std::string& description,
-    BenchmarkFunction benchmark) {
+    BenchmarkFunction benchmark,
+    size_t ops_per_call) {
 
     BenchmarkDescriptor desc;
     desc.name = name;
     desc.description = description;
     desc.func = benchmark;
+    desc.ops_per_call = ops_per_call > 0 ? ops_per_call : 1;
 
     benchmarks_.push_back(desc);
 }
@@ -111,15 +113,16 @@ BenchmarkResult BenchmarkSuite::run_single_benchmark(
 
     // 计算统计信息
     result.iterations = config.measurement_iterations;
+    result.ops_per_call = desc.ops_per_call > 0 ? desc.ops_per_call : 1;
     result.avg_time_ms = calculate_avg(times);
     result.min_time_ms = calculate_min(times);
     result.max_time_ms = calculate_max(times);
     double stddev = calculate_stddev(times, result.avg_time_ms);
 
-    // 计算 ops/sec
-    result.ops_per_second = 1000.0 / result.avg_time_ms;
-    result.ops_per_second_min = 1000.0 / result.max_time_ms;
-    result.ops_per_second_max = 1000.0 / result.min_time_ms;
+    // ops/sec = 单次调用内的真实操作数 / 单次调用耗时
+    result.ops_per_second = result.ops_per_call * 1000.0 / result.avg_time_ms;
+    result.ops_per_second_min = result.ops_per_call * 1000.0 / result.max_time_ms;
+    result.ops_per_second_max = result.ops_per_call * 1000.0 / result.min_time_ms;
     result.ops_per_second_stddev = stddev * result.ops_per_second / result.avg_time_ms;
 
     return result;
