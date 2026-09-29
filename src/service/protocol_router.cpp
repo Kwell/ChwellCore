@@ -1,6 +1,9 @@
 #include "chwell/service/protocol_router.h"
 #include "chwell/core/logger.h"
 #include "chwell/protocol/message.h"
+#include "chwell/metrics/instrumentation.h"
+#include "chwell/trace/trace.h"
+#include <chrono>
 
 namespace chwell {
 namespace service {
@@ -38,10 +41,20 @@ void ProtocolRouterComponent::on_message(const net::TcpConnectionPtr& conn,
             // 在读锁下调用 handler，避免死锁风险
             auto handler = it->second;
             hlock.unlock();
+
+            // 打点：handler 耗时 + trace span
+            trace::TraceContext::current_or_create_trace_id();
+            auto t0 = std::chrono::steady_clock::now();
             handler(conn, msg);
+            auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - t0).count();
+            metrics::Instrumentation::instance().record_request(
+                "cmd_" + std::to_string(msg.cmd), static_cast<double>(ms));
         } else {
             CHWELL_LOG_WARN("No handler registered for cmd: 0x" << std::hex << msg.cmd << std::dec
                           << " (" << msg.cmd << ")");
+            metrics::Instrumentation::instance().record_error(
+                "cmd_" + std::to_string(msg.cmd) + "_unhandled");
         }
     }
 }
