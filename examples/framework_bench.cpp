@@ -60,7 +60,7 @@ struct ConnState {
 };
 
 struct ThreadStats {
-    std::vector<double> rtts_ms;   // reserve ahead to avoid mid-run realloc
+    std::vector<double> rtt_ms;   // reserve ahead to avoid mid-run realloc
     std::uint64_t sent = 0;
     std::uint64_t recvd = 0;
     std::uint64_t recv_bytes = 0;
