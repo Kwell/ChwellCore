@@ -34,6 +34,31 @@ jobs:
             sleep 2
           done
 
+  framework-bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake g++ libyaml-cpp-dev
+
+      - name: Build framework_bench
+        run: |
+          cmake -B build -DCHWELL_BUILD_TESTS=OFF -DCHWELL_BUILD_EXAMPLES=ON -DCHWELL_USE_PROTOBUF=OFF
+          cmake --build build --target framework_bench -j2
+
+      - name: Latency mode (inflight=1)
+        run: ./build/framework_bench 200 1 1024 10 2 || true
+
+      - name: Throughput mode (inflight=16)
+        run: ./build/framework_bench 200 16 1024 10 2 || true
+
+      - name: High concurrency (5000 conns, inflight=1)
+        run: ./build/framework_bench 5000 1 256 10 2 || true
+
   protocol-bench:
     runs-on: ubuntu-latest
     timeout-minutes: 25
