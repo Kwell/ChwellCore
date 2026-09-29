@@ -41,9 +41,13 @@ Modular, high-performance C++17 game server framework for SLG / MMO titles.
 | **Game components** | Login (token validation), chat, room (one room per connection), heartbeat, player move |
 | **Infrastructure** | Hierarchical timer wheel (O(1) add/cancel), thread pool, task queue (delay / repeat / cancel), object pool, type-safe event bus |
 | **Spatial** | Grid AOI (`GridAoi`), cross-list AOI (`CrossListAoi`); SLG map & battle |
-| **Storage** | Unified KV interface (Memory / MySQL / MongoDB); templated ORM `Repository<T>`; sync + async (Future / Callback) APIs |
-| **Cluster** | Node registry (YAML + consistent hash); lightweight RPC (cmd-addressed); gateway forwarding |
+| **Storage** | Unified KV interface (Memory / MySQL / MongoDB); templated ORM `Repository<T>`; **write-back cache `WriteBackCache<T>` + field-level dirty marks**; sync + async APIs |
+| **Cluster** | Node registry (YAML + consistent-hash virtual nodes); lightweight RPC; **`RpcRouter` cross-server forward + failover**; **`SessionLocator` cross-server session map** |
 | **Reliability** | Circuit breaker (count / failure-rate / hybrid + HALF_OPEN probe budget); token bucket / leaky bucket / fixed window rate limiters; Prometheus metrics |
+| **Observability** | Structured logging (category filters / JSON / file); `TraceContext` / `ScopedSpan`; QPS / latency histogram / connections; GM ops commands (token auth) |
+| **Transactions** | TCC two-phase (Try→Confirm / reverse Cancel); Saga forward compensation (optional compensate of failed step) |
+| **Hot reload** | `dlopen`/`LoadLibrary` plugins with safe swap, mtime auto-check, path prefix allowlist |
+| **Config** | key=value + flat JSON; env profile overlay; hot reload (ns mtime baseline + change callbacks); snapshot rollback; required-key validation |
 | **Redis** | Hand-rolled RESP/TCP client with in-memory **mock fallback**; distributed lock (`SET NX EX` / CAS delete / CAS renew + RAII) |
 | **Benchmark** | Built-in `BenchmarkSuite`: warmup + multi-sample runs + CSV/JSON export |
 
@@ -336,7 +340,7 @@ flowchart LR
 |--------|-----------|-------|
 | `chwell/core` | `TimerWheel` | Hierarchical wheel: O(1) add/cancel (`list_iter` + `in_wheel`), one-shot and repeating timers |
 | `chwell/core` | `ThreadPool` | Fixed-size pool, `post()` |
-| `chwell/core` | `Config` | key=value config, multi-file override, env override |
+| `chwell/core` | `Config` | key=value + flat JSON + env profile overlay; hot reload / snapshot rollback / key validation |
 | `chwell/task` | `TaskQueue` / `DelayedTaskQueue` | Priority queue; delay / repeat / cancel |
 | `chwell/pool` | `ObjectPool<T>` | Templated object pool |
 | `chwell/event` | `EventBus` | Type-safe pub/sub, thread-safe, priority support |
@@ -466,6 +470,76 @@ auto val = redis->get("key");
 ```
 
 > **Multi-instance deployments**: the in-memory mock only gives correct single-process semantics. Cross-process locking needs a real Redis (the RESP path). The fencing token is currently a process-local counter; cross-process fencing needs server-side `INCR`.
+
+### Observability (`chwell/trace`, `chwell/metrics`, `chwell/service/ops_component.h`)
+
+```cpp
+#include "chwell/trace/trace.h"
+#include "chwell/metrics/instrumentation.h"
+#include "chwell/service/ops_component.h"
+
+trace::TraceContext ctx = trace::TraceContext::new_trace();
+trace::ScopedSpan span(ctx, "handle_login");
+span.set_tag("uid", "10001");
+
+metrics::instrumentation().record_qps("login");
+metrics::instrumentation().record_latency("login", /*ms=*/12.0);
+std::string prom = metrics::get_prometheus_registry().export_metrics();
+
+service::OpsComponent ops(/*token=*/"secret");  // GM cmds 0x0301/0303/0305/0307
+```
+
+### Hot-reload plugins (`chwell/service/hot_reload.h`)
+
+```cpp
+service::HotReloadManager mgr;
+mgr.set_allowed_prefix("myplugin");
+mgr.load("./plugins/myplugin.so");   // dlopen + chwell_create_plugin
+mgr.check_updates();                 // mtime change → safe swap, rollback on failure
+```
+
+### Distributed transactions (`chwell/transaction`)
+
+```cpp
+transaction::TccTransaction tcc("order-1");
+tcc.try_phase("gold", [&]{ return reserve_gold(); });
+tcc.try_phase("item", [&]{ return reserve_item(); });
+tcc.commit();  // Confirm all, or Cancel every attempted participant
+
+transaction::Saga saga("pay-flow");
+saga.step("debit", [&]{ return debit(); }, [&]{ return credit(); });
+saga.step("ship",  [&]{ return ship();  }, [&]{ return recall(); });
+saga.execute();
+```
+
+### Business-layer persistence (`chwell/storage/orm/writeback_cache.h`)
+
+```cpp
+class Player : public storage::orm::PersistableEntity {
+    CHWELL_FIELD(std::string, id_, player_id)
+    CHWELL_FIELD(int, level_, level)
+    // to_document / from_document ...
+};
+
+storage::orm::WriteBackCache<Player> cache(&repo);
+p.set_level(5);             // marks dirty field
+cache.put(p);               // cache + dirty
+cache.flush();              // write back dirty entities only
+cache.auto_flush_if_due();  // periodic flush hook
+```
+
+### Cross-server routing (`chwell/cluster/rpc_router.h`, `session_locator.h`)
+
+```cpp
+cluster::RpcRouter router(reg);
+router.set_transport_factory(make_rpc_transport);
+router.forward("logic", player_id, cmd, payload, resp);  // hash + failover
+
+cluster::SessionLocator locator;
+locator.bind("sess-1", "logic-1");
+locator.migrate("sess-1", "logic-1", "logic-2");
+auto node = locator.node_of("sess-1");
+```
 
 ### Benchmark (`chwell/benchmark`)
 
@@ -1065,22 +1139,29 @@ TcpServer (legacy)               EpollTcpServer (high performance)
 - Component service layer (login / chat / room / heartbeat / move)
 - Frame sync / state sync
 - Timer wheel / thread pool / object pool / task queue / event bus
-- Storage (Memory / MySQL / MongoDB) + ORM + async adapter
-- Cluster registry + consistent hash + RPC + gateway
+- Storage (Memory / MySQL / MongoDB) + ORM + async adapter + **write-back cache (field dirty marks)**
+- Cluster registry + consistent-hash virtual nodes + RPC + gateway + **`RpcRouter` cross-server forward / `SessionLocator`**
 - Discovery + load balancing (per-`service_id` cache isolation)
 - Circuit breaker (HALF_OPEN probe budget) + rate limiters + Prometheus
+- **Observability**: structured logging / Trace / latency histogram / GM ops commands
+- **Distributed transactions**: TCC two-phase + Saga compensation
+- **Plugin hot reload** (dlopen safe swap + mtime check)
+- **Config**: JSON / env profile / hot reload / snapshot rollback
 - Redis RESP client (mock fallback) + distributed lock (SET NX EX / CAS)
 - AOI (callbacks fired outside lock) + SLG map / battle
-- Benchmark framework
+- **Game systems**: leaderboard / mail / wallet (TCC holds) / social / match / anti-cheat / replay / load-bot planner
+- Benchmark framework + E2E closed-loop load test
 - H5 battle demo (frontend + backend)
 - CI green: build-and-test + ASan + TSan
 
-### Planned
+### Planned (P3 / later)
 
-- Structured logging (spdlog option)
-- More game components (friends, guild, leaderboard)
-- Hot reload
-- More integration test scenarios
+- Business codegen (scaffolding / protocol stubs)
+- GM admin panel
+- Gray release & traffic steering
+- Ops analytics pipeline
+- Payment SDK integration
+- More integration tests and multi-process cluster cases
 
 ---
 

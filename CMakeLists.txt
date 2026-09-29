@@ -236,6 +236,13 @@ if (CHWELL_BUILD_TESTS)
             tests/test_protocol_parser.cpp
             tests/test_protocol_router.cpp
             tests/test_orm_repository.cpp
+            tests/test_persist_cache.cpp
+            tests/test_cross_server.cpp
+            tests/test_game_systems.cpp
+            tests/test_social_match.cpp
+            tests/test_anti_cheat.cpp
+            tests/test_replay.cpp
+            tests/test_load_bot.cpp
             tests/test_storage.cpp
             tests/test_session_manager.cpp
             tests/test_timer_wheel.cpp
@@ -248,6 +255,7 @@ if (CHWELL_BUILD_TESTS)
             tests/test_observability.cpp
             tests/test_hot_reload.cpp
             tests/test_transaction.cpp
+            tests/test_config.cpp
             tests/test_slg.cpp
             tests/test_game_components.cpp
             tests/test_player_move.cpp

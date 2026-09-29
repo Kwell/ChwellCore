@@ -38,12 +38,16 @@
 | **协议** | 自定义二进制帧 `[cmd:2B][len:2B][body]`；Protobuf 帧；JSON 帧；流式粘包解析器 |
 | **服务层** | 组件化 `Service` 容器（可切换 epoll / 传统模型）；按命令字路由；`SessionManager` 多维会话映射 |
 | **同步** | `FrameSyncRoom`（帧同步 + 快照）；`StateSyncRoom`（K/V 状态 + 增量差异 + 订阅） |
-| **游戏组件** | 登录（token 校验）、聊天、房间（一人一房）、心跳、玩家移动 |
+| **游戏组件** | 登录（token 校验）、聊天、房间（一人一房）、心跳、玩家移动；**排行榜 / 邮件 / 钱包（TCC 冻结） / 社交 / 匹配 / 反作弊 / 回放 / 压测机器人** |
 | **基础设施** | 分层时间轮（O(1) 添加/取消）、线程池、任务队列（延时/重复/取消）、对象池、类型安全事件总线 |
 | **空间** | 格子 AOI（GridAoi）、十字链表 AOI（CrossListAoi）；SLG 地图与战斗 |
-| **存储** | 统一 KV 接口（Memory / MySQL / MongoDB）；模板 ORM `Repository<T>`；同步 + 异步（Future / Callback）两套 API |
-| **集群** | 节点注册表（YAML + 一致性哈希）；轻量 RPC（cmd 寻址）；网关转发 |
+| **存储** | 统一 KV 接口（Memory / MySQL / MongoDB）；模板 ORM `Repository<T>`；**写回缓存 `WriteBackCache<T>` + 字段级脏标**；同步 + 异步两套 API |
+| **集群** | 节点注册表（YAML + 一致性哈希虚拟节点）；轻量 RPC；**`RpcRouter` 跨服透传 + 故障转移**；**`SessionLocator` 跨服会话定位** |
 | **可靠性** | 熔断器（计数 / 失败率 / 混合 + HALF_OPEN 探测名额）；令牌桶 / 漏桶 / 固定窗口限流；Prometheus 指标 |
+| **可观测** | 结构化日志（分类过滤 / JSON / 文件）；`TraceContext` / `ScopedSpan`；QPS / 延迟直方图 / 连接数；GM 运维指令（token 鉴权） |
+| **事务** | TCC 两阶段（Try→Confirm / Cancel 全量回滚）；Saga 正向补偿（失败步骤可选补偿） |
+| **热加载** | `dlopen`/`LoadLibrary` 动态插件，安全切换 + mtime 自动检测 + 前缀白名单 |
+| **配置** | key=value + 扁平 JSON；环境 profile 叠加；热加载（mtime 基线 + 变更回调）；快照回滚；必填键校验 |
 | **Redis** | 自研 RESP/TCP 客户端，连接失败自动回落**内存 Mock**；分布式锁（`SET NX EX` / CAS 删除 / CAS 续租 + RAII） |
 | **Benchmark** | 内置 `BenchmarkSuite`：预热 + 多次采样 + CSV/JSON 导出 |
 
@@ -293,6 +297,19 @@ public:
 | `HeartbeatComponent` | 心跳保活 |
 | `PlayerMoveComponent` | 位置同步 + AOI 广播 |
 
+#### 游戏系统（纯逻辑，可独立单测）
+
+| 模块 | 头文件 | 说明 |
+|------|--------|------|
+| 排行榜 | `game/leaderboard.h` | `Leaderboard`：update / top(n) / rank_of / score_of；同分按更新时间再按 id 稳定排序 |
+| 邮件 | `game/mail.h` | `Mailbox`：发送 / 列表 / 已读 / 删除 / 未读数 / TTL 过期 / 附件 |
+| 钱包 | `game/wallet.h` | `Wallet`：多币种 add / spend；**TCC 预留** `try_hold` → `confirm_hold` / `cancel_hold` |
+| 社交 | `game/social_match.h` | `SocialGraph`：单向关注 / 双向好友 / 黑名单 |
+| 匹配 | `game/social_match.h` | `Matchmaker`：按分数分段 FIFO 排队，凑满 `team_size` 成局 |
+| 反作弊 | `game/anti_cheat.h` | `AntiCheat`：移动速度 / 瞬移 / 操作频率滑动窗口检测 |
+| 回放 / 观战 | `game/replay.h` | `ReplayRecorder` 时间序事件流；`SpectatorFeed` 增量帧推送 |
+| 压测机器人 | `game/load_bot.h` | `LoadBotPlanner` 生成模拟玩家行为时间表（登录/心跳/移动/聊天） |
+
 ### 同步系统 (`chwell/sync`)
 
 - ### 同步数据流
@@ -336,7 +353,7 @@ flowchart LR
 |------|--------|------|
 | `chwell/core` | `TimerWheel` | 分层时间轮：添加 / 取消均为 O(1)（`list_iter` + `in_wheel`），支持一次性 / 重复 |
 | `chwell/core` | `ThreadPool` | 固定线程池，`post()` 提交 |
-| `chwell/core` | `Config` | key=value 配置 + 多文件覆盖 + 环境变量 |
+| `chwell/core` | `Config` | key=value + 扁平 JSON + 环境 profile 叠加；热加载 / 快照回滚 / 键校验 |
 | `chwell/task` | `TaskQueue` / `DelayedTaskQueue` | 优先级队列；延时 / 重复 / 取消 |
 | `chwell/pool` | `ObjectPool<T>` | 模板对象池 |
 | `chwell/event` | `EventBus` | 类型安全发布/订阅，线程安全，支持优先级 |
@@ -466,6 +483,120 @@ auto val = redis->get("key");
 ```
 
 > **多实例部署**：内存 Mock 仅保证单进程语义正确；跨进程锁依赖真实 Redis（RESP 路径）。fencing token 目前为进程内序号，跨进程需服务端 `INCR`。
+
+### 可观测性 (`chwell/trace`, `chwell/metrics`, `chwell/service/ops_component.h`)
+
+```cpp
+#include "chwell/trace/trace.h"
+#include "chwell/metrics/instrumentation.h"
+#include "chwell/service/ops_component.h"
+
+// 分布式追踪上下文 + 作用域 Span
+trace::TraceContext ctx = trace::TraceContext::new_trace();
+trace::ScopedSpan span(ctx, "handle_login");
+span.set_tag("uid", "10001");
+
+// 指标：QPS 计数 + 延迟直方图 + 连接数，Prometheus 文本导出
+metrics::instrumentation().record_qps("login");
+metrics::instrumentation().record_latency("login", /*ms=*/12.0);
+std::string prom = metrics::get_prometheus_registry().export_metrics();
+
+// GM 运维指令（cmd 0x0301/0303/0305/0307，token 鉴权）
+service::OpsComponent ops(/*token=*/"secret");
+```
+
+### 热加载插件 (`chwell/service/hot_reload.h`)
+
+```cpp
+#include "chwell/service/hot_reload.h"
+
+service::HotReloadManager mgr;
+mgr.set_allowed_prefix("myplugin");          // 限制可加载路径前缀
+mgr.load("./plugins/myplugin.so");           // dlopen + chwell_create_plugin
+mgr.check_updates();                         // mtime 变化则安全切换（失败自动回滚）
+// ABI：extern "C" Plugin* chwell_create_plugin(); void chwell_destroy_plugin(Plugin*);
+```
+
+### 分布式事务 (`chwell/transaction`)
+
+```cpp
+#include "chwell/transaction/tcc.h"
+#include "chwell/transaction/saga.h"
+
+// TCC：Try 全成功才 Confirm；任一 Try 失败则对已参与方逆序 Cancel
+transaction::TccTransaction tcc("order-1");
+tcc.try_phase("gold",    [&]{ return reserve_gold(); });
+tcc.try_phase("item",    [&]{ return reserve_item(); });
+if (!tcc.commit()) { /* 内部已 Cancel */ }
+
+// Saga：失败时对已完成步骤逆序补偿
+transaction::Saga saga("pay-flow");
+saga.step("debit",   [&]{ return debit(); },   [&]{ return credit(); });
+saga.step("ship",    [&]{ return ship(); },    [&]{ return recall(); });
+saga.set_compensate_failed(false);  // 失败步骤本身不补偿（默认）
+saga.execute();
+```
+
+### 业务层持久化 (`chwell/storage/orm/writeback_cache.h`)
+
+字段级脏标 + 写回缓存，减少无效落盘：
+
+```cpp
+#include "chwell/storage/orm/writeback_cache.h"
+
+class Player : public storage::orm::PersistableEntity {
+public:
+    std::string table_name() const override { return "players"; }
+    std::string id() const override { return id_; }
+    storage::orm::Document to_document() const override { /* ... */ }
+    void from_document(const Document& d) override { /* ... */ clear_dirty(); }
+
+    CHWELL_FIELD(std::string, id_, player_id)
+    CHWELL_FIELD(int, level_, level)
+    CHWELL_FIELD(int, gold_, gold)
+private:
+    std::string id_; int level_ = 1; int gold_ = 0;
+};
+
+storage::MemoryStorage mem;
+storage::orm::Repository<Player> repo(&mem, "players");
+storage::orm::WriteBackCache<Player> cache(&repo);
+// Options: max_entries / flush_interval_ms / write_through_on_save
+
+Player p;
+p.set_level(5);           // 自动打脏标
+cache.put(p);             // 进缓存并标记脏
+cache.flush();            // 仅写回脏实体，成功后清脏标
+cache.auto_flush_if_due(); // 挂定时器周期写回
+```
+
+### 跨服路由与会话 (`chwell/cluster/rpc_router.h`, `session_locator.h`)
+
+```cpp
+#include "chwell/cluster/rpc_router.h"
+#include "chwell/cluster/session_locator.h"
+
+auto reg = std::make_shared<cluster::NodeRegistry>();
+reg->register_node("logic-1", "10.0.0.1", 9001, "logic");
+
+cluster::RpcRouter router(reg);
+router.set_transport_factory([](const cluster::NodeInfo& n) -> cluster::RpcTransportPtr {
+    // 返回绑定 RpcClient 的 RpcTransport 实现
+    return make_rpc_transport(n);
+});
+router.set_failover_retries(1);
+
+// 按 service_type + 路由 key 一致性哈希选节点并透传
+std::vector<char> resp;
+router.forward("logic", player_id, /*cmd=*/100, payload, resp);
+
+// 会话定位：网查会话在哪个节点，再定向转发
+cluster::SessionLocator locator;
+locator.bind("sess-1", "logic-1", "logic");
+locator.migrate("sess-1", "logic-1", "logic-2");
+auto node_id = locator.node_of("sess-1");
+locator.drop_node("logic-2");  // 节点下线清理
+```
 
 ### Benchmark (`chwell/benchmark`)
 
@@ -1063,22 +1194,29 @@ TcpServer（传统）                EpollTcpServer（高性能）
 - 组件化服务层（登录 / 聊天 / 房间 / 心跳 / 移动）
 - 帧同步 / 状态同步
 - 时间轮 / 线程池 / 对象池 / 任务队列 / 事件总线
-- 存储抽象（Memory / MySQL / MongoDB）+ ORM + 异步适配器
-- 集群节点注册 + 一致性哈希 + RPC + 网关转发
+- 存储抽象（Memory / MySQL / MongoDB）+ ORM + 异步适配器 + **写回缓存（字段脏标）**
+- 集群节点注册 + 一致性哈希虚拟节点 + RPC + 网关转发 + **`RpcRouter` 跨服透传 / `SessionLocator` 会话定位**
 - 服务发现 + 负载均衡（按 service_id 隔离缓存）
 - 熔断器（含 HALF_OPEN 探测名额）+ 限流器（三种策略）+ Prometheus 指标
+- **可观测性**：结构化日志 / Trace / 延迟直方图 / GM 运维指令
+- **分布式事务**：TCC 两阶段 + Saga 补偿
+- **插件热加载**（dlopen 安全切换 + mtime 检测）
+- **配置中心能力**：JSON / 环境 profile / 热加载 / 快照回滚
 - Redis RESP 客户端（Mock 回落）+ 分布式锁（SET NX EX / CAS）
 - AOI（回调锁外派发）+ SLG 地图 / 战斗
-- Benchmark 框架
+- **游戏系统**：排行榜 / 邮件 / 钱包（TCC 冻结）/ 社交 / 匹配 / 反作弊 / 回放 / 压测机器人规划器
+- Benchmark 框架 + E2E 闭环压测
 - H5 对战 Demo（前后端）
 - CI：build-and-test + ASan + TSan 全绿
 
-### 规划中
+### 规划中（P3 / 远期）
 
-- 结构化日志（spdlog 选项）
-- 更多游戏组件（好友、公会、排行榜）
-- 热更新
-- 更多集成测试场景
+- 业务代码生成（脚手架 / 协议代码）
+- GM 后台管理面板
+- 灰度发布与流量调度
+- 运营数据分析管道
+- 支付 SDK 对接
+- 更多集成测试场景与多进程集群用例
 
 ---
 
