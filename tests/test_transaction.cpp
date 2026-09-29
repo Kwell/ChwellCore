@@ -184,7 +184,7 @@ TEST(SagaTest, FailureCompensatesInReverse) {
                      [&]{ order.push_back("undo-a"); return true; });
     saga.add_step("b", [&]{ order.push_back("b"); return true; },
                      [&]{ order.push_back("undo-b"); return true; });
-    saga.add_step("c", [&]{ order.push_back("c"); return false; },
+    saga.add_step("c", [&]{ return false; },  // failing step does not record success
                      [&]{ order.push_back("undo-c"); return true; });
 
     EXPECT_FALSE(saga.run());
