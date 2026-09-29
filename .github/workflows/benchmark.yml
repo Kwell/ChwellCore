@@ -59,6 +59,15 @@ jobs:
       - name: High concurrency (5000 conns, inflight=1)
         run: ./build/framework_bench 5000 1 256 10 2 || true
 
+      - name: Sharded logic workers (200 conns, inflight=1, logic=4)
+        run: ./build/framework_bench 200 1 1024 10 2 4 || true
+
+      - name: Sharded logic workers (5000 conns, inflight=1, logic=4)
+        run: ./build/framework_bench 5000 1 256 10 2 4 || true
+
+      - name: Sharded throughput (200 conns, inflight=16, logic=4)
+        run: ./build/framework_bench 200 16 1024 10 2 4 || true
+
   protocol-bench:
     runs-on: ubuntu-latest
     timeout-minutes: 25
