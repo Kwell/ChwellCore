@@ -334,6 +334,12 @@ if (CHWELL_BUILD_EXAMPLES)
     )
     target_link_libraries(epoll_stress_test PRIVATE pthread)
 
+    # 框架全链路压测（Service + ProtocolRouter 闭环 RTT）
+    add_executable(framework_bench
+        examples/framework_bench.cpp
+    )
+    target_link_libraries(framework_bench PRIVATE chwell_core)
+
     # Epoll Echo 服务器示例
     add_executable(epoll_echo_server
         examples/epoll_echo_server.cpp
