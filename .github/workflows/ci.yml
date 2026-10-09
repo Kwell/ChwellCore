@@ -17,7 +17,7 @@ jobs:
       - name: Build config tests
         run: cmake --build build-config --config Debug --parallel 4
       - name: Run config tests
-        run: ctest --test-dir build-config -C Debug --output-on-failure
+        run: ctest --test-dir build-config -C Debug --verbose --timeout 600
 
   build-and-test:
     runs-on: ubuntu-latest
@@ -37,7 +37,7 @@ jobs:
       - name: Build
         run: cmake --build build -j 4
       - name: Run tests
-        run: ctest --test-dir build --output-on-failure
+        run: ctest --test-dir build --verbose --timeout 600
 
   asan:
     runs-on: ubuntu-latest
@@ -58,7 +58,7 @@ jobs:
       - name: Build ASan
         run: cmake --build build-asan -j 4
       - name: Run tests ASan
-        run: ctest --test-dir build-asan --output-on-failure
+        run: ctest --test-dir build-asan --verbose --timeout 600
 
   tsan:
     runs-on: ubuntu-latest
@@ -79,4 +79,4 @@ jobs:
       - name: Build TSan
         run: cmake --build build-tsan -j 4
       - name: Run tests TSan
-        run: ctest --test-dir build-tsan --output-on-failure
+        run: ctest --test-dir build-tsan --verbose --timeout 600
