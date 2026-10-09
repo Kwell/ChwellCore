@@ -4,6 +4,7 @@
 #include <atomic>
 #include <memory>
 #include <vector>
+#include <future>
 
 #include "chwell/task/task_queue.h"
 
@@ -182,19 +183,26 @@ TEST_F(TaskQueueTest, Stats) {
 
 TEST_F(TaskQueueTest, StopAndWait) {
     queue_->start();
-    
-    std::atomic<int> counter{0};
-    
-    for (int i = 0; i < 50; i++) {
-        queue_->submit_void([&counter]() {
-            std::this_thread::sleep_for(10ms);
-            counter++;
-        });
-    }
-    
+
+    // stop() 等待正在执行的任务，但不保证尚未取出的任务会执行。
+    // 先确认任务已经进入，再检查 stop 返回时任务已完成。
+    auto counter = std::make_shared<std::atomic<int>>(0);
+    auto started = std::make_shared<std::promise<void>>();
+    auto started_future = started->get_future();
+    const auto id = queue_->submit_void([counter, started]() {
+        started->set_value();
+        std::this_thread::sleep_for(10ms);
+        counter->fetch_add(1);
+    });
+
+    const auto start_status = started_future.wait_for(5s);
     queue_->stop();
-    
-    EXPECT_GT(counter, 0);
+
+    ASSERT_GT(id, 0);
+    ASSERT_EQ(std::future_status::ready, start_status);
+    EXPECT_EQ(1, counter->load());
+    EXPECT_EQ(0, queue_->running_count());
+    EXPECT_EQ(1, queue_->completed_count());
 }
 
 // DelayedTaskQueue Tests

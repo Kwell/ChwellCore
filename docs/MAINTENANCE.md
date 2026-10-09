@@ -27,7 +27,9 @@ ctest --test-dir build-config -C Debug --output-on-failure
 
 结果：44 个 GoogleTest 用例全部通过。新增加载可靠性测试最初复现 9 个失败，JSON 校验和转义测试随后复现 19 个失败，修复后均通过。构建启用 `/W4`，最终配置测试构建无警告。测试日志及 XML 报告在忽略的 `build-config` 目录内。
 
-完整框架依赖 Linux / POSIX。本机未配置 WSL，未运行全量网络/集成测试或 Linux ASan/TSan；新增远端 CI 作业尚未执行。
+完整框架依赖 Linux / POSIX，本机未配置 WSL。PR #57 首轮远端验证中，Windows 配置测试、Linux 全量构建测试和 TSan 通过；ASan 中 486 个单元测试有 485 个通过，仅已有的 `TaskQueueTest.StopAndWait` 时序断言失败，没有报告内存错误，集成测试也通过。
+
+该测试提交任务后立即停止队列，却要求至少一个任务已执行，受工作线程调度影响。测试现改用 promise 确认任务已开始，再验证 `stop()` 返回时任务完成、运行数为零、完成数为一；任务捕获共享状态，避免异常路径留下悬空引用。本机 MSVC 下连续重复 100 次通过，随后重新运行完整远端 CI。
 
 ### 后续维护入口
 
