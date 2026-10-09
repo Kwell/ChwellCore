@@ -7,6 +7,18 @@ on:
     branches: [ main ]
 
 jobs:
+  config-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Configure standalone config tests
+        run: cmake -S tests/config -B build-config
+      - name: Build config tests
+        run: cmake --build build-config --config Debug --parallel 4
+      - name: Run config tests
+        run: ctest --test-dir build-config -C Debug --output-on-failure
+
   build-and-test:
     runs-on: ubuntu-latest
     steps:

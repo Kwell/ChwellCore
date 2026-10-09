@@ -9,7 +9,7 @@
 
 **English**：[README_EN.md](README_EN.md)
 
-> **平台要求**：Linux / POSIX（依赖 `epoll`、`sys/socket.h`、`poll` 等）。Windows 上仅能做有限的语法级编译检查，完整构建与测试请在 Linux 上进行。
+> **平台要求**：完整框架需要 Linux / POSIX（依赖 `epoll`、`sys/socket.h`、`poll` 等）。配置模块支持在 Windows 上独立构建并运行测试，见下方测试说明。
 
 ---
 
@@ -936,6 +936,16 @@ ctest --output-on-failure
 
 CI（GitHub Actions）在 Linux 上跑三套检查：`build-and-test`、`asan`、`tsan`。
 
+配置模块还提供独立测试工程，支持 Windows / Linux，不依赖网络层或可选存储库。需 CMake 3.14+ 和 C++17 编译器；未安装 GoogleTest 时会自动下载。以下命令从仓库根目录执行，Windows CI 的 `config-windows` 使用相同入口：
+
+```bash
+cmake -S tests/config -B build-config
+cmake --build build-config --config Debug --parallel 4
+ctest --test-dir build-config -C Debug --output-on-failure
+```
+
+离线构建可在配置命令中添加 `-DFETCHCONTENT_SOURCE_DIR_GOOGLETEST=/path/to/googletest`，复用已有 GoogleTest 源码。
+
 ### 测试覆盖
 
 | 测试文件 | 覆盖模块 |
@@ -968,6 +978,16 @@ CI（GitHub Actions）在 Linux 上跑三套检查：`build-and-test`、`asan`�
 ---
 
 ## 配置文件
+
+### 配置加载与热更新
+
+`Config::load_from_files` 和 `load_json_from_files` 按文件列表顺序覆盖配置。所有指定文件必须可读，JSON 必须解析成功；任一文件失败时返回 `false`，保留当前键值、端口、线程数、组件和热加载文件列表。空文件列表也返回 `false`。可选文件应由调用方筛选，或使用 `load_for_env`。
+
+`load_for_env(dir, env)` 只选择存在的文件，依次加载 `default.conf`、`default.json`、`{env}.conf`、`{env}.json`，确保环境层覆盖默认层。`load_json_from_files(paths, false)` 叠加到当前配置并追加文件监控；`reload()` 保留每个文件的原始格式和覆盖顺序。
+
+JSON 支持嵌套对象、字符串转义、Unicode、数字和布尔值；嵌套键展开为 `a.b.c`，`null` 跳过，数组不支持，对象最多嵌套 64 层。非法数字、缺少分隔符、尾随逗号、无效转义或对象外的额外内容都会使加载失败。
+
+`check_reload()` 以最近一次成功加载的文件时间为基线；加载失败时保留基线，下次检查仍会重试。成功重载后在配置锁外调用变更回调，回调可以读取配置。删除键或回滚快照会恢复默认端口 `9000` 和线程数 `4`；`CHWELL_LISTEN_PORT`、`CHWELL_WORKER_THREADS` 始终最后覆盖基础字段。Windows 文件时间检测目前为秒级，Linux / macOS 为纳秒级。
 
 ### `config/storage.yaml`
 

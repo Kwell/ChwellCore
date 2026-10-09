@@ -10,6 +10,7 @@
 #include <sys/stat.h>
 #include <functional>
 #include <iterator>
+#include <mutex>
 
 namespace chwell {
 namespace core {
@@ -50,71 +51,74 @@ bool Config::load_from_file(const std::string& path) {
 
 bool Config::load_from_files(const std::vector<std::string>& paths) {
     std::unique_lock lock(mutex_);
-    loaded_files_ = paths;
+    std::vector<ConfigFile> files;
+    for (const auto& path : paths) files.push_back({path, false});
+    return load_files_unlocked(files, true);
+}
 
-    // 重置 KV，但保留构造时设置的默认字段值
-    kv_.clear();
-    components_.clear();
-
-    bool any_loaded = false;
-
-    for (const auto& p : paths) {
-        if (p.empty()) continue;
+bool Config::load_files_unlocked(const std::vector<ConfigFile>& files, bool reset) {
+    if (files.empty()) return false;
+    Config pending;
+    if (!reset) {
+        pending.kv_ = kv_;
+        pending.loaded_files_ = loaded_files_;
+        pending.file_mtimes_ = file_mtimes_;
+    }
+    for (const auto& file : files) {
+        const auto& p = file.path;
+        const auto mtime = file_mtime(p);
         std::ifstream in(p.c_str());
         if (!in.good()) {
-            CHWELL_LOG_DEBUG("Config: file not found, skip: " << p);
-            continue;
+            CHWELL_LOG_ERROR("Config: cannot read file: " << p);
+            return false;
         }
-        any_loaded = true;
-        CHWELL_LOG_INFO("Config: loading file: " << p);
-        std::string line;
-        while (std::getline(in, line)) {
-            std::string t = trim(line);
-            if (t.empty()) continue;
-            if (t[0] == '#' || t.rfind("//", 0) == 0) continue;
-
-            std::size_t pos = t.find('=');
-            if (pos == std::string::npos) {
-                pos = t.find(':');
+        if (file.json) {
+            std::string content((std::istreambuf_iterator<char>(in)),
+                                 std::istreambuf_iterator<char>());
+            if (!pending.parse_json_text(content)) {
+                CHWELL_LOG_ERROR("Config: JSON parse failed for " << p);
+                return false;
             }
+        } else {
+            std::string line;
+            while (std::getline(in, line)) {
+                std::string t = trim(line);
+                if (t.empty()) continue;
+                if (t[0] == '#' || t.rfind("//", 0) == 0) continue;
 
-            std::string key;
-            std::string value;
-
-            if (pos == std::string::npos) {
-                std::istringstream iss(t);
-                if (!(iss >> key >> value)) {
-                    continue;
+                std::size_t pos = t.find('=');
+                if (pos == std::string::npos) pos = t.find(':');
+                std::string key, value;
+                if (pos == std::string::npos) {
+                    std::istringstream iss(t);
+                    if (!(iss >> key >> value)) continue;
+                } else {
+                    key = trim(t.substr(0, pos));
+                    value = trim(t.substr(pos + 1));
                 }
-            } else {
-                key = trim(t.substr(0, pos));
-                value = trim(t.substr(pos + 1));
-            }
-
-            if (!key.empty()) {
-                kv_[key] = remove_quotes(value);
+                if (!key.empty()) pending.kv_[key] = remove_quotes(value);
             }
         }
+        if (in.bad() || file_mtime(p) != mtime) {
+            CHWELL_LOG_ERROR("Config: read failed or file changed while loading: " << p);
+            return false;
+        }
+        pending.loaded_files_.push_back(file);
+        pending.file_mtimes_[p] = mtime;
     }
-
-    if (!any_loaded) {
-        return false;
+    // 防止后续文件加载期间，先前读取的层发生变化。
+    for (const auto& file : files) {
+        if (file_mtime(file.path) != pending.file_mtimes_.at(file.path)) return false;
     }
-
-    // 根据 KV 更新内部字段
-    apply_kv_to_fields();
-    // 解析组件配置
-    parse_components();
-    // 环境变量最终覆盖
-    apply_env_overrides();
-    // 记录 mtime 基线，供 check_reload 对比
-    record_mtimes(paths);
-
-    CHWELL_LOG_INFO("Config: server_name=" << server_name_unlocked()
-                    << ", bus_id=" << bus_id_unlocked()
-                    << ", listen_port=" << listen_port_
-                    << ", worker_threads=" << worker_threads_);
-    CHWELL_LOG_INFO("Config: loaded " << components_.size() << " component configs");
+    pending.apply_kv_to_fields();
+    pending.parse_components();
+    pending.apply_env_overrides();
+    kv_.swap(pending.kv_);
+    components_.swap(pending.components_);
+    loaded_files_.swap(pending.loaded_files_);
+    file_mtimes_.swap(pending.file_mtimes_);
+    listen_port_ = pending.listen_port_;
+    worker_threads_ = pending.worker_threads_;
     return true;
 }
 
@@ -163,6 +167,7 @@ void Config::set(const std::string& key, const std::string& value) {
     kv_[key] = value;
     apply_kv_to_fields();
     parse_components();
+    apply_env_overrides();
 }
 
 std::string Config::get_string_unlocked(const std::string& key,
@@ -202,8 +207,8 @@ bool Config::get_bool_unlocked(const std::string& key, bool default_value) const
 }
 
 void Config::apply_kv_to_fields() {
-    listen_port_ = get_int_unlocked("listen_port", listen_port_);
-    worker_threads_ = get_int_unlocked("worker_threads", worker_threads_);
+    listen_port_ = get_int_unlocked("listen_port", 9000);
+    worker_threads_ = get_int_unlocked("worker_threads", 4);
 }
 
 void Config::apply_env_overrides() {
@@ -297,87 +302,146 @@ int Config::get_component_priority(const std::string& name) const {
 
 // ========== JSON / 环境 / 热加载 / 回滚 / 校验 ==========
 
-std::string Config::detect_format(const std::string& path) {
-    auto dot = path.find_last_of('.');
-    if (dot == std::string::npos) return "conf";
-    std::string ext = path.substr(dot + 1);
-    for (auto& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    return (ext == "json") ? "json" : "conf";
-}
-
-// 极简扁平 JSON 解析：支持 {"k":"v","n":1,"b":true,"o":{"x":1}} → k=v, n=1, b=true, o.x=1
-// 不支持数组（数组值序列化为无意义文本，仅保证不崩）
+// 支持对象、字符串、数字、布尔值和 null；嵌套对象展开为点号键。
+// 数组不属于配置格式；非法语法和超过 64 层的嵌套返回 false。
 bool Config::parse_json_text(const std::string& text) {
-    // 去掉注释与换行，按对象递归展开
-    std::string s;
-    s.reserve(text.size());
-    for (char c : text) {
-        if (c == '\n' || c == '\r' || c == '\t') s += ' ';
-        else s += c;
-    }
-
-    std::function<bool(const std::string&, size_t, size_t, const std::string&)> parse_obj;
-    parse_obj = [&](const std::string& src, size_t l, size_t r, const std::string& prefix) -> bool {
-        // l 指向 '{'，r 指向匹配 '}'
-        size_t i = l + 1;
-        while (i < r) {
-            // skip ws
-            while (i < r && std::isspace(static_cast<unsigned char>(src[i]))) ++i;
-            if (i >= r) break;
-            if (src[i] != '"') return false;
-            size_t ke = src.find('"', i + 1);
-            if (ke == std::string::npos || ke >= r) return false;
-            std::string key = src.substr(i + 1, ke - i - 1);
-            i = ke + 1;
-            while (i < r && std::isspace(static_cast<unsigned char>(src[i]))) ++i;
-            if (i >= r || src[i] != ':') return false;
-            ++i;
-            while (i < r && std::isspace(static_cast<unsigned char>(src[i]))) ++i;
-            if (i >= r) return false;
-
-            std::string full = prefix.empty() ? key : prefix + "." + key;
-
-            if (src[i] == '{') {
-                // 找匹配右括号
-                int depth = 0;
-                size_t j = i;
-                for (; j < r; ++j) {
-                    if (src[j] == '{') ++depth;
-                    else if (src[j] == '}') { --depth; if (depth == 0) break; }
-                }
-                if (j >= r) return false;
-                if (!parse_obj(src, i, j, full)) return false;
-                i = j + 1;
-            } else if (src[i] == '"') {
-                size_t ve = src.find('"', i + 1);
-                if (ve == std::string::npos || ve >= r) return false;
-                kv_[full] = src.substr(i + 1, ve - i - 1);
-                i = ve + 1;
-            } else {
-                // number / bool / null：读到 , 或 }
-                size_t j = i;
-                while (j < r && src[j] != ',' && src[j] != '}') ++j;
-                std::string raw = src.substr(i, j - i);
-                // 去尾空白
-                while (!raw.empty() && std::isspace(static_cast<unsigned char>(raw.back()))) raw.pop_back();
-                if (raw == "true") kv_[full] = "1";
-                else if (raw == "false") kv_[full] = "0";
-                else if (raw == "null") { /* skip */ }
-                else kv_[full] = raw;
-                i = j;
-            }
-
-            while (i < r && std::isspace(static_cast<unsigned char>(src[i]))) ++i;
-            if (i < r && src[i] == ',') ++i;
+    std::size_t pos = 0;
+    auto skip_ws = [&] {
+        while (pos < text.size() && (text[pos] == ' ' || text[pos] == '\t' ||
+               text[pos] == '\r' || text[pos] == '\n')) ++pos;
+    };
+    auto consume = [&](char c) {
+        if (pos == text.size() || text[pos] != c) return false;
+        ++pos;
+        return true;
+    };
+    auto hex4 = [&](std::uint32_t& value) {
+        value = 0;
+        for (int i = 0; i < 4; ++i) {
+            if (pos == text.size()) return false;
+            const char c = text[pos++];
+            unsigned digit;
+            if (c >= '0' && c <= '9') digit = c - '0';
+            else if (c >= 'a' && c <= 'f') digit = c - 'a' + 10;
+            else if (c >= 'A' && c <= 'F') digit = c - 'A' + 10;
+            else return false;
+            value = (value << 4) | digit;
         }
         return true;
     };
-
-    // 去掉外层空白，找第一个 {
-    size_t l = s.find('{');
-    size_t r = s.rfind('}');
-    if (l == std::string::npos || r == std::string::npos || r <= l) return false;
-    return parse_obj(s, l, r, "");
+    auto append_utf8 = [](std::string& out, std::uint32_t value) {
+        if (value <= 0x7f) out += static_cast<char>(value);
+        else if (value <= 0x7ff) {
+            out += static_cast<char>(0xc0 | (value >> 6));
+            out += static_cast<char>(0x80 | (value & 0x3f));
+        } else if (value <= 0xffff) {
+            out += static_cast<char>(0xe0 | (value >> 12));
+            out += static_cast<char>(0x80 | ((value >> 6) & 0x3f));
+            out += static_cast<char>(0x80 | (value & 0x3f));
+        } else {
+            out += static_cast<char>(0xf0 | (value >> 18));
+            out += static_cast<char>(0x80 | ((value >> 12) & 0x3f));
+            out += static_cast<char>(0x80 | ((value >> 6) & 0x3f));
+            out += static_cast<char>(0x80 | (value & 0x3f));
+        }
+    };
+    auto parse_string = [&](std::string& out) {
+        if (!consume('"')) return false;
+        while (pos < text.size()) {
+            char c = text[pos++];
+            if (c == '"') return true;
+            if (static_cast<unsigned char>(c) < 0x20) return false;
+            if (c != '\\') { out += c; continue; }
+            if (pos == text.size()) return false;
+            switch (text[pos++]) {
+                case '"': out += '"'; break;
+                case '\\': out += '\\'; break;
+                case '/': out += '/'; break;
+                case 'b': out += '\b'; break;
+                case 'f': out += '\f'; break;
+                case 'n': out += '\n'; break;
+                case 'r': out += '\r'; break;
+                case 't': out += '\t'; break;
+                case 'u': {
+                    std::uint32_t value;
+                    if (!hex4(value)) return false;
+                    if (value >= 0xd800 && value <= 0xdbff) {
+                        std::uint32_t low;
+                        if (!consume('\\') || !consume('u') || !hex4(low) ||
+                            low < 0xdc00 || low > 0xdfff) return false;
+                        value = 0x10000 + ((value - 0xd800) << 10) + (low - 0xdc00);
+                    } else if (value >= 0xdc00 && value <= 0xdfff) return false;
+                    append_utf8(out, value);
+                    break;
+                }
+                default: return false;
+            }
+        }
+        return false;
+    };
+    auto digit = [&] { return pos < text.size() && text[pos] >= '0' && text[pos] <= '9'; };
+    auto parse_number = [&](std::string& out) {
+        const auto start = pos;
+        consume('-');
+        if (!consume('0')) {
+            if (!digit() || text[pos] == '0') return false;
+            while (digit()) ++pos;
+        }
+        if (consume('.')) {
+            if (!digit()) return false;
+            while (digit()) ++pos;
+        }
+        if (consume('e') || consume('E')) {
+            if (!consume('+')) consume('-');
+            if (!digit()) return false;
+            while (digit()) ++pos;
+        }
+        out = text.substr(start, pos - start);
+        return true;
+    };
+    std::function<bool(const std::string&, unsigned)> parse_obj;
+    parse_obj = [&](const std::string& prefix, unsigned depth) {
+        if (depth > 64 || !consume('{')) return false;
+        skip_ws();
+        if (consume('}')) return true;
+        while (pos < text.size()) {
+            std::string key;
+            if (!parse_string(key)) return false;
+            skip_ws();
+            if (!consume(':')) return false;
+            skip_ws();
+            const std::string full = prefix.empty() ? key : prefix + "." + key;
+            if (pos == text.size()) return false;
+            if (text[pos] == '{') {
+                if (!parse_obj(full, depth + 1)) return false;
+            } else if (text[pos] == '"') {
+                std::string value;
+                if (!parse_string(value)) return false;
+                kv_[full] = std::move(value);
+            } else if (text.compare(pos, 4, "true") == 0) {
+                kv_[full] = "1";
+                pos += 4;
+            } else if (text.compare(pos, 5, "false") == 0) {
+                kv_[full] = "0";
+                pos += 5;
+            } else if (text.compare(pos, 4, "null") == 0) {
+                pos += 4;  // null 不产生配置项，保持原有语义
+            } else {
+                std::string value;
+                if (!parse_number(value)) return false;
+                kv_[full] = std::move(value);
+            }
+            skip_ws();
+            if (consume('}')) return true;
+            if (!consume(',')) return false;
+            skip_ws();  // 逗号后必须有下一个键，不能直接闭合
+        }
+        return false;
+    };
+    skip_ws();
+    if (!parse_obj("", 1)) return false;
+    skip_ws();
+    return pos == text.size();
 }
 
 bool Config::load_json_from_file(const std::string& path) {
@@ -386,93 +450,48 @@ bool Config::load_json_from_file(const std::string& path) {
 
 bool Config::load_json_from_files(const std::vector<std::string>& paths, bool reset) {
     std::unique_lock lock(mutex_);
-    loaded_files_ = paths;
-    if (reset) {
-        kv_.clear();
-        components_.clear();
-    }
-    bool ok = false;
-    for (const auto& p : paths) {
-        std::ifstream in(p.c_str());
-        if (!in.good()) continue;
-        std::string content((std::istreambuf_iterator<char>(in)),
-                             std::istreambuf_iterator<char>());
-        if (parse_json_text(content)) {
-            ok = true;
-        } else {
-            CHWELL_LOG_ERROR("Config: JSON parse failed for " + p);
-        }
-    }
-    if (ok) {
-        apply_kv_to_fields();
-        parse_components();
-        apply_env_overrides();
-        record_mtimes(paths);
-    }
-    return ok;
+    std::vector<ConfigFile> files;
+    for (const auto& path : paths) files.push_back({path, true});
+    return load_files_unlocked(files, reset);
 }
 
 bool Config::load_for_env(const std::string& dir, const std::string& env) {
-    std::vector<std::string> files;
-    // 尝试 .conf / .json 各两层
+    std::vector<ConfigFile> files;
+    // 先加载默认层的两种格式，再加载环境层的两种格式。
     std::string sep = "/";
     if (!dir.empty() && (dir.back() == '/' || dir.back() == '\\')) sep = "";
     std::string base = dir.empty() ? std::string() : dir + sep;
-    for (const char* ext : {"conf", "json"}) {
-        std::string d = base + "default." + ext;
-        std::string e = base + env + "." + ext;
-        std::ifstream f1(d.c_str());
-        if (f1.good()) { files.push_back(d); f1.close(); }
-        std::ifstream f2(e.c_str());
-        if (f2.good()) { files.push_back(e); f2.close(); }
+    std::vector<std::string> profiles{"default"};
+    if (env != "default") profiles.push_back(env);
+    for (const auto& profile : profiles) {
+        for (const char* ext : {"conf", "json"}) {
+            const std::string path = base + profile + "." + ext;
+            struct stat st;
+            if (::stat(path.c_str(), &st) == 0) {
+                files.push_back({path, std::string(ext) == "json"});
+            }
+        }
     }
     if (files.empty()) {
         CHWELL_LOG_WARN("Config: no config files found in " + dir + " for env=" + env);
         return false;
     }
-    // 按格式分组加载
-    bool ok = true;
-    std::vector<std::string> jsons, confs;
-    for (auto& f : files) {
-        if (detect_format(f) == "json") jsons.push_back(f);
-        else confs.push_back(f);
-    }
-    if (!confs.empty()) ok = load_from_files(confs) && ok;
-    // conf 已清过表则 json 叠加；否则 json 整表替换
-    if (!jsons.empty()) ok = load_json_from_files(jsons, /*reset=*/confs.empty()) && ok;
-    // 合并记录所有已加载文件
-    {
-        std::unique_lock lock(mutex_);
-        loaded_files_ = files;
-    }
-    CHWELL_LOG_INFO("Config: loaded env=" + env + " files=" + std::to_string(files.size()));
+    std::unique_lock lock(mutex_);
+    const bool ok = load_files_unlocked(files, true);
+    if (ok) CHWELL_LOG_INFO("Config: loaded env=" + env + " files=" + std::to_string(files.size()));
     return ok;
 }
 
 bool Config::reload() {
-    std::vector<std::string> files;
-    {
-        std::shared_lock lock(mutex_);
-        files = loaded_files_;
-    }
-    if (files.empty()) {
+    std::unique_lock lock(mutex_);
+    if (loaded_files_.empty()) {
         CHWELL_LOG_WARN("Config: reload() called with no loaded files");
         return false;
     }
-    bool ok = true;
-    std::vector<std::string> jsons, confs;
-    for (auto& f : files) {
-        if (detect_format(f) == "json") jsons.push_back(f);
-        else confs.push_back(f);
-    }
-    if (!confs.empty()) ok = load_from_files(confs) && ok;
-    if (!jsons.empty()) ok = load_json_from_files(jsons, /*reset=*/confs.empty()) && ok;
-    {
-        std::unique_lock lock(mutex_);
-        loaded_files_ = files;
-    }
+    const bool ok = load_files_unlocked(loaded_files_, true);
+    lock.unlock();
     if (ok) {
-        CHWELL_LOG_INFO("Config: reload ok (" + std::to_string(files.size()) + " files)");
+        CHWELL_LOG_INFO("Config: reload ok");
         notify_change();
     }
     return ok;
@@ -494,39 +513,25 @@ std::int64_t Config::file_mtime(const std::string& path) {
 #endif
 }
 
-void Config::record_mtimes(const std::vector<std::string>& paths) {
-    for (const auto& p : paths) {
-        std::int64_t mt = file_mtime(p);
-        if (mt != 0) file_mtimes_[p] = mt;
-    }
-}
-
 bool Config::check_reload() {
-    std::vector<std::string> files;
-    std::vector<std::string> stale;
-    {
-        std::unique_lock lock(mutex_);
-        files = loaded_files_;
-        if (files.empty()) return false;
-
-        for (auto& f : files) {
-            std::int64_t mt = file_mtime(f);
-            if (mt == 0) continue;
-            auto it = file_mtimes_.find(f);
-            if (it == file_mtimes_.end()) {
-                // 首次见到：建立基线，不视为变更（加载时应已 record）
-                file_mtimes_[f] = mt;
-            } else if (it->second != mt) {
-                it->second = mt;
-                stale.push_back(f);
-            }
+    std::unique_lock lock(mutex_);
+    bool changed = false;
+    for (const auto& file : loaded_files_) {
+        const auto it = file_mtimes_.find(file.path);
+        if (it == file_mtimes_.end() || it->second != file_mtime(file.path)) {
+            changed = true;
+            break;
         }
     }
-    if (!stale.empty()) {
-        CHWELL_LOG_INFO("Config: file change detected, reloading");
-        return reload();
+    if (!changed) return false;
+    CHWELL_LOG_INFO("Config: file change detected, reloading");
+    // 仅成功发布后更新基线，失败时下次检查仍可重试。
+    const bool ok = load_files_unlocked(loaded_files_, true);
+    lock.unlock();
+    if (ok) {
+        notify_change();
     }
-    return false;
+    return ok;
 }
 
 void Config::add_change_listener(std::function<void()> cb) {
@@ -581,7 +586,9 @@ bool Config::require_keys(const std::vector<std::string>& keys) const {
 
 std::vector<std::string> Config::loaded_files() const {
     std::shared_lock lock(mutex_);
-    return loaded_files_;
+    std::vector<std::string> paths;
+    for (const auto& file : loaded_files_) paths.push_back(file.path);
+    return paths;
 }
 
 } // namespace core
