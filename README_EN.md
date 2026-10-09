@@ -7,7 +7,7 @@ Modular, high-performance C++17 game server framework for SLG / MMO titles.
 [![CMake](https://img.shields.io/badge/CMake-3.11+-brightgreen.svg)](https://cmake.org/)
 [![CI](https://img.shields.io/badge/CI-ASan%20%2B%20TSan-green.svg)](.github/workflows/ci.yml)
 
-> **Platform**: Linux / POSIX only (`epoll`, `sys/socket.h`, `poll`, …). On Windows you can do limited syntax-level checks; build and test on Linux.
+> **Platform**: The full framework requires Linux / POSIX (`epoll`, `sys/socket.h`, `poll`, …). The configuration module can be built and tested independently on Windows; see Testing below.
 
 **中文文档**：[README.md](README.md)
 
@@ -879,6 +879,16 @@ ctest --output-on-failure
 
 CI (GitHub Actions) runs three Linux checks: `build-and-test`, `asan`, `tsan`.
 
+The configuration module also has a standalone Windows / Linux test project without network or optional storage dependencies. It requires CMake 3.14+ and a C++17 compiler, and downloads GoogleTest if no installed copy is found. Run these commands from the repository root; the `config-windows` CI job uses the same entry point:
+
+```bash
+cmake -S tests/config -B build-config
+cmake --build build-config --config Debug --parallel 4
+ctest --test-dir build-config -C Debug --output-on-failure
+```
+
+For offline builds, add `-DFETCHCONTENT_SOURCE_DIR_GOOGLETEST=/path/to/googletest` to the configure command to reuse existing GoogleTest sources.
+
 ### Coverage map
 
 | Test file | Covers |
@@ -911,6 +921,16 @@ CI (GitHub Actions) runs three Linux checks: `build-and-test`, `asan`, `tsan`.
 ---
 
 ## Configuration
+
+### Loading and hot reload
+
+`Config::load_from_files` and `load_json_from_files` apply files in list order. Every specified file must be readable and JSON parsing must succeed. Any failure returns `false` and preserves active keys, port, thread count, components, and monitored files. An empty list also returns `false`. Filter optional paths before calling these methods, or use `load_for_env`.
+
+`load_for_env(dir, env)` selects existing files in this order: `default.conf`, `default.json`, `{env}.conf`, `{env}.json`. Environment layers therefore override defaults. `load_json_from_files(paths, false)` overlays the current configuration and appends monitored files. `reload()` preserves each file's original format and overlay order.
+
+JSON supports nested objects, escaped strings, Unicode, numbers, and booleans. Nested keys become `a.b.c`; `null` is skipped, arrays are unsupported, and object nesting is limited to 64 levels. Invalid numbers, missing separators, trailing commas, invalid escapes, or extra content outside the root object fail the load.
+
+`check_reload()` compares timestamps against the last successful load. Failed loads retain that baseline so the next check retries. Successful reloads invoke change listeners outside the configuration lock, allowing listeners to read configuration. Removing keys or rolling back a snapshot restores the default port `9000` and thread count `4` when those keys are absent. `CHWELL_LISTEN_PORT` and `CHWELL_WORKER_THREADS` override the base fields last, including after `set()`. Timestamp detection currently has second precision on Windows and nanosecond precision on Linux / macOS.
 
 ### `config/storage.yaml`
 

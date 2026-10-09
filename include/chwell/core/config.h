@@ -40,17 +40,20 @@ public:
     bool load_from_file(const std::string& path);
 
     // 从多个配置文件按顺序加载，后面的文件覆盖前面的同名键
+    // 所有指定文件必须可读；加载失败时保留现有配置和文件列表
     // 典型用法：["conf/default.conf", "conf/app.conf", "conf/app.local.conf"]
     bool load_from_files(const std::vector<std::string>& paths);
 
     // ========== JSON 配置 ==========
     // 扁平 JSON：{"a": {"b": 1}} 展开为 a.b=1；string/number/bool 均转字符串
+    // 支持转义和 Unicode；null 跳过，不支持数组，最多 64 层对象
     bool load_json_from_file(const std::string& path);
-    // reset=true 时先清空已有 KV（整表替换）；false 时叠加覆盖（与 conf 混载）
+    // reset=true 时整表替换；false 时叠加覆盖并追加热加载文件（与 conf 混载）
+    // 所有文件解析成功后才生效；失败时保留现有配置
     bool load_json_from_files(const std::vector<std::string>& paths, bool reset = true);
 
     // ========== 环境 profile ==========
-    // 依次加载 default.{ext} 与 {env}.{ext}（ext 为 conf/json 自动探测）
+    // 依次加载 default.conf、default.json、{env}.conf、{env}.json（存在的文件）
     // 典型：load_for_env("conf", "prod") → conf/default.conf + conf/prod.conf
     bool load_for_env(const std::string& dir, const std::string& env);
 
@@ -59,7 +62,7 @@ public:
     bool reload();
     // 检查文件 mtime，变化则自动 reload；返回是否发生重载
     bool check_reload();
-    // 变更回调（reload 成功后触发，带本次生效的 key 列表为空表示整体刷新）
+    // 变更回调（reload 成功后在配置锁外触发，可在回调中读取配置）
     void add_change_listener(std::function<void()> cb);
 
     // ========== 版本回滚 ==========
@@ -129,13 +132,17 @@ public:
     int get_component_priority(const std::string& name) const;
 
 private:
+    struct ConfigFile {
+        std::string path;
+        bool json;
+    };
+    // 调用方持有 mutex_；在临时对象中解析，成功后一次性发布
+    bool load_files_unlocked(const std::vector<ConfigFile>& files, bool reset);
     void apply_kv_to_fields();
     void apply_env_overrides();
     void parse_components();
     bool parse_json_text(const std::string& text);
-    static std::string detect_format(const std::string& path);  // "json" | "conf"
     void notify_change();
-    void record_mtimes(const std::vector<std::string>& paths);
     static std::int64_t file_mtime(const std::string& path);  // 0 表示 stat 失败
 
     // 基础字段
@@ -149,7 +156,7 @@ private:
     std::vector<ComponentConfig> components_;
 
     // 热加载 / 回滚
-    std::vector<std::string> loaded_files_;
+    std::vector<ConfigFile> loaded_files_;  // 保留每个文件的加载格式和覆盖顺序
     std::unordered_map<std::string, std::int64_t> file_mtimes_;  // 每实例基线，避免跨对象串扰
     std::vector<std::unordered_map<std::string, std::string>> snapshots_;
     std::vector<std::function<void()>> change_listeners_;
