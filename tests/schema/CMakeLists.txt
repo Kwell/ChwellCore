@@ -20,6 +20,10 @@ include(../../cmake/ChwellEntitySchema.cmake)
 chwell_generate_entity_schema(player_schema ../../schemas/player.schema.json generated/player_schema.h
     CSV ../../schemas/player_defaults.csv)
 chwell_generate_entity_schema(edge_schema edge.schema.json generated/edge_schema.h)
+chwell_generate_entity_schema(reference_player ../../examples/reference_service/content/player.schema.json
+    generated/reference_player.h CATALOG ../../examples/reference_service/content/catalog.json)
+chwell_generate_entity_schema(reference_item ../../examples/reference_service/content/item.schema.json
+    generated/reference_item.h CATALOG ../../examples/reference_service/content/catalog.json)
 find_package(Threads REQUIRED)
 add_library(chwell_schema_portable
     ../../src/schema/entity_schema.cpp ../../src/sync/schema_sync.cpp
@@ -27,7 +31,7 @@ add_library(chwell_schema_portable
 target_include_directories(chwell_schema_portable PUBLIC ../../include)
 target_link_libraries(chwell_schema_portable PUBLIC Threads::Threads)
 add_executable(chwell_schema_tests ../test_entity_schema.cpp)
-add_dependencies(chwell_schema_tests player_schema edge_schema)
+add_dependencies(chwell_schema_tests player_schema edge_schema reference_player reference_item)
 target_include_directories(chwell_schema_tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_link_libraries(chwell_schema_tests PRIVATE chwell_schema_portable GTest::gtest_main)
 add_executable(example_entity_schema ../../examples/entity_schema_demo.cpp)

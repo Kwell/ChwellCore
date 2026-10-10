@@ -56,7 +56,7 @@ def checked_value(field, value, where):
     return value
 
 
-def load_schema(path):
+def load_json(path):
     def unique_pairs(pairs):
         result = {}
         for key, value in pairs:
@@ -67,6 +67,11 @@ def load_schema(path):
         data = json.loads(pathlib.Path(path).read_text(encoding='utf-8'), object_pairs_hook=unique_pairs)
     except (OSError, json.JSONDecodeError) as exc:
         error(path, str(exc))
+    return data
+
+
+def load_schema(path):
+    data = load_json(path)
     if not isinstance(data, dict): error(path, 'schema must be an object')
     allowed = {'name', 'table', 'key', 'version', 'fields', 'reserved_ids'}
     if set(data) - allowed: error(path, 'unknown schema keys: ' + ', '.join(sorted(set(data) - allowed)))
@@ -87,7 +92,7 @@ def load_schema(path):
     for index, field in enumerate(data['fields']):
         where = f'{path}:fields[{index}]'
         if not isinstance(field, dict): error(where, 'field must be an object')
-        if set(field) - {'id', 'name', 'type', 'default', 'stored', 'visibility', 'min', 'max', 'max_bytes'}: error(where, 'unknown field keys')
+        if set(field) - {'id', 'name', 'type', 'default', 'stored', 'visibility', 'min', 'max', 'max_bytes', 'reference'}: error(where, 'unknown field keys')
         for key in ('id', 'name', 'type', 'default', 'stored', 'visibility'):
             if key not in field: error(where, f'missing {key}')
         integer(field['id'], 1, 2**32 - 1, where + ':id')
@@ -97,6 +102,15 @@ def load_schema(path):
         if not isinstance(field['type'], str) or field['type'] not in TYPE_MAP: error(where, 'unsupported field type')
         if not isinstance(field['visibility'], str) or field['visibility'] not in VISIBILITY: error(where, 'invalid visibility')
         if type(field['stored']) is not bool: error(where, 'stored must be boolean')
+        if 'reference' in field:
+            reference = field['reference']
+            if field['type'] != 'string' or field['id'] == data['key']:
+                error(where, 'reference requires a non-key string field')
+            if not isinstance(reference, dict) or set(reference) - {'table', 'allow_empty'} or 'table' not in reference:
+                error(where, 'reference requires table and optional allow_empty')
+            identifier(reference['table'], where + ':reference:table')
+            if type(reference.setdefault('allow_empty', False)) is not bool:
+                error(where, 'reference allow_empty must be boolean')
         if ('min' in field or 'max' in field) and field['type'] not in ('int64', 'double'): error(where, 'numeric constraints on non-numeric field')
         if 'max_bytes' in field:
             if field['type'] != 'string': error(where, 'max_bytes on non-string field')
@@ -140,13 +154,13 @@ def check_evolution(current, previous, where):
             continue
         new = new_fields[field_id]
         # Require an explicit migration for changing storage or visibility policy.
-        for key in ('name', 'type', 'stored', 'visibility', 'min', 'max', 'max_bytes'):
+        for key in ('name', 'type', 'stored', 'visibility', 'min', 'max', 'max_bytes', 'reference'):
             if new.get(key) != old.get(key): error(where, f'incompatible field ID {field_id} change: {key}')
     if current['version'] < previous['version']: error(where, 'version went backwards')
     if current != previous and current['version'] <= previous['version']: error(where, 'schema changes require a new version')
 
 
-def load_csv(path, schema):
+def load_csv(path, schema, locations=None):
     fields = {field['name']: field for field in schema['fields']}
     rows, ids = [], set()
     with open(path, encoding='utf-8-sig', newline='') as source:
@@ -156,8 +170,10 @@ def load_csv(path, schema):
         if len(header) != len(set(header)): error(path, 'duplicate CSV column')
         if set(header) - set(fields): error(path, 'unknown CSV column')
         if 'id' not in header: error(path, 'missing id column')
-        for row in reader:
-            line = reader.line_num
+        while True:
+            line = reader.line_num + 1  # Start of record, including quoted multiline cells.
+            try: row = next(reader)
+            except StopIteration: break
             if len(row) != len(header): error(f'{path}:{line}', 'column count mismatch')
             values = {field['name']: field['default'] for field in schema['fields']}
             for column, (name, text) in enumerate(zip(header, row), 1):
@@ -176,7 +192,67 @@ def load_csv(path, schema):
                 values[name] = checked_value(fields[name], value, where)
             if not values['id'] or values['id'] in ids: error(f'{path}:{line}:{header.index("id") + 1}', 'empty or duplicate content ID')
             ids.add(values['id']); rows.append(values)
+            if locations is not None:
+                locations.append({name: f'{path}:{line}:{header.index(name) + 1} ({name})'
+                                  if name in header else
+                                  f'{path}:{line}:{header.index("id") + 1} ({name}; omitted column, schema default)'
+                                  for name in fields})
     return rows
+
+
+def catalog_inputs(path):
+    """Resolve manifest paths without reading data, also used by CMake DEPENDS."""
+    path = pathlib.Path(path).resolve()
+    data = load_json(path)
+    if not isinstance(data, dict) or set(data) != {'tables'} or not isinstance(data['tables'], list) or not data['tables']:
+        error(path, 'catalog requires a nonempty tables array')
+    inputs, seen = [], set()
+    for index, entry in enumerate(data['tables']):
+        where = f'{path}:tables[{index}]'
+        if not isinstance(entry, dict) or set(entry) != {'schema', 'csv'}:
+            error(where, 'table entry requires schema and csv paths')
+        paths = []
+        for key in ('schema', 'csv'):
+            value = entry[key]
+            if not isinstance(value, str) or not value or any(c in value for c in '\r\n;\x00'):
+                error(where, 'expected nonempty path without newline, semicolon or NUL')
+            resolved = (path.parent / value).resolve()
+            if any(c in str(resolved) for c in '\r\n;'):
+                error(where, 'resolved path cannot contain newline or semicolon')
+            paths.append(resolved)
+        if paths[0] in seen: error(where, 'duplicate catalog schema')
+        seen.add(paths[0]); inputs.append(tuple(paths))
+    return inputs
+
+
+def load_content(schema_path, schema, csv_path=None, catalog_path=None):
+    if catalog_path and csv_path: error(catalog_path, '--catalog and --csv are mutually exclusive')
+    inputs = catalog_inputs(catalog_path) if catalog_path else [(pathlib.Path(schema_path).resolve(), csv_path)]
+    tables, selected = {}, None
+    # Load all tables first, so self-references and cycles need no recursion.
+    for definition, content in inputs:
+        current = schema if definition == pathlib.Path(schema_path).resolve() else load_schema(definition)
+        table = current['table']
+        if table in tables: error(definition, f'duplicate catalog table {table}')
+        locations = []
+        rows = load_csv(content, current, locations) if content else []
+        tables[table] = (current, rows, locations, definition, {row['id'] for row in rows})
+        if definition == pathlib.Path(schema_path).resolve(): selected = rows
+    if selected is None: error(catalog_path, 'requested schema is not in catalog')
+    for current, rows, locations, definition, _ in tables.values():
+        for field in current['fields']:
+            if 'reference' not in field: continue
+            reference = field['reference']
+            target = reference['table']
+            if target not in tables:
+                error(f'{definition}:field {field["name"]}', f'missing reference table {target}; supply --catalog')
+            ids = tables[target][4]
+            for row, location in zip(rows, locations):
+                value = row[field['name']]
+                if value == '' and reference['allow_empty']: continue
+                if value not in ids:
+                    error(location[field['name']], f'unresolved reference {target}.id = {value!r}')
+    return selected
 
 
 def cpp_string(value):
@@ -226,7 +302,8 @@ def generate(schema, rows):
                   f'    const {cpp_type}& get_{key}() const {{ return ::std::get<{cpp_type}>(::chwell::schema::SchemaEntity::value(field_{key})); }}',
                   f'    bool set_{key}({cpp_type} input, ::std::string* error = nullptr) {{ return ::chwell::schema::SchemaEntity::set_value(field_{key}, ::std::move(input), error); }}']
     client = {'name': name, 'version': schema['version'], 'reserved_ids': schema['reserved_ids'],
-              'fields': [field for field in schema['fields'] if field['visibility'] != 'server']}
+              'fields': [{key: value for key, value in field.items() if key != 'reference'}
+                         for field in schema['fields'] if field['visibility'] != 'server']}
     client_text = json.dumps(client, ensure_ascii=True, sort_keys=True, separators=(',', ':'))
     lines += [f'    static ::std::string client_schema() {{ return {cpp_string(client_text)}; }}',
               f'    static ::std::vector<{name}> content() {{', f'        ::std::vector<{name}> rows;']
@@ -256,15 +333,24 @@ def atomic_write(path, content):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('schema')
+    parser.add_argument('schema', nargs='?')
     parser.add_argument('--previous')
     parser.add_argument('--csv')
-    parser.add_argument('--output', required=True)
+    parser.add_argument('--catalog', help='JSON manifest of schema/CSV pairs; validate the entire graph')
+    parser.add_argument('--list-inputs', action='store_true', help='list catalog dependencies for build systems')
+    parser.add_argument('--output')
     args = parser.parse_args()
     try:
+        if args.list_inputs:
+            if not args.catalog or args.schema or args.output or args.csv or args.previous:
+                error('arguments', '--list-inputs requires only --catalog')
+            for pair in catalog_inputs(args.catalog):
+                for path in pair: print(path.as_posix())
+            return
+        if not args.schema or not args.output: error('arguments', 'schema and --output are required')
         schema = load_schema(args.schema)
         if args.previous: check_evolution(schema, load_schema(args.previous), args.schema)
-        rows = load_csv(args.csv, schema) if args.csv else []
+        rows = load_content(args.schema, schema, args.csv, args.catalog)
         atomic_write(args.output, generate(schema, rows))
     except (ValueError, OSError, csv.Error) as exc:
         parser.exit(1, str(exc) + '\n')

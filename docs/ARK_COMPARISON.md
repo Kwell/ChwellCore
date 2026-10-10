@@ -163,4 +163,10 @@ PR #59 实现可选 Consul/libcurl 后端、TTL 健康检查、DiscoveryRouter �
 
 可选 EntitySchema 以显式稳定 ID 统一类型、默认值、约束、持久化与可见性，生成 C++ 实体接入 Repository。SchemaSyncRoom 支持 owner/public 快照、tick 合并、立即发送与 AOI 订阅接口；server 字段不进入客户端元数据或同步。标准库 Python 工具校验 JSON schema、版本演进与 CSV 单表内容，成功后原子生成头文件。
 
-本机 Windows 已验证 11 项 C++ 回归、11 项生成器回归和示例；Linux 与 sanitizer 在本轮 CI 验证。用法与边界见 [ENTITY_SCHEMA.md](ENTITY_SCHEMA.md)。Excel、表间引用校验、C# 生成、客户端线协议和内容热切换仍待推进。随后继续第 4 阶段的参考工程、构建目标导出与贡献文档。
+PR #60 的 Linux、Windows、ASan/UBSan、TSan 和真实 Consul CI 已通过，尚待合并。用法与边界见 [ENTITY_SCHEMA.md](ENTITY_SCHEMA.md)。后续增量补充字段声明的内容引用和 JSON 内容目录：对全部 CSV 校验目标 ID，包括默认值、自引用和循环引用；错误保留原头文件，引用策略进入版本演进检查。Excel、C# 生成、客户端线协议和内容热切换仍待推进。
+
+## 12. 第四阶段首批实现
+
+新增独立参考工程 v1，通过安装后的 `find_package(ChwellCore)` 消费 namespaced 构建目标，联通 AppHost、角色/装备内容、ORM 往返、权限同步、TCP 回显与停止。CMake 包版本 0.1.0，安装生成工具、文档、参考工程和许可证，使用相对安装路径并在消费者机器重新发现外部依赖；未承诺跨版本 ABI。新增 [贡献说明](../CONTRIBUTING.md) 和 [包契约](PACKAGING.md)。
+
+Linux CI 新增最小包、全可选依赖包与 FetchContent YAML 包的安装/移动/独立构建验证，并覆盖真实 TCP 关闭、引用错误保留产物和目录增删表的依赖更新。完整框架仍需 Linux/POSIX；没有因此新增 Windows 网络支持或生产部署能力。

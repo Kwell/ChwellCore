@@ -1,0 +1,23 @@
+# Rediscover dependencies on the consumer machine; do not export build-host paths.
+find_package(PkgConfig QUIET)
+if(PkgConfig_FOUND)
+    pkg_check_modules(CHWELL_MYSQL QUIET IMPORTED_TARGET GLOBAL mysqlclient)
+endif()
+if(TARGET PkgConfig::CHWELL_MYSQL)
+    set(ChwellMySQL_FOUND TRUE)
+    if(NOT TARGET ChwellDependency::MySQL)
+        add_library(ChwellDependency::MySQL INTERFACE IMPORTED GLOBAL)
+        set_property(TARGET ChwellDependency::MySQL PROPERTY INTERFACE_LINK_LIBRARIES PkgConfig::CHWELL_MYSQL)
+    endif()
+else()
+    find_path(CHWELL_MYSQL_INCLUDE_DIR mysql/mysql.h)
+    find_library(CHWELL_MYSQL_LIBRARY NAMES mysqlclient mysqlclient_r)
+    include(FindPackageHandleStandardArgs)
+    find_package_handle_standard_args(ChwellMySQL REQUIRED_VARS CHWELL_MYSQL_INCLUDE_DIR CHWELL_MYSQL_LIBRARY)
+    if(ChwellMySQL_FOUND AND NOT TARGET ChwellDependency::MySQL)
+        add_library(ChwellDependency::MySQL UNKNOWN IMPORTED GLOBAL)
+        set_target_properties(ChwellDependency::MySQL PROPERTIES
+            IMPORTED_LOCATION "${CHWELL_MYSQL_LIBRARY}"
+            INTERFACE_INCLUDE_DIRECTORIES "${CHWELL_MYSQL_INCLUDE_DIR}")
+    endif()
+endif()

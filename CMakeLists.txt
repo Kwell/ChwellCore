@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.11)
 
-project(ChwellFrameCore LANGUAGES CXX)
+project(ChwellFrameCore VERSION 0.1.0 LANGUAGES CXX)
+include(GNUInstallDirs)
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+find_package(Threads REQUIRED)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -37,8 +40,10 @@ if(CHWELL_USE_PROTOBUF)
             DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/proto/game.proto"
             COMMENT "Generating game.pb.cc/h")
         add_library(chwell_game_proto STATIC "${CHWELL_PROTO_GAME_PB_CC}")
-        target_include_directories(chwell_game_proto PUBLIC "${CHWELL_PROTOBUF_GENERATED_DIR}" ${Protobuf_INCLUDE_DIRS})
-        target_link_libraries(chwell_game_proto PUBLIC ${Protobuf_LIBRARIES})
+        target_include_directories(chwell_game_proto PUBLIC
+            $<BUILD_INTERFACE:${CHWELL_PROTOBUF_GENERATED_DIR}>
+            $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/chwell/proto>)
+        target_link_libraries(chwell_game_proto PUBLIC protobuf::libprotobuf)
     else()
         message(WARNING "Protobuf not found; proto_frame examples will not use game.proto types")
         set(CHWELL_USE_PROTOBUF OFF)
@@ -60,40 +65,23 @@ if(CHWELL_USE_YAML)
         set(YAML_CPP_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
         FetchContent_MakeAvailable(yaml-cpp)
     endif()
-    if(NOT TARGET yaml-cpp AND NOT yaml-cpp_FOUND)
-        message(WARNING "yaml-cpp not found, install libyaml-cpp-dev or use CMake 3.14+ for FetchContent")
+    if(NOT TARGET yaml-cpp::yaml-cpp)
+        if(TARGET yaml-cpp)
+            add_library(yaml-cpp::yaml-cpp ALIAS yaml-cpp)
+        else()
+            message(FATAL_ERROR "YAML requested but yaml-cpp target not found")
+        endif()
     endif()
 endif()
 
 # MySQL
 if(CHWELL_USE_MYSQL)
-    find_package(PkgConfig QUIET)
-    if(PkgConfig_FOUND)
-        pkg_check_modules(MYSQL QUIET mysqlclient)
-    endif()
-    if(NOT MYSQL_FOUND)
-        find_path(MYSQL_INCLUDE_DIR mysql/mysql.h)
-        find_library(MYSQL_LIBRARY NAMES mysqlclient mysqlclient_r)
-        if(MYSQL_INCLUDE_DIR AND MYSQL_LIBRARY)
-            set(MYSQL_FOUND TRUE)
-        endif()
-    endif()
+    find_package(ChwellMySQL REQUIRED)
 endif()
 
 # MongoDB
 if(CHWELL_USE_MONGODB)
-    find_package(mongoc-1.0 QUIET)
-    if(NOT mongoc-1.0_FOUND)
-        find_package(libmongoc-1.0 QUIET)
-    endif()
-    if(NOT mongoc-1.0_FOUND AND NOT libmongoc-1.0_FOUND)
-        find_path(MONGOC_INCLUDE_DIR mongoc/mongoc.h PATH_SUFFIXES libmongoc-1.0)
-        find_library(MONGOC_LIBRARY NAMES mongoc-1.0)
-        find_library(BSON_LIBRARY NAMES bson-1.0)
-        if(MONGOC_INCLUDE_DIR AND MONGOC_LIBRARY AND BSON_LIBRARY)
-            set(mongoc-1.0_FOUND TRUE)
-        endif()
-    endif()
+    find_package(ChwellMongoDB REQUIRED)
 endif()
 
 add_library(chwell_core
@@ -156,55 +144,34 @@ add_library(chwell_core
 
 target_include_directories(chwell_core
     PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
-        ${CMAKE_CURRENT_SOURCE_DIR}/generated/proto
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
+target_compile_features(chwell_core PUBLIC cxx_std_17)
+target_link_libraries(chwell_core PUBLIC Threads::Threads PRIVATE ${CMAKE_DL_LIBS})
+target_compile_definitions(chwell_core PUBLIC $<$<BOOL:${CHWELL_USE_YAML}>:CHWELL_USE_YAML>)
 
 target_compile_definitions(chwell_core PRIVATE
-    $<$<BOOL:${CHWELL_USE_YAML}>:CHWELL_USE_YAML>
     $<$<BOOL:${CHWELL_USE_MYSQL}>:CHWELL_USE_MYSQL>
     $<$<BOOL:${CHWELL_USE_MONGODB}>:CHWELL_USE_MONGODB>
     $<$<BOOL:${CHWELL_USE_OPENSSL}>:CHWELL_USE_OPENSSL>
 )
 
 if(CHWELL_USE_YAML)
-    if(TARGET yaml-cpp::yaml-cpp)
-        target_link_libraries(chwell_core PRIVATE yaml-cpp::yaml-cpp)
-    target_link_libraries(chwell_core PRIVATE ${CMAKE_DL_LIBS})
-    elseif(TARGET yaml-cpp)
-        target_link_libraries(chwell_core PRIVATE yaml-cpp)
-    elseif(yaml-cpp_FOUND)
-        target_link_libraries(chwell_core PRIVATE ${YAML_CPP_LIBRARIES})
-        target_include_directories(chwell_core PRIVATE ${YAML_CPP_INCLUDE_DIR})
-    endif()
+    target_link_libraries(chwell_core PUBLIC yaml-cpp::yaml-cpp)
 endif()
 
-if(CHWELL_USE_MYSQL AND MYSQL_FOUND)
-    target_include_directories(chwell_core PRIVATE ${MYSQL_INCLUDE_DIRS})
-    target_link_libraries(chwell_core PRIVATE ${MYSQL_LIBRARIES})
+if(CHWELL_USE_MYSQL)
+    target_link_libraries(chwell_core PRIVATE ChwellDependency::MySQL)
 endif()
 
 if(CHWELL_USE_MONGODB)
-    if(TARGET mongoc_shared OR TARGET mongoc_static)
-        target_link_libraries(chwell_core PRIVATE mongoc_shared)
-    elseif(mongoc-1.0_FOUND OR libmongoc-1.0_FOUND)
-        target_include_directories(chwell_core PRIVATE ${MONGOC_INCLUDE_DIRS})
-        target_link_libraries(chwell_core PRIVATE ${MONGOC_LIBRARIES} ${BSON_LIBRARIES})
-    elseif(MONGOC_INCLUDE_DIR AND MONGOC_LIBRARY AND BSON_LIBRARY)
-        target_include_directories(chwell_core PRIVATE ${MONGOC_INCLUDE_DIR})
-        target_link_libraries(chwell_core PRIVATE ${MONGOC_LIBRARY} ${BSON_LIBRARY})
-    else()
-        message(WARNING "CHWELL_USE_MONGODB=ON but mongoc not found, MongoDB storage will be stub")
-    endif()
+    target_link_libraries(chwell_core PRIVATE ChwellDependency::MongoDB)
 endif()
 
 if(CHWELL_USE_OPENSSL)
-    find_package(OpenSSL QUIET)
-    if(OPENSSL_FOUND)
-        target_link_libraries(chwell_core PRIVATE OpenSSL::SSL)
-    else()
-        message(WARNING "CHWELL_USE_OPENSSL=ON but OpenSSL not found, TLS wrapper will be stub")
-    endif()
+    find_package(OpenSSL REQUIRED)
+    target_link_libraries(chwell_core PRIVATE OpenSSL::SSL)
 endif()
 
 if (CHWELL_BUILD_TESTS)
@@ -288,7 +255,7 @@ if (CHWELL_BUILD_TESTS)
 
         # 热加载测试插件（SHARED），供 test_hot_reload 加载
         add_library(test_hot_plugin SHARED tests/test_hot_plugin.cpp)
-        target_include_directories(test_hot_plugin PRIVATE ${CMAKE_SOURCE_DIR}/include)
+        target_include_directories(test_hot_plugin PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
         target_link_libraries(test_hot_plugin PRIVATE ${CMAKE_DL_LIBS})
         add_dependencies(chwell_core_tests test_hot_plugin)
         target_compile_definitions(chwell_core_tests PRIVATE
@@ -317,7 +284,6 @@ if(CHWELL_USE_CONSUL)
     find_package(CURL 7.68 REQUIRED)
     find_package(nlohmann_json 3.11 REQUIRED)
     add_library(chwell_consul src/discovery/consul_discovery.cpp src/discovery/consul_http.cpp)
-    target_include_directories(chwell_consul PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
     target_link_libraries(chwell_consul PUBLIC chwell_core PRIVATE CURL::libcurl nlohmann_json::nlohmann_json)
     if(CHWELL_BUILD_TESTS AND CHWELL_GTEST_LIB)
         add_executable(chwell_discovery_tests tests/test_consul_discovery.cpp)
@@ -332,7 +298,6 @@ endif()
 
 if(CHWELL_USE_ENTITY_SCHEMA)
     add_library(chwell_schema src/schema/entity_schema.cpp src/sync/schema_sync.cpp)
-    target_include_directories(chwell_schema PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
     target_link_libraries(chwell_schema PUBLIC chwell_core)
     if(CHWELL_BUILD_TESTS OR CHWELL_BUILD_EXAMPLES)
         include(cmake/ChwellEntitySchema.cmake)
@@ -360,8 +325,21 @@ if(CHWELL_USE_ENTITY_SCHEMA)
     endif()
 endif()
 
+# Stable consumer names work with both add_subdirectory and installed packages.
+set(CHWELL_EXPORT_TARGETS chwell_core)
+set_target_properties(chwell_core PROPERTIES EXPORT_NAME core)
+add_library(Chwell::core ALIAS chwell_core)
+foreach(module schema consul game_proto)
+    if(TARGET chwell_${module})
+        list(APPEND CHWELL_EXPORT_TARGETS chwell_${module})
+        set_target_properties(chwell_${module} PROPERTIES EXPORT_NAME ${module})
+        add_library(Chwell::${module} ALIAS chwell_${module})
+    endif()
+endforeach()
+include(cmake/ChwellInstall.cmake)
+
 # 复制 config 到 build 目录，便于 example_storage 从 build 运行
-file(COPY ${CMAKE_SOURCE_DIR}/config DESTINATION ${CMAKE_BINARY_DIR})
+file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/config DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
 
 if (CHWELL_BUILD_EXAMPLES)
     add_executable(example_config_driven examples/config_driven_demo.cpp)
@@ -436,13 +414,13 @@ if (CHWELL_BUILD_EXAMPLES)
     add_executable(example_game_server
         examples/game_server.cpp
     )
-    target_include_directories(example_game_server PRIVATE ${CMAKE_SOURCE_DIR}/examples)
+    target_include_directories(example_game_server PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/examples)
     target_link_libraries(example_game_server PRIVATE chwell_core)
 
     add_executable(example_game_gateway_server
         examples/game_gateway_server.cpp
     )
-    target_include_directories(example_game_gateway_server PRIVATE ${CMAKE_SOURCE_DIR}/examples)
+    target_include_directories(example_game_gateway_server PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/examples)
     target_link_libraries(example_game_gateway_server PRIVATE chwell_core)
 
     # WebSocket-TCP 桥接（H5 浏览器连 WS，转发到网关 TCP）

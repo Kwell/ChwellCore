@@ -1,0 +1,6 @@
+{
+  "tables": [
+    {"schema": "player.schema.json", "csv": "players.csv"},
+    {"schema": "item.schema.json", "csv": "items.csv"}
+  ]
+}
