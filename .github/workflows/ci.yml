@@ -18,6 +18,12 @@ jobs:
         run: cmake --build build-config --config Debug --parallel 4
       - name: Run config tests
         run: ctest --test-dir build-config -C Debug --verbose --timeout 600
+      - name: Configure portable discovery tests
+        run: cmake -S tests/discovery -B build-discovery
+      - name: Build portable discovery tests
+        run: cmake --build build-discovery --config Debug --parallel 4
+      - name: Run portable discovery tests
+        run: ctest --test-dir build-discovery -C Debug --output-on-failure --timeout 120
 
   build-and-test:
     runs-on: ubuntu-latest
@@ -27,12 +33,13 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libyaml-cpp-dev libssl-dev
+          sudo apt-get install -y libyaml-cpp-dev libssl-dev libcurl4-openssl-dev nlohmann-json3-dev
       - name: Configure
         run: |
           cmake -S . -B build \
             -DCHWELL_BUILD_EXAMPLES=OFF \
             -DCHWELL_BUILD_TESTS=ON \
+            -DCHWELL_USE_CONSUL=ON \
             -DCMAKE_CXX_FLAGS="-Wall -Wextra"
       - name: Build
         run: cmake --build build -j 4
@@ -47,12 +54,13 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libyaml-cpp-dev libssl-dev
+          sudo apt-get install -y libyaml-cpp-dev libssl-dev libcurl4-openssl-dev nlohmann-json3-dev
       - name: Configure ASan
         run: |
           cmake -S . -B build-asan \
             -DCHWELL_BUILD_EXAMPLES=OFF \
             -DCHWELL_BUILD_TESTS=ON \
+            -DCHWELL_USE_CONSUL=ON \
             -DCMAKE_BUILD_TYPE=Debug \
             -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
       - name: Build ASan
@@ -68,15 +76,55 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libyaml-cpp-dev libssl-dev
+          sudo apt-get install -y libyaml-cpp-dev libssl-dev libcurl4-openssl-dev nlohmann-json3-dev
       - name: Configure TSan
         run: |
           cmake -S . -B build-tsan \
             -DCHWELL_BUILD_EXAMPLES=OFF \
             -DCHWELL_BUILD_TESTS=ON \
+            -DCHWELL_USE_CONSUL=ON \
             -DCMAKE_BUILD_TYPE=Debug \
             -DCMAKE_CXX_FLAGS="-fsanitize=thread -fno-omit-frame-pointer"
       - name: Build TSan
         run: cmake --build build-tsan -j 4
       - name: Run tests TSan
         run: ctest --test-dir build-tsan --verbose --timeout 600
+
+  consul-cluster:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcurl4-openssl-dev nlohmann-json3-dev
+      - name: Configure cluster reference
+        run: >-
+          cmake -S . -B build-cluster -DCHWELL_USE_CONSUL=ON
+          -DCHWELL_USE_YAML=OFF -DCHWELL_USE_PROTOBUF=OFF
+          -DCHWELL_BUILD_TESTS=ON -DCHWELL_BUILD_EXAMPLES=ON
+      - name: Build cluster reference and discovery tests
+        run: cmake --build build-cluster -j 4 --target example_discovery_cluster chwell_discovery_tests
+      - name: Run discovery contract tests
+        run: ctest --test-dir build-cluster -R chwell_discovery_tests --output-on-failure --timeout 120
+      - name: Start isolated Consul agent
+        run: |
+          docker run -d --name chwell-consul -p 127.0.0.1:8500:8500 hashicorp/consul:1.20.6 agent -dev -client=0.0.0.0
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:8500/v1/status/leader | grep -q ':8300'; then exit 0; fi
+            sleep 1
+          done
+          docker logs chwell-consul
+          exit 1
+      - name: Verify independent processes, TTL expiry and registry restart
+        run: >-
+          python3 integration_tests/test_consul_cluster.py build-cluster/example_discovery_cluster
+          --consul-container chwell-consul
+      - name: Consul diagnostics
+        if: failure()
+        run: docker logs chwell-consul || true
+      - name: Stop isolated Consul agent
+        if: always()
+        run: docker rm -f chwell-consul || true

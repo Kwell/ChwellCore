@@ -53,6 +53,14 @@ public:
     // 查询服务实例列表
     virtual std::vector<ServiceInstance> discover_services(const std::string& service_id) = 0;
 
+    // A successful empty snapshot is different from an unavailable backend.
+    // Remote backends override this method; legacy in-process backends stay compatible.
+    virtual bool discover_services_checked(const std::string& service_id,
+                                           std::vector<ServiceInstance>& out) {
+        out = discover_services(service_id);
+        return true;
+    }
+
     // 查询单个服务实例
     virtual bool get_service_instance(const std::string& instance_id, ServiceInstance& out) = 0;
 

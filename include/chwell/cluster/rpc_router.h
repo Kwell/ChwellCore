@@ -9,6 +9,7 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
+#include <atomic>
 
 #include "chwell/cluster/node_registry.h"
 
@@ -45,10 +46,13 @@ public:
     void set_transport_factory(RpcTransportFactory factory) {
         std::lock_guard<std::mutex> lock(mu_);
         factory_ = std::move(factory);
+        transports_.clear();
     }
 
     // 路由并透传一次调用。返回 true 表示目标节点处理完成（响应在 out 中）。
     // 节点失败时最多重试 failover_retries 个不同节点。
+    // Only enable retries for replay-safe requests; stateful commands must use
+    // forward_to_node/DiscoveryRouter::forward_session or disable retries.
     bool forward(const std::string& service_type,
                  const std::string& route_key,
                  std::uint16_t cmd,
@@ -56,7 +60,7 @@ public:
                  std::vector<char>& response,
                  int timeout_ms = 2000) {
         return forward_ex(service_type, route_key, cmd, request, response,
-                          timeout_ms, failover_retries_);
+                          timeout_ms, failover_retries_.load());
     }
 
     bool forward_ex(const std::string& service_type,
@@ -89,10 +93,8 @@ public:
             }
         }
 
-        int max_attempts = (failover_retries < 0 ? 0 : failover_retries) + 1;
-        if (max_attempts > static_cast<int>(candidates.size())) {
-            max_attempts = static_cast<int>(candidates.size());
-        }
+        int max_attempts = static_cast<int>(std::min<std::size_t>(candidates.size(),
+            static_cast<std::size_t>(std::max(0, failover_retries)) + 1));
 
         for (int attempts = 0; attempts < max_attempts; ++attempts) {
             const NodeInfo& node = candidates[attempts];
@@ -147,22 +149,28 @@ public:
 
 private:
     RpcTransportPtr get_or_create(const RpcTransportFactory& factory, const NodeInfo& node) {
-        std::lock_guard<std::mutex> lock(mu_);
-        auto it = transports_.find(node.node_id);
-        if (it != transports_.end() && it->second && it->second->healthy()) {
-            return it->second;
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            auto it = transports_.find(node.node_id);
+            if (it != transports_.end() && it->second.transport && it->second.transport->healthy() &&
+                it->second.node.listen_addr == node.listen_addr &&
+                it->second.node.listen_port == node.listen_port &&
+                it->second.node.incarnation == node.incarnation) return it->second.transport;
         }
+        // Connecting can block or re-enter the router; never invoke the factory under mu_.
         RpcTransportPtr tp = factory(node);
         if (!tp) return nullptr;
-        transports_[node.node_id] = tp;
+        std::lock_guard<std::mutex> lock(mu_);
+        transports_[node.node_id] = {node, tp};
         return tp;
     }
 
     std::shared_ptr<NodeRegistry> registry_;
     mutable std::mutex mu_;
     RpcTransportFactory factory_;
-    std::unordered_map<std::string, RpcTransportPtr> transports_;
-    int failover_retries_ = 1;
+    struct CachedTransport { NodeInfo node; RpcTransportPtr transport; };
+    std::unordered_map<std::string, CachedTransport> transports_;
+    std::atomic<int> failover_retries_{1};
 };
 
 }  // namespace cluster

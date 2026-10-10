@@ -108,7 +108,8 @@ reference deployments remain separate work in the recommended order.
 
 ## Validation
 
-The Windows Config regression suite passes. The focused Service lifecycle,
-AppHost and Redis tests compile and link for x86_64 Linux with Zig 0.14.1/musl.
-This Windows workspace has no Linux runtime, so those tests have not been run
-here; Linux execution and sanitizer checks are still required before merging.
+The first-stage changes were merged in PR #58 after Linux execution,
+Windows Config, ASan/UBSan and TSan CI checks all passed. Local cross-compilation
+also verified the focused Service lifecycle, AppHost and Redis tests with
+Zig 0.14.1/musl. The subsequent discovery/routing increment is documented in
+[DISCOVERY.md](DISCOVERY.md).

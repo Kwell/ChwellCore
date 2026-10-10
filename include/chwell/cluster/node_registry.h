@@ -5,6 +5,8 @@
 #include <vector>
 #include <mutex>
 #include <functional>
+#include <unordered_set>
+#include <algorithm>
 
 #include "chwell/loadbalance/consistent_hash.h"
 
@@ -22,6 +24,7 @@ struct NodeInfo {
     unsigned short listen_port;
     std::string node_type; // 例如："gateway", "logic", "room"
     bool online;
+    std::string incarnation; // Optional process generation, supplied by discovery metadata.
 
     NodeInfo() : listen_port(0), online(false) {}
 };
@@ -69,6 +72,7 @@ public:
                       const std::string& node_type = "") {
         std::lock_guard<std::mutex> lock(mutex_);
         NodeInfo& info = nodes_[node_id];
+        ch_balancer_.remove_instance(info.node_type, node_id);
         info.node_id = node_id;
         info.listen_addr = listen_addr;
         info.listen_port = listen_port;
@@ -88,7 +92,40 @@ public:
         if (it != nodes_.end()) {
             it->second.online = false;
             ch_balancer_.remove_instance(it->second.node_type, node_id);
+            ch_balancer_.remove_instance("__all__", node_id);
         }
+    }
+
+    // Replace one discovery-owned service group atomically. Do not mix static and
+    // discovered nodes in the same group. An invalid snapshot preserves the table.
+    bool replace_nodes_by_type(const std::string& type, const std::vector<NodeInfo>& snapshot) {
+        if (type.empty() || type == "__all__") return false;
+        std::unordered_set<std::string> ids;
+        for (const auto& node : snapshot) {
+            if (node.node_id.empty() || node.listen_addr.empty() || !node.listen_port ||
+                node.node_type != type || !node.online || !ids.insert(node.node_id).second) return false;
+        }
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto pending = nodes_;
+        for (auto it = pending.begin(); it != pending.end();) {
+            if (it->second.node_type == type) it = pending.erase(it);
+            else ++it;
+        }
+        for (const auto& node : snapshot) {
+            if (pending.count(node.node_id)) return false;
+            pending[node.node_id] = node;
+        }
+        loadbalance::ConsistentHashLoadBalancer balancer;
+        std::vector<std::string> ordered;
+        for (const auto& entry : pending) if (entry.second.online) ordered.push_back(entry.first);
+        std::sort(ordered.begin(), ordered.end());
+        for (const auto& id : ordered) {
+            balancer.add_instance(pending.at(id).node_type, id);
+            balancer.add_instance("__all__", id);
+        }
+        nodes_.swap(pending);
+        std::swap(ch_balancer_, balancer);
+        return true;
     }
 
     // 查找节点
