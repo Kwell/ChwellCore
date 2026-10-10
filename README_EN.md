@@ -9,6 +9,8 @@ Modular, high-performance C++17 game server framework for SLG / MMO titles.
 
 > **Platform**: The full framework requires Linux / POSIX (`epoll`, `sys/socket.h`, `poll`, …). The configuration module can be built and tested independently on Windows; see Testing below.
 
+**Standalone application**: [Reference service v1](examples/reference_service/README.md), [installable CMake package](docs/PACKAGING.md), and [contributing](CONTRIBUTING.md). CSV content supports build-time cross-table ID validation. Installed consumers use `find_package(ChwellCore 0.1 CONFIG REQUIRED)` and targets such as `Chwell::core` / `Chwell::schema`.
+
 **中文文档**：[README.md](README.md)
 
 ---

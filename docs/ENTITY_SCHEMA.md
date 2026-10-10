@@ -37,6 +37,7 @@ ctest --test-dir build-schema -C Debug --output-on-failure
 | `visibility` | `server` 只留服务器；`owner` 给拥有者；`public` 给所有订阅者 |
 | `min` / `max` | 可选数字范围；int64 边界使用整数，不转为浮点 |
 | `max_bytes` | 可选字符串字节上限；生成器按 UTF-8 计数，运行时按 std::string 字节数 |
+| `reference` | 可选构建期内容引用：`{"table":"items","allow_empty":false}`，仅允许非主键 string 字段引用目标表的 id |
 
 主键必须是名为 `id` 的持久化 string 字段，默认值为空，visibility 为 public，以兼容已有 Repository 的存储键约定与同步包中的实体身份。max_bytes 如设置必须大于零。创建后显式设定非空主键；非空主键不能通过 setter 修改。加载必须包含非空主键。加载应在加入同步房间前完成。
 
@@ -90,7 +91,7 @@ python tools/entity_schema.py schemas/player.schema.json \
 
 CSV 标题对应字段名，必须含 id，未提供的列采用 schema 默认值。数字和布尔严格解析，重复列、未知列、重复/空 ID、越界数据会失败，字段错误含文件、行、列。全部输入验证通过后才原子替换一个头文件；错误不会覆盖已有产物。不要在构建错误后发布残留旧产物。
 
-字段重排输出不变。使用 `--previous` 时，删除 ID 必须进入 reserved_ids，旧保留编号不能回收，字段名不能迁移到另一 ID。字段名称、类型、持久化、可见性和约束改变需要单独设计迁移，本工具拒绝这些变更；新增字段或修改默认值必须提升 schema version。运行时不会自动协商版本。
+字段重排输出不变。使用 `--previous` 时，删除 ID 必须进入 reserved_ids，旧保留编号不能回收，字段名不能迁移到另一 ID。字段名称、类型、持久化、可见性、约束与引用策略改变需要单独设计迁移，本工具拒绝这些变更；新增字段或修改默认值必须提升 schema version。运行时不会自动协商版本。
 
 CMake 可复用 `cmake/ChwellEntitySchema.cmake`：
 
@@ -103,4 +104,34 @@ target_include_directories(my_server PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/genera
 target_link_libraries(my_server PRIVATE chwell_schema)
 ```
 
-当前完成 CSV 单表校验与生成，还没有 Excel 导入、表间外键引用检查、C# 生成、二进制内容格式、内容热切换或在线存储迁移。这些可继续扩展同一流程。
+## 表间内容引用
+
+字段可声明 `"reference": {"table": "items"}`。allow_empty 默认 false；显式 true 允许空字符串，其他值仍须命中目标表 id。主键不可再声明引用，暂不支持数字外键、任意目标列、复合键或数组引用。
+
+用 JSON 内容目录列出所有相关表，schema/CSV 路径相对于目录文件解析，和运行命令时的工作目录无关：
+
+```json
+{"tables": [
+  {"schema": "player.schema.json", "csv": "players.csv"},
+  {"schema": "item.schema.json", "csv": "items.csv"}
+]}
+```
+
+```bash
+python tools/entity_schema.py examples/reference_service/content/player.schema.json \
+  --catalog examples/reference_service/content/catalog.json --output build/generated/player.h
+```
+
+`--catalog` 与 `--csv` 互斥，正在生成的 schema 必须在目录中。生成器加载全部表后统一校验，包括没有输出头文件的表，支持自引用和循环引用；重复表名/schema、重复目标 ID、漏配目标表与无效引用都会失败。没有跨表引用时可继续使用原来的单表命令；自引用也可以通过单表 CSV 校验。
+
+遗漏列采用的默认值同样参与校验。错误例如 `players.csv:2:5 (weapon): unresolved reference items.id = 'typo'`；多行引号单元格以记录起始行定位，列号是 CSV 字段序号。缺失列错误定位到该记录的 id 列，并标注 `omitted column, schema default`。整个目录验证通过后才替换当前输出头文件；多个生成目标不是一组文件的事务发布。
+
+```cmake
+find_package(ChwellCore 0.1 CONFIG REQUIRED COMPONENTS schema)
+chwell_generate_entity_schema(player_content content/player.schema.json generated/player.h
+    CATALOG content/catalog.json)
+```
+
+CMake 将目录中的每个 schema/CSV 加入 DEPENDS，目录增删表会触发重新配置，更新依赖图。引用元数据不会出现在 `client_schema()`；引用不新增数据库外键，也不校验运行时 setter 或存储加载的关联值。动态修改实体引用时，业务需校验目标并处理内容版本。完整可运行例子见 [参考工程](../examples/reference_service/README.md)。
+
+还没有 Excel 导入、C# 生成、二进制内容格式、内容热切换或在线存储迁移。

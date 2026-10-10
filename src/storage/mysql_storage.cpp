@@ -4,10 +4,16 @@
 #if defined(CHWELL_USE_MYSQL)
 #include <mysql/mysql.h>
 #include <cstring>
+#include <type_traits>
 #endif
 
 namespace chwell {
 namespace storage {
+
+#if defined(CHWELL_USE_MYSQL)
+// MySQL 8 uses bool*, MariaDB/older MySQL use my_bool* in MYSQL_BIND.
+using MysqlBindBool = std::remove_pointer_t<decltype(MYSQL_BIND{}.is_null)>;
+#endif
 
 MysqlStorage::MysqlStorage(const StorageConfig& config) : config_(config) {}
 
@@ -123,7 +129,7 @@ StorageResult MysqlStorage::get(const std::string& key) {
 
     // 先用空缓冲区绑定，获取实际长度后再二次读取，避免固定 64KB 截断大值
     unsigned long value_len = 0;
-    my_bool is_null = 0;
+    MysqlBindBool is_null = 0;
     MYSQL_BIND result;
     std::memset(&result, 0, sizeof(result));
     result.buffer_type   = MYSQL_TYPE_STRING;
@@ -281,7 +287,7 @@ bool MysqlStorage::exists(const std::string& key) {
     mysql_stmt_bind_param(stmt, &param);
 
     std::int64_t       one      = 0;
-    my_bool            res_null = 0;
+    MysqlBindBool      res_null = 0;
     MYSQL_BIND         res_bind;
     std::memset(&res_bind, 0, sizeof(res_bind));
     res_bind.buffer_type = MYSQL_TYPE_LONGLONG;

@@ -1,0 +1,7 @@
+{
+  "name": "ReferenceItem", "table": "items", "key": 1, "version": 1,
+  "fields": [
+    {"id": 1, "name": "id", "type": "string", "default": "", "stored": true, "visibility": "public", "max_bytes": 64},
+    {"id": 10, "name": "power", "type": "int64", "default": 1, "stored": true, "visibility": "public", "min": 1, "max": 1000}
+  ]
+}

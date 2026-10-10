@@ -1,0 +1,21 @@
+cmake_minimum_required(VERSION 3.14)
+project(ChwellReferenceService VERSION 1.0.0 LANGUAGES CXX)
+find_package(ChwellCore 0.1 CONFIG REQUIRED COMPONENTS core schema)
+
+chwell_generate_entity_schema(reference_player content/player.schema.json generated/player.h
+    CATALOG content/catalog.json)
+chwell_generate_entity_schema(reference_item content/item.schema.json generated/item.h
+    CATALOG content/catalog.json)
+add_executable(reference_service main.cpp)
+add_dependencies(reference_service reference_player reference_item)
+target_include_directories(reference_service PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+target_link_libraries(reference_service PRIVATE Chwell::schema)
+if(MSVC)
+    target_compile_options(reference_service PRIVATE /utf-8 /W4)
+else()
+    target_compile_options(reference_service PRIVATE -Wall -Wextra)
+endif()
+configure_file(service.conf service.conf COPYONLY)
+enable_testing()
+add_test(NAME reference_service_smoke COMMAND reference_service --smoke)
+set_tests_properties(reference_service_smoke PROPERTIES TIMEOUT 30)

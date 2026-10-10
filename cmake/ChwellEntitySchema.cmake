@@ -1,18 +1,38 @@
 # Reusable build-time generator. Python is required only for generation.
-set(CHWELL_ENTITY_SCHEMA_TOOL "${CMAKE_CURRENT_LIST_DIR}/../tools/entity_schema.py")
+if(NOT CHWELL_ENTITY_SCHEMA_TOOL)
+    set(CHWELL_ENTITY_SCHEMA_TOOL "${CMAKE_CURRENT_LIST_DIR}/../tools/entity_schema.py")
+endif()
 function(chwell_generate_entity_schema target schema output)
-    cmake_parse_arguments(SCHEMA "" "CSV;PREVIOUS" "" ${ARGN})
+    cmake_parse_arguments(SCHEMA "" "CSV;PREVIOUS;CATALOG" "" ${ARGN})
+    if(SCHEMA_UNPARSED_ARGUMENTS OR SCHEMA_KEYWORDS_MISSING_VALUES OR (SCHEMA_CSV AND SCHEMA_CATALOG))
+        message(FATAL_ERROR "Schema generation: unknown arguments or CSV combined with CATALOG")
+    endif()
     find_package(Python3 3.8 REQUIRED COMPONENTS Interpreter)
     get_filename_component(schema "${schema}" ABSOLUTE BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
     get_filename_component(output "${output}" ABSOLUTE BASE_DIR "${CMAKE_CURRENT_BINARY_DIR}")
     set(arguments "${schema}" --output "${output}")
     set(dependencies "${schema}" "${CHWELL_ENTITY_SCHEMA_TOOL}")
-    foreach(option CSV PREVIOUS)
+    foreach(option CSV PREVIOUS CATALOG)
         if(SCHEMA_${option})
             get_filename_component(input "${SCHEMA_${option}}" ABSOLUTE BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
             string(TOLOWER "${option}" flag)
             list(APPEND arguments "--${flag}" "${input}")
             list(APPEND dependencies "${input}")
+            if(option STREQUAL "CATALOG")
+                execute_process(COMMAND "${Python3_EXECUTABLE}" "${CHWELL_ENTITY_SCHEMA_TOOL}"
+                    --catalog "${input}" --list-inputs
+                    RESULT_VARIABLE result OUTPUT_VARIABLE inputs ERROR_VARIABLE diagnostic
+                    OUTPUT_STRIP_TRAILING_WHITESPACE)
+                if(NOT result EQUAL 0)
+                    message(FATAL_ERROR "Invalid content catalog: ${diagnostic}")
+                endif()
+                string(REPLACE "\r\n" "\n" inputs "${inputs}")
+                string(REPLACE "\n" ";" inputs "${inputs}")
+                list(APPEND dependencies ${inputs})
+                # Adding/removing tables must update the build graph too.
+                set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                    "${input}" "${CHWELL_ENTITY_SCHEMA_TOOL}")
+            endif()
         endif()
     endforeach()
     add_custom_command(OUTPUT "${output}"

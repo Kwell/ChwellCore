@@ -11,6 +11,8 @@
 
 > **平台要求**：完整框架需要 Linux / POSIX（依赖 `epoll`、`sys/socket.h`、`poll` 等）。配置、发现契约与 EntitySchema 提供 Windows 独立测试入口，见下方测试说明。
 
+**独立应用入口**：[参考工程 v1](examples/reference_service/README.md)、[CMake 安装包与导出目标](docs/PACKAGING.md)、[贡献说明](CONTRIBUTING.md)。支持构建期 CSV 表间引用校验，安装后可通过 `find_package(ChwellCore 0.1 CONFIG REQUIRED)` 使用 `Chwell::core` / `Chwell::schema` 等目标。
+
 ---
 
 ## 目录

@@ -58,6 +58,36 @@ jobs:
       - name: Run tests
         run: ctest --test-dir build --verbose --timeout 600
 
+  installed-package:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        features: [minimal, full, bundled-yaml]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install package dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libyaml-cpp-dev libssl-dev libcurl4-openssl-dev nlohmann-json3-dev libprotobuf-dev protobuf-compiler default-libmysqlclient-dev libmongoc-dev
+      - name: Configure installable framework
+        env:
+          FEATURES: ${{ matrix.features }}
+        run: |
+          options=(-DCHWELL_USE_YAML=OFF -DCHWELL_USE_PROTOBUF=OFF)
+          if [ "$FEATURES" = full ]; then
+            options=(-DCHWELL_USE_YAML=ON -DCHWELL_USE_PROTOBUF=ON -DCHWELL_USE_CONSUL=ON -DCHWELL_USE_OPENSSL=ON -DCHWELL_USE_MYSQL=ON -DCHWELL_USE_MONGODB=ON)
+          elif [ "$FEATURES" = bundled-yaml ]; then
+            options=(-DCHWELL_USE_YAML=ON -DCHWELL_USE_PROTOBUF=OFF -DCMAKE_DISABLE_FIND_PACKAGE_yaml-cpp=ON)
+          fi
+          cmake -S . -B build-package -DCHWELL_BUILD_TESTS=OFF -DCHWELL_BUILD_EXAMPLES=OFF \
+            -DCHWELL_USE_ENTITY_SCHEMA=ON -DCMAKE_BUILD_TYPE=Release "${options[@]}"
+      - name: Build installable framework
+        run: cmake --build build-package --parallel 4
+      - name: Verify relocation, independent reference and catalog rebuilds
+        run: python3 integration_tests/test_installed_package.py build-package
+
   asan:
     runs-on: ubuntu-latest
     steps:
