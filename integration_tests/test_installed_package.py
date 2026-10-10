@@ -137,6 +137,11 @@ endif()
         changed(content / 'extra.csv', 'id,power\nx,9999\n')
         failure = run(compile_command, success=False)
         if 'extra.csv:2:2' not in failure: raise RuntimeError('New dependency not tracked\n' + failure)
+        catalog['tables'].pop()
+        changed(content / 'catalog.json', json.dumps(catalog))
+        run(compile_command)  # Removed table's invalid content no longer participates.
+        changed(content / 'extra.csv', 'id,power\nremoved,99999\n')
+        run(compile_command)
         print('PASS: relocated package, independent consumer, TCP shutdown, atomic catalog and rebuild dependencies')
 
 
