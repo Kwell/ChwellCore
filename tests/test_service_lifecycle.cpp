@@ -9,14 +9,19 @@ namespace {
 class RecordingComponent : public Component {
 public:
     RecordingComponent(std::string name, std::vector<std::string>& events, int priority = 100,
-                       std::string* failure = nullptr, bool throws = false)
-        : name_(std::move(name)), events_(events), priority_(priority), failure_(failure), throws_(throws) {}
+                       std::string* failure = nullptr, bool throws = false,
+                       std::vector<std::string> dependencies = {})
+        : name_(std::move(name)), events_(events), priority_(priority), failure_(failure), throws_(throws),
+          dependencies_(std::move(dependencies)) {}
     std::string name() const override { return name_; }
     int priority() const override { return priority_; }
+    std::vector<std::string> dependencies() const override { return dependencies_; }
     bool Init() override { return phase("Init"); }
     bool PostInit() override { return phase("PostInit"); }
     bool CheckConfig() override { return phase("CheckConfig"); }
     bool PreUpdate() override { return phase("PreUpdate"); }
+    bool Update(std::int64_t) override { return phase("Update"); }
+    void Flush() override { phase("Flush"); }
     bool PreShut() override { return phase("PreShut"); }
     bool Shut() override { return phase("Shut"); }
 private:
@@ -33,6 +38,7 @@ private:
     int priority_;
     std::string* failure_;
     bool throws_;
+    std::vector<std::string> dependencies_;
 };
 
 class RecordingPlugin : public IPlugin {
@@ -60,6 +66,119 @@ private:
     std::string component_name_;
 };
 } // namespace
+
+TEST(ServiceDependencyTest, EveryForwardPhaseUsesDependenciesAndShutdownReversesThem) {
+    std::vector<std::string> events;
+    Service service(0, 1);
+    service.add_component<RecordingComponent>("game", events, -100, nullptr, false,
+                                              std::vector<std::string>{"storage"});
+    service.add_component<RecordingComponent>("storage", events, 100);
+    ASSERT_TRUE(service.start_checked()) << service.last_error();
+    service.Update();
+    service.stop();
+    std::vector<std::string> expected;
+    for (const auto* phase : {"Init", "PostInit", "CheckConfig", "PreUpdate", "Update"}) {
+        expected.push_back(std::string("storage:") + phase);
+        expected.push_back(std::string("game:") + phase);
+    }
+    for (const auto* phase : {"PreShut", "Flush", "Shut"}) {
+        expected.push_back(std::string("game:") + phase);
+        expected.push_back(std::string("storage:") + phase);
+    }
+    EXPECT_EQ(events, expected);
+}
+
+TEST(ServiceDependencyTest, MissingDependencyStopsBeforeInitAndCanBeRepaired) {
+    std::vector<std::string> events;
+    Service service(0, 1);
+    service.add_component<RecordingComponent>("game", events, 0, nullptr, false,
+                                              std::vector<std::string>{"storage"});
+    EXPECT_FALSE(service.start_checked());
+    EXPECT_EQ(service.last_error(), "Missing dependency: game -> storage");
+    EXPECT_TRUE(events.empty());
+    EXPECT_FALSE(service.is_running());
+    ASSERT_NE(service.add_component<RecordingComponent>("storage", events, 100), nullptr);
+    ASSERT_TRUE(service.start_checked());
+    EXPECT_TRUE(service.last_error().empty());
+    EXPECT_EQ(events[0], "storage:Init");
+    service.stop();
+}
+
+TEST(ServiceDependencyTest, CycleStopsBeforeInitAndDoesNotAttemptNetwork) {
+    std::vector<std::string> events;
+    Service service(0, 1);
+    service.add_component<RecordingComponent>("game", events, 0, nullptr, false,
+                                              std::vector<std::string>{"storage"});
+    service.add_component<RecordingComponent>("storage", events, 100, nullptr, false,
+                                              std::vector<std::string>{"game"});
+    EXPECT_FALSE(service.start_checked());
+    EXPECT_EQ(service.last_error(), "Component dependency cycle: game -> storage -> game");
+    EXPECT_TRUE(events.empty());
+    EXPECT_FALSE(service.is_running());
+}
+
+TEST(ServiceDependencyTest, FailedInitRollsBackInDependencyOrderAndRetainsDiagnostic) {
+    std::vector<std::string> events;
+    std::string failure = "Init";
+    Service service(0, 1);
+    service.add_component<RecordingComponent>("game", events, 0, &failure, false,
+                                              std::vector<std::string>{"storage"});
+    service.add_component<RecordingComponent>("storage", events, 100);
+    EXPECT_FALSE(service.start_checked());
+    EXPECT_EQ(service.last_error(), "Component Init failed: game");
+    EXPECT_EQ(events, (std::vector<std::string>{"storage:Init", "game:Init", "game:PreShut",
+                                               "storage:PreShut", "game:Shut", "storage:Shut"}));
+    failure.clear();
+    ASSERT_TRUE(service.start_checked());
+    service.stop();
+}
+
+TEST(ServiceDependencyTest, PluginComponentsParticipateAfterAllPluginsInstall) {
+    std::vector<std::string> events;
+    Service service(0, 1);
+    service.add_component<RecordingComponent>("game", events, 0, nullptr, false,
+                                              std::vector<std::string>{"plugin-storage"});
+    ASSERT_TRUE(service.plugin_manager().RegisterPlugin<RecordingPlugin>("plugin-storage", events));
+    ASSERT_TRUE(service.start_checked()) << service.last_error();
+    EXPECT_EQ(events[0], "plugin-storage:Install");
+    EXPECT_EQ(events[1], "plugin-storage:Init");
+    EXPECT_EQ(events[2], "game:Init");
+    service.stop();
+    const auto game_shut = std::find(events.begin(), events.end(), "game:Shut");
+    const auto storage_shut = std::find(events.begin(), events.end(), "plugin-storage:Shut");
+    const auto uninstall = std::find(events.begin(), events.end(), "plugin-storage:Uninstall");
+    EXPECT_LT(game_shut, storage_shut);
+    EXPECT_LT(storage_shut, uninstall);
+}
+
+TEST(ServiceDependencyTest, InvalidGraphUnwindsPluginInstallationWithoutRunningInit) {
+    std::vector<std::string> events;
+    Service service(0, 1);
+    service.add_component<RecordingComponent>("game", events, 0, nullptr, false,
+                                              std::vector<std::string>{"absent"});
+    service.plugin_manager().RegisterPlugin<RecordingPlugin>("plugin", events);
+    EXPECT_FALSE(service.start_checked());
+    EXPECT_EQ(service.last_error(), "Missing dependency: game -> absent");
+    EXPECT_EQ(service.get_component("plugin"), nullptr);
+    EXPECT_NE(service.get_component("game"), nullptr);
+    EXPECT_EQ(events, (std::vector<std::string>{"plugin:Install", "plugin:PreShut", "plugin:Shut", "plugin:Uninstall"}));
+}
+
+TEST(ServiceDependencyTest, ThrowingDependencyDeclarationAllowsRegistrationAfterFailure) {
+    class ThrowingDeclaration : public RecordingComponent {
+    public:
+        explicit ThrowingDeclaration(std::vector<std::string>& events)
+            : RecordingComponent("bad-metadata", events) {}
+        std::vector<std::string> dependencies() const override { throw std::runtime_error("dependency read failed"); }
+    };
+    std::vector<std::string> events;
+    Service service(0, 1);
+    service.add_component<ThrowingDeclaration>(events);
+    EXPECT_FALSE(service.start_checked());
+    EXPECT_EQ(service.last_error(), "Service startup exception: dependency read failed");
+    EXPECT_TRUE(events.empty());
+    EXPECT_NE(service.add_component<RecordingComponent>("another", events), nullptr);
+}
 
 TEST(ServiceLifecycleTest, InitFailureUnwindsAttemptedComponentsInReverseOrder) {
     std::vector<std::string> events;

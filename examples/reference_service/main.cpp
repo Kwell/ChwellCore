@@ -15,13 +15,30 @@ volatile std::sig_atomic_t stopping = 0;
 void stop_signal(int) { stopping = 1; }
 using Player = chwell::generated::ReferencePlayer;
 
+class ReferenceContent final : public chwell::service::Component {
+public:
+    std::string name() const override { return "ReferenceContent"; }
+    bool Init() override {
+        items_ = chwell::generated::ReferenceItem::content();
+        return !items_.empty();
+    }
+    bool Shut() override { items_.clear(); return true; }
+    const std::vector<chwell::generated::ReferenceItem>& items() const { return items_; }
+private:
+    std::vector<chwell::generated::ReferenceItem> items_;
+};
+
 // Gameplay and sync belong to the main update thread. Network callbacks only echo.
 class ReferenceGame final : public chwell::service::Component {
 public:
     std::string name() const override { return "ReferenceGame"; }
+    std::vector<std::string> dependencies() const override { return {"ReferenceContent"}; }
+    void on_register(chwell::service::Service& service) override { service_ = &service; }
     bool Init() override {
         const auto players = Player::content();
-        const auto items = chwell::generated::ReferenceItem::content();
+        content_ = service_->get_component<ReferenceContent>();
+        if (!content_) return false;
+        const auto& items = content_->items();
         if (players.empty()) return false;
         player_ = std::make_shared<Player>(players.front());
         const auto item = std::find_if(items.begin(), items.end(), [&](const auto& value) {
@@ -53,8 +70,9 @@ public:
     }
     bool Shut() override {
         room_.remove_entity(player_ ? player_->id() : "");
-        stopped_ = true;
-        return true;
+        // The prerequisite must still be initialized while its consumer shuts down.
+        stopped_ = content_ && !content_->items().empty();
+        return stopped_;
     }
     void on_message(const chwell::net::TcpConnectionPtr& connection, std::string_view data) override {
         connection->send(data);
@@ -80,6 +98,8 @@ private:
     unsigned packets_ = 0;
     bool updated_ = false;
     bool stopped_ = false;
+    chwell::service::Service* service_ = nullptr;
+    ReferenceContent* content_ = nullptr;
 };
 } // namespace
 
@@ -93,6 +113,9 @@ int main(int argc, char** argv) {
         chwell::core::Config config;
         if (!smoke && !config.load_from_file(argv[2])) return 1;
         chwell::service::AppHost host;
+        if (!host.register_component_factory("ReferenceContent", [](const auto&) {
+            return std::make_unique<ReferenceContent>();
+        })) return 1;
         ReferenceGame* game = nullptr; // Owned by AppHost; valid until host destruction.
         if (!host.register_component_factory("ReferenceGame", [&](const auto&) {
             auto component = std::make_unique<ReferenceGame>();
@@ -106,6 +129,12 @@ int main(int argc, char** argv) {
             manifest.worker_threads = 2;
             chwell::core::ComponentConfig entry;
             entry.name = "ReferenceGame";
+            entry.priority = -100; // Dependency overrides this earlier priority.
+            entry.dependencies = {"ReferenceContent"};
+            manifest.components.push_back(entry);
+            entry.name = "ReferenceContent";
+            entry.priority = 100;
+            entry.dependencies.clear();
             manifest.components.push_back(entry);
             configured = host.configure(manifest);
         } else {

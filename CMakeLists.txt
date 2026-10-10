@@ -107,6 +107,7 @@ add_library(chwell_core
     src/cluster/tcp_rpc_transport.cpp
     src/service/service.cpp
     src/service/app_host.cpp
+    src/service/component_order.cpp
     src/service/plugin.cpp
     src/service/hot_reload.cpp
     src/protocol/message.cpp
@@ -236,6 +237,7 @@ if (CHWELL_BUILD_TESTS)
             tests/test_config.cpp
             tests/test_service_lifecycle.cpp
             tests/test_app_host.cpp
+            tests/test_component_order.cpp
             tests/test_slg.cpp
             tests/test_game_components.cpp
             tests/test_player_move.cpp

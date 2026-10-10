@@ -31,7 +31,10 @@ reactor_threads = 2
 logic_workers = 2
 component.Players.enabled = true
 component.Players.priority = 10
+component.Players.depends_on = Storage, Sessions
 component.Players.max_players = 10000
+component.Storage.enabled = true
+component.Sessions.enabled = true
 ```
 
 The configuration entry name selects a registered factory. Factories return
@@ -43,14 +46,85 @@ Port/thread fields, enabled flags and priorities are parsed strictly. Port zero
 is allowed for ephemeral test listeners; thread counts must be positive, except
 logic_workers may be zero to select the reactor count.
 
-AppHost validates all entries and constructs all components before registration.
-Enabled components are registered by priority, then entry name. Service uses the
-manifest priority for lifecycle ordering, even if Component::priority differs.
+AppHost validates all enabled manifest dependencies before invoking factories,
+then constructs all components and validates their combined runtime graph before
+creating the Service or registering components. Factories and registration follow
+dependency order; among ready manifest entries, priority and entry name break ties.
+Service uses the manifest priority, even if Component::priority differs.
 Factories must return resource-free objects with cleanup handled in Shut or the
 destructor. A failed configure preserves the existing host. Service currently
 binds its listen socket during construction; a second host cannot reuse that
 port until the previous host is destroyed. Listener creation failure is reported
 by configure and preserves the previous host.
+
+## Component Dependencies
+
+`component.<entry>.depends_on` is a comma-separated list of **manifest entry names**.
+Whitespace around entries is trimmed. An empty/whitespace-only list means no
+dependencies; leading/trailing commas and empty list members are errors. The raw
+string remains in factory params, and AppHost also passes the parsed list in
+ComponentConfig::dependencies. A typed AppManifest supplies that vector directly;
+its params map does not override the vector. Disabled entries are omitted from
+the graph, so requiring one is a missing-dependency error. Only enabled components'
+edges participate; this does not auto-enable dependencies.
+
+Code can declare hard prerequisites by **runtime component name**:
+
+```cpp
+class Players : public chwell::service::Component {
+public:
+    std::string name() const override { return "Players"; }
+    std::vector<std::string> dependencies() const override { return {"Storage"}; }
+    // Init/PostInit may acquire or use Storage after it has passed Init.
+};
+```
+
+AppHost translates manifest names to the actual names returned by factories and
+unions those edges with Component::dependencies(). Repeated edges are coalesced.
+Missing/empty targets, self-dependencies, duplicate names and cycles fail before
+Init. A cycle reports an actual prerequisite path, e.g.
+`Component dependency cycle: Players -> Storage -> Players`; blocked dependents
+outside the cycle are excluded. An invalid configure leaves the prepared host
+available. Code-only dependency errors are detected after factories return but
+before on_register; constructors must remain resource-free.
+
+Service revalidates the entire registered graph after all internal plugins Install,
+before the first Init and network start. This includes standalone and plugin-owned
+components. `name`, `priority` and `dependencies` are metadata: they must remain
+stable, be side-effect-free and must not register components or mutate the Service.
+The resolved order is fixed for this run. Plugin Install is still ordered by
+plugin priority; component dependencies do not reorder plugin Install/Uninstall or
+support lazy plugin construction. Plugins must acquire component prerequisites
+during component lifecycle phases, not during Install/on_register.
+
+Every forward phase (Init, PostInit, CheckConfig, PreUpdate, Update and message/
+disconnect dispatch) follows the resolved order. Dependencies override priority;
+ready nodes use the lowest numeric priority, then stable registration order for
+direct Service usage. Without declarations, direct Service preserves its previous
+stable-priority order; AppHost preserves priority/entry-name ties. PreShut, Flush
+and Shut run in reverse order so consumers can finish before providers flush or
+release their resources. This changes the previous forward Flush order.
+
+Startup rollback continues to clean only attempted Init components in reverse
+order, including a partially failed Init. Plugin installation rollback may also
+clean resources acquired in on_register even when Init never ran. A missing
+dependency before network start can be repaired by registering the prerequisite
+and retrying; lifecycle operations remain serialized by the application.
+`Service::last_error()` and `AppHost::last_error()` expose the dependency/startup
+failure; successful startup clears it. Graph validation does not add interface
+injection, runtime removal, dependency-aware plugin hot replacement, or concurrency
+guarantees for component state.
+
+The platform-free planner is available as `resolve_component_order` from
+component_order.h, linked through Chwell::core. It returns input indices without
+changing the output on failure. Its iterative cycle walk supports deep graphs
+without recursion. Windows can test it independently:
+
+```bash
+cmake -S tests/service_order -B build-order
+cmake --build build-order --config Debug --parallel 4
+ctest --test-dir build-order -C Debug --output-on-failure
+```
 
 ## Lifecycle and Plugins
 
@@ -101,10 +175,11 @@ they do not replace testing against a real Redis deployment.
 
 ## Next Stages
 
-The first increment covers component ownership, startup rollback and builtin
-manifest assembly. Dependency declarations/topological ordering, callback tokens,
-versioned dynamic plugins, cross-process discovery, EntitySchema and production
-reference deployments remain separate work in the recommended order.
+Component ownership, startup rollback, manifest assembly and dependency ordering
+are implemented. Discovery, EntitySchema/content and installed reference projects
+are described in DISCOVERY.md, ENTITY_SCHEMA.md and PACKAGING.md. Callback tokens,
+interface injection, safe dynamic plugin replacement and production reference
+deployments remain separate work.
 
 ## Validation
 

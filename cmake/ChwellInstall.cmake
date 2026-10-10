@@ -27,6 +27,6 @@ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/ChwellCoreConfig.cmake"
     DESTINATION "${CHWELL_PACKAGE_DIR}")
 install(FILES tools/entity_schema.py DESTINATION "${CHWELL_TOOL_DIR}")
 install(DIRECTORY examples/reference_service/ DESTINATION "${CMAKE_INSTALL_DATADIR}/ChwellCore/examples/reference_service")
-install(FILES docs/PACKAGING.md docs/ENTITY_SCHEMA.md
+install(FILES docs/PACKAGING.md docs/ENTITY_SCHEMA.md docs/APP_HOST.md
     DESTINATION "${CMAKE_INSTALL_DATADIR}/ChwellCore/docs")
 install(FILES LICENSE DESTINATION "${CMAKE_INSTALL_DATADIR}/ChwellCore")

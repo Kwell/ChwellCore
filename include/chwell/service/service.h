@@ -18,6 +18,7 @@
 #include "chwell/net/epoll_bridge.h"
 #include "chwell/net/logic_thread.h"
 #include "chwell/service/component.h"
+#include "chwell/service/component_order.h"
 #include "chwell/service/plugin.h"
 
 namespace chwell {
@@ -46,11 +47,11 @@ public:
     Service(unsigned short listen_port, std::size_t worker_threads, bool use_epoll = false,
             int reactor_threads = 1, int logic_workers = 0)
         : use_epoll_(use_epoll),
+          io_service_ptr_(std::make_unique<net::IoService>()),
+          io_service_(*io_service_ptr_),
           thread_pool_(worker_threads),
           worker_threads_(worker_threads),
-          running_(false),
-          io_service_ptr_(std::make_unique<net::IoService>()),
-          io_service_(*io_service_ptr_) {
+          running_(false) {
 
         if (use_epoll_) {
             // LogicThreadPool：按 conn_id 分片，多 worker 并行消费业务逻辑
@@ -153,7 +154,8 @@ public:
     }
 
     Component* add_component(std::unique_ptr<Component> comp,
-                             std::optional<int> priority = std::nullopt) {
+                             std::optional<int> priority = std::nullopt,
+                             std::vector<std::string> dependencies = {}) {
         if (registration_blocked_ || running_ || (starting_ && !registration_owner_) ||
             !initialized_components_.empty()) {
             return registration_failed("Component registration requires an inactive service");
@@ -168,7 +170,7 @@ public:
                 return registration_failed("Component registration rejected: duplicate name " + raw->name());
             }
         }
-        component_records_[raw] = {registration_owner_, priority, true};
+        component_records_[raw] = {registration_owner_, priority, true, std::move(dependencies)};
         components_.push_back(std::move(comp));
 
         // 兼容旧接口
@@ -216,20 +218,15 @@ public:
         if (running_ || !initialized_components_.empty()) return false;
         CHWELL_LOG_INFO("Service Init: initializing components...");
 
-        std::stable_sort(components_.begin(), components_.end(),
-            [this](const std::unique_ptr<Component>& a, const std::unique_ptr<Component>& b) {
-                const auto& ar = component_records_.at(a.get());
-                const auto& br = component_records_.at(b.get());
-                return ar.priority.value_or(a->priority()) < br.priority.value_or(b->priority());
-            });
+        last_error_.clear();
+        if (!plan_component_order()) return false;
 
         for (auto& comp : components_) {
             // Include failed Init: it may have allocated resources before returning false.
             initialized_components_.push_back(comp.get());
             component_records_.at(comp.get()).needs_shutdown = true;
             if (!comp->Init()) {
-                CHWELL_LOG_ERROR("Component Init failed: " + comp->name());
-                return false;
+                return startup_failed("Component Init failed: " + comp->name());
             }
             CHWELL_LOG_INFO("Component Init: " + comp->name());
         }
@@ -240,8 +237,7 @@ public:
         CHWELL_LOG_INFO("Service PostInit: establishing dependencies...");
         for (auto& comp : components_) {
             if (!comp->PostInit()) {
-                CHWELL_LOG_ERROR("Component PostInit failed: " + comp->name());
-                return false;
+                return startup_failed("Component PostInit failed: " + comp->name());
             }
         }
         return true;
@@ -251,8 +247,7 @@ public:
         CHWELL_LOG_INFO("Service CheckConfig: validating configuration...");
         for (auto& comp : components_) {
             if (!comp->CheckConfig()) {
-                CHWELL_LOG_ERROR("Component CheckConfig failed: " + comp->name());
-                return false;
+                return startup_failed("Component CheckConfig failed: " + comp->name());
             }
         }
         return true;
@@ -262,8 +257,7 @@ public:
         CHWELL_LOG_INFO("Service PreUpdate: preparing for update loop...");
         for (auto& comp : components_) {
             if (!comp->PreUpdate()) {
-                CHWELL_LOG_ERROR("Component PreUpdate failed: " + comp->name());
-                return false;
+                return startup_failed("Component PreUpdate failed: " + comp->name());
             }
         }
         return true;
@@ -277,17 +271,24 @@ public:
 
     bool start_checked() {
         if (running_) return true;
-        if (starting_ || stopped_after_run_ || !initialized_components_.empty()) return false;
+        if (starting_ || stopped_after_run_ || !initialized_components_.empty())
+            return startup_failed("Service cannot start in its current lifecycle state");
+        last_error_.clear();
         starting_ = true;
         try {
-            if (!plugin_manager_.InstallAll(*this) || !Init() || !PostInit() ||
+            if (!plugin_manager_.InstallAll(*this)) {
+                if (last_error_.empty()) startup_failed("Plugin installation failed");
+                cleanup_start_failure();
+                return false;
+            }
+            if (!Init() || !PostInit() ||
                 !CheckConfig() || !PreUpdate()) {
                 cleanup_start_failure();
                 return false;
             }
             if ((use_epoll_ && !epoll_server_->is_valid()) ||
                 (!use_epoll_ && !legacy_server_->is_valid())) {
-                CHWELL_LOG_ERROR("Service: network listener is not ready");
+                startup_failed("Service: network listener is not ready");
                 cleanup_start_failure();
                 return false;
             }
@@ -298,6 +299,7 @@ public:
             const bool network_ready = use_epoll_ ? epoll_server_->start_checked()
                                                   : legacy_server_->start_accept_checked();
             if (!network_ready) {
+                startup_failed("Service: network startup failed");
                 cleanup_start_failure();
                 return false;
             }
@@ -310,13 +312,14 @@ public:
             last_update_time_ = std::chrono::steady_clock::now();
             running_ = true;
             starting_ = false;
+            last_error_.clear();
             CHWELL_LOG_INFO("Service started successfully"
                             << (use_epoll_ ? " (epoll mode)" : " (legacy mode)"));
             return true;
         } catch (const std::exception& error) {
-            CHWELL_LOG_ERROR("Service startup exception: " << error.what());
+            startup_failed(std::string("Service startup exception: ") + error.what());
         } catch (...) {
-            CHWELL_LOG_ERROR("Service startup exception");
+            startup_failed("Service startup exception");
         }
         cleanup_start_failure();
         return false;
@@ -366,9 +369,9 @@ public:
 
         // Step 4: 执行各组件的 flush 操作（强制脏数据落地）
         CHWELL_LOG_INFO("Step 4: Flushing all dirty data to storage");
-        for (auto& comp : components_) {
+        for (auto it = initialized_components_.rbegin(); it != initialized_components_.rend(); ++it) {
             try {
-                comp->Flush();
+                (*it)->Flush();
             } catch (...) {
                 CHWELL_LOG_ERROR("Component Flush threw during shutdown");
             }
@@ -437,6 +440,7 @@ public:
     net::LogicThread* logic_thread() { return logic_pool_ ? logic_pool_->worker(0) : nullptr; }
     net::LogicThreadPool* logic_pool() { return logic_pool_.get(); }
     bool is_running() const { return running_; }
+    const std::string& last_error() const { return last_error_; }
     bool use_epoll() const { return use_epoll_; }
     PluginManager& plugin_manager() { return plugin_manager_; }
 
@@ -446,10 +450,45 @@ private:
         const IPlugin* owner;
         std::optional<int> priority;
         bool needs_shutdown;
+        std::vector<std::string> dependencies;
     };
+
+    bool startup_failed(const std::string& message) {
+        last_error_ = message;
+        CHWELL_LOG_ERROR(message);
+        return false;
+    }
+
+    bool plan_component_order() {
+        // Metadata callbacks may not change registration while the graph is read.
+        struct RegistrationGuard {
+            bool& flag;
+            bool previous;
+            explicit RegistrationGuard(bool& value) : flag(value), previous(value) { flag = true; }
+            ~RegistrationGuard() { flag = previous; }
+        } guard(registration_blocked_);
+        std::vector<ComponentSpec> specs;
+        specs.reserve(components_.size());
+        for (const auto& component : components_) {
+            const auto& record = component_records_.at(component.get());
+            auto dependencies = component->dependencies();
+            dependencies.insert(dependencies.end(), record.dependencies.begin(), record.dependencies.end());
+            specs.push_back({component->name(), record.priority ? *record.priority : component->priority(),
+                             std::move(dependencies)});
+        }
+        std::vector<std::size_t> order;
+        std::string error;
+        if (!resolve_component_order(specs, order, &error)) return startup_failed(error);
+        std::vector<std::unique_ptr<Component>> sorted;
+        sorted.reserve(order.size());
+        for (auto index : order) sorted.push_back(std::move(components_[index]));
+        components_ = std::move(sorted);
+        return true;
+    }
 
     Component* registration_failed(const std::string& message) {
         registration_error_ = true;
+        last_error_ = message;
         CHWELL_LOG_ERROR(message);
         return nullptr;
     }
@@ -495,6 +534,8 @@ private:
     }
 
     void cleanup_start_failure() {
+        // Cleanup callbacks may themselves fail registration; keep the startup cause.
+        auto startup_error = last_error_;
         if (network_attempted_) {
             if (use_epoll_) epoll_server_->stop();
             else {
@@ -510,6 +551,7 @@ private:
         Shut();
         plugin_manager_.UninstallAll(*this);
         starting_ = false;
+        last_error_ = std::move(startup_error);
     }
 
     /**
@@ -565,6 +607,7 @@ private:
     bool starting_ = false;
     bool network_attempted_ = false;
     bool stopped_after_run_ = false;
+    std::string last_error_;
 
     PluginManager plugin_manager_;
     std::atomic<bool> running_;

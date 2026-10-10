@@ -2,6 +2,8 @@
 
 此工程通过已安装的 ChwellCore 0.1 包构建，不包含框架源码。content 下保留 version=1 的 schema、稳定字段 ID、CSV 和目录，演示角色装备引用、AppHost 组件启动、MemoryStorage/Repository 往返、owner/public 同步及关闭。
 
+ReferenceGame 声明依赖 ReferenceContent。即使 Game 的 priority 更靠前，内容组件仍先 Init；Game 关闭时内容组件仍可用，随后才清理内容。service.conf 的 depends_on 使用配置入口名，代码声明使用运行时名称；详见 [AppHost](../../docs/APP_HOST.md)。此增量未改变 v1 内容 schema。
+
 完整框架和此工程需要 Linux/POSIX、C++17；生成内容需要 Python 3.8+。最低依赖版本见框架选项和 [构建包说明](../../docs/PACKAGING.md)。本例直接使用服务器给定的 owner/spectator 身份，仅在内存中保存，不接入登录或数据库。
 
 先在框架仓库构建、安装：

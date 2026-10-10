@@ -35,6 +35,12 @@ jobs:
         run: cmake --build build-task --config Debug --parallel 4
       - name: Run portable task tests
         run: ctest --test-dir build-task -C Debug --output-on-failure --timeout 30
+      - name: Configure portable component dependency tests
+        run: cmake -S tests/service_order -B build-order
+      - name: Build component dependency tests
+        run: cmake --build build-order --config Debug --parallel 4
+      - name: Run component dependency tests
+        run: ctest --test-dir build-order -C Debug --output-on-failure --timeout 30
 
   build-and-test:
     runs-on: ubuntu-latest
