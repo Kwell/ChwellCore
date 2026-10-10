@@ -65,7 +65,11 @@ void IoService::run() {
 }
 
 void IoService::stop() {
-    stopped_ = true;
+    {
+        // Serialize the predicate change with run() entering its CV wait.
+        std::lock_guard<std::mutex> lock(mutex_);
+        stopped_ = true;
+    }
     cv_.notify_all();
 }
 

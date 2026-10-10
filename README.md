@@ -9,7 +9,7 @@
 
 **English**：[README_EN.md](README_EN.md)
 
-> **平台要求**：完整框架需要 Linux / POSIX（依赖 `epoll`、`sys/socket.h`、`poll` 等）。配置模块支持在 Windows 上独立构建并运行测试，见下方测试说明。
+> **平台要求**：完整框架需要 Linux / POSIX（依赖 `epoll`、`sys/socket.h`、`poll` 等）。配置、发现契约与 EntitySchema 提供 Windows 独立测试入口，见下方测试说明。
 
 ---
 
@@ -51,8 +51,8 @@
 | **灰度** | `TrafficSplitter` 加权版本路由（会话粘滞 + 随机）；`ConfigVersionStore` 多版本配置原子切换 |
 | **GM / 分析** | `GmConsole` 指令注册 + 权限等级 + 审计日志；`GmAdminApi` HTTP/JSON 管理接口；`AnalyticsPipeline` 埋点聚合 / 漏斗 / top 事件；`AnalyticsStore` 落盘快照 |
 | **支付** | `PaymentGateway` 渠道抽象；`MemoryPaymentGateway`；**微信/支付宝适配骨架**（可注入签名与 HTTP） |
-| **代码生成** | `SchemaCodegen` 字段表 → PersistableEntity 骨架 |
-| **Redis** | 自研 RESP/TCP 客户端，连接失败自动回落**内存 Mock**；分布式锁（`SET NX EX` / CAS 删除 / CAS 续租 + RAII） |
+| **代码生成** | `SchemaCodegen` 骨架；可选 [EntitySchema](docs/ENTITY_SCHEMA.md)：稳定字段 ID、类型/约束、ORM、可见性同步、CSV 校验与原子生成 |
+| **Redis** | 自研 RESP/TCP 客户端，默认真实连接、失败显式返回；显式开启内存 Mock；分布式锁（`SET NX EX` / CAS 删除 / CAS 续租 + RAII） |
 | **Benchmark** | 内置 `BenchmarkSuite`：预热 + 多次采样 + CSV/JSON 导出 |
 
 ---
@@ -464,7 +464,7 @@ std::string text = registry.export_metrics();
 
 ### Redis 与分布式锁 (`chwell/redis`)
 
-`RedisClient` 自带 RESP/TCP 实现；连接失败（或 `CHWELL_REDIS_MOCK=1`）时自动使用**内存 Mock**，`is_mock()` 可查询当前模式。
+`RedisClient` 自带 RESP/TCP 实现；连接失败会返回失败。仅通过 `RedisConfig::mock_mode=true` 或 `CHWELL_REDIS_MOCK=1` 显式启用**内存 Mock**，`is_mock()` 可查询当前模式。
 
 ```cpp
 #include "chwell/redis/redis_client.h"
@@ -905,6 +905,8 @@ auto visible = aoi.get_entities_in_view(1);
 | `CHWELL_USE_MYSQL` | `OFF` | MySQL 存储后端 |
 | `CHWELL_USE_MONGODB` | `OFF` | MongoDB 存储后端 |
 | `CHWELL_USE_OPENSSL` | `OFF` | TLS / WebSocket SHA-1 握手 |
+| `CHWELL_USE_CONSUL` | `OFF` | [Consul 发现与跨进程路由](docs/DISCOVERY.md)，需要 libcurl / nlohmann-json |
+| `CHWELL_USE_ENTITY_SCHEMA` | `OFF` | [共享字段模型与生成流水线](docs/ENTITY_SCHEMA.md)，生成需要 Python 3.8+ |
 
 **最小化构建：**
 
@@ -935,6 +937,14 @@ ctest --output-on-failure
 ```
 
 CI（GitHub Actions）在 Linux 上跑三套检查：`build-and-test`、`asan`、`tsan`。
+
+CI 还运行 Windows 独立测试与真实 Consul 多进程闭环。EntitySchema 在上述三套 Linux 检查和 Windows 中覆盖运行时与生成器。独立执行其测试和示例：
+
+```bash
+cmake -S tests/schema -B build-schema
+cmake --build build-schema --config Debug --parallel 4
+ctest --test-dir build-schema -C Debug --output-on-failure
+```
 
 配置模块还提供独立测试工程，支持 Windows / Linux，不依赖网络层或可选存储库。需 CMake 3.14+ 和 C++17 编译器；未安装 GoogleTest 时会自动下载。以下命令从仓库根目录执行，Windows CI 的 `config-windows` 使用相同入口：
 
@@ -1226,7 +1236,7 @@ TcpServer（传统）                EpollTcpServer（高性能）
 - **分布式事务**：TCC 两阶段 + Saga 补偿
 - **插件热加载**（dlopen 安全切换 + mtime 检测）
 - **配置中心能力**：JSON / 环境 profile / 热加载 / 快照回滚
-- Redis RESP 客户端（Mock 回落）+ 分布式锁（SET NX EX / CAS）
+- Redis RESP 客户端（显式 Mock，真实连接失败返回失败）+ 分布式锁（SET NX EX / CAS）
 - AOI（回调锁外派发）+ SLG 地图 / 战斗
 - **游戏系统**：排行榜 / 邮件 / 钱包（TCC 冻结）/ 社交 / 匹配 / 反作弊 / 回放 / 压测机器人规划器
 - **灰度发布**：`TrafficSplitter` 加权路由 + `ConfigVersionStore` 多版本配置

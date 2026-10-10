@@ -172,7 +172,6 @@ void EpollTcpServer::on_new_connection(int client_fd) {
     });
 
     conn->bind_demuxer(demuxer);
-    conn->start();
 
     {
         std::lock_guard<std::mutex> lock(conn_mutex_);
@@ -183,6 +182,11 @@ void EpollTcpServer::on_new_connection(int client_fd) {
                     << ", total=" << connection_count());
 
     if (connection_cb_) connection_cb_(conn);
+
+    // Publish connection/application state before a reactor can deliver data
+    // or disconnect. Service installs its bridge in connection_cb_; reading
+    // first can otherwise drop a fast client's first packet.
+    conn->start();
 
     // 🆕 空闲连接检查
     maybe_cleanup_idle_connections();

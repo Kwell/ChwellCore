@@ -205,6 +205,21 @@ TEST_F(TaskQueueTest, StopAndWait) {
     EXPECT_EQ(1, queue_->completed_count());
 }
 
+TEST(TaskQueueShutdownTest, IdleWorkersCanRepeatedlyStopAndRestart) {
+    task::TaskQueue::Config config;
+    config.worker_threads = 2;
+    task::TaskQueue queue(config);
+    for (int cycle = 0; cycle < 500; ++cycle) {
+        queue.start();
+        // Exercise workers before/inside their wait transition. No queued task
+        // may rescue an idle worker that missed the shutdown notification.
+        std::this_thread::yield();
+        queue.stop();
+    }
+    EXPECT_EQ(queue.pending_count(), 0);
+    EXPECT_EQ(queue.running_count(), 0);
+}
+
 // DelayedTaskQueue Tests
 TEST(DelayedTaskQueueTest, ScheduleDelayed) {
     task::DelayedTaskQueue::Config config;

@@ -1,0 +1,8 @@
+{
+  "name": "std", "table": "edges", "key": 1, "version": 1,
+  "fields": [
+    {"id": 1, "name": "id", "type": "string", "default": "", "stored": true, "visibility": "public"},
+    {"id": 2, "name": "value", "type": "string", "default": "std::hello schema::world \u0000中文", "stored": true, "visibility": "public"},
+    {"id": 3, "name": "count", "type": "int64", "default": -9223372036854775808, "stored": true, "visibility": "public"}
+  ]
+}

@@ -5,6 +5,7 @@ Usage: python3 integration_tests/test_consul_cluster.py build/example_discovery_
 The optional container argument additionally tests registry loss and restart.
 """
 import argparse
+import hashlib
 import json
 import os
 import queue
@@ -93,14 +94,18 @@ def main():
         eventually(lambda: set(probe.ask('refresh')['nodes']) == {one, two}, 'Two independent games registered')
         reached = set()
         keys = {}
-        for key in range(80):
-            result = probe.ask('route', key=str(key), payload='hello')
+        # Short adjacent decimal strings cluster under FNV-1a and can all map
+        # to one healthy node for some process IDs. Spread deterministic keys
+        # across the ring so this verifies reachability, not accidental balance.
+        for sample in range(256):
+            route_key = hashlib.sha256(f'chwell-route-{sample}'.encode()).hexdigest()
+            result = probe.ask('route', key=route_key, payload='hello')
             assert result['ok'], result
             identity, payload = result['response'].split('|', 1)
             assert payload == 'hello', result
             node = identity.split('@', 1)[0]
             reached.add(node)
-            keys[node] = str(key)
+            keys[node] = route_key
             if reached == {one, two}:
                 break
         assert reached == {one, two}, reached

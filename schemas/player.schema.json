@@ -1,0 +1,15 @@
+{
+  "name": "SchemaPlayer",
+  "table": "players",
+  "version": 1,
+  "key": 1,
+  "reserved_ids": [4],
+  "fields": [
+    {"id": 1, "name": "id", "type": "string", "default": "", "stored": true, "visibility": "public", "max_bytes": 64},
+    {"id": 10, "name": "level", "type": "int64", "default": 1, "stored": true, "visibility": "public", "min": 1, "max": 100},
+    {"id": 20, "name": "gold", "type": "int64", "default": 0, "stored": true, "visibility": "owner", "min": 0},
+    {"id": 30, "name": "secret", "type": "string", "default": "", "stored": true, "visibility": "server", "max_bytes": 128},
+    {"id": 40, "name": "speed", "type": "double", "default": 1.0, "stored": false, "visibility": "public", "min": 0.0, "max": 100.0},
+    {"id": 50, "name": "online", "type": "bool", "default": false, "stored": false, "visibility": "public"}
+  ]
+}

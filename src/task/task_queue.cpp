@@ -38,8 +38,14 @@ void TaskQueue::start() {
 }
 
 void TaskQueue::stop() {
-    if (!running_.exchange(false)) {
-        return;
+    {
+        // Change the wait predicate while holding its mutex. An atomic flag
+        // alone permits notify_all between predicate evaluation and cv.wait,
+        // leaving an idle worker asleep forever while stop joins it.
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!running_.exchange(false)) {
+            return;
+        }
     }
     
     cv_.notify_all();
