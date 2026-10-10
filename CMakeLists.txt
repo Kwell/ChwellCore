@@ -274,6 +274,7 @@ if (CHWELL_BUILD_TESTS)
             tests/test_discovery_loadbalance.cpp
             tests/test_discovery_router.cpp
             tests/test_tcp_rpc_transport.cpp
+            tests/test_epoll_accept_order.cpp
             tests/test_circuitbreaker.cpp
             tests/test_ratelimit.cpp
             tests/test_consistent_hash.cpp

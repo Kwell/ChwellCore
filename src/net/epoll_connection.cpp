@@ -39,7 +39,10 @@ void EpollTcpConnection::start() {
                     << " to demuxer epoll_fd=" << demuxer_->native_handle());
 
     auto self = shared_from_this();
-    bool ok = demuxer_->add(fd_, IoEvent::Read | IoEvent::RdHangup,
+    IoEvent initial_events = IoEvent::Read | IoEvent::RdHangup;
+    // Connection initialization may queue a greeting before registration.
+    if (writing_) initial_events = initial_events | IoEvent::Write;
+    bool ok = demuxer_->add(fd_, initial_events,
         [self](int /*fd*/, IoEvent events) {
             if (has_event(events, IoEvent::Error)) {
                 self->handle_error_event();
