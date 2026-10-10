@@ -3,6 +3,7 @@
 #include <string>
 #include <string_view>
 #include <cstdint>
+#include <vector>
 
 #include "chwell/net/tcp_connection.h"
 
@@ -34,6 +35,10 @@ public:
     
     // 组件优先级（用于初始化顺序，数字越小越先初始化）
     virtual int priority() const { return 100; }
+
+    // Hard prerequisites by runtime component name, frozen during startup planning.
+    // Keep this declaration side-effect-free; acquire resources only during Init.
+    virtual std::vector<std::string> dependencies() const { return {}; }
 
     // ========== 7 阶段生命周期 ==========
     
@@ -86,4 +91,3 @@ public:
 
 } // namespace service
 } // namespace chwell
-

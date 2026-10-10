@@ -153,7 +153,7 @@ ARK 是 Apache-2.0，咱们是 MIT。借鉴架构并独立实现可以保持咱�
 
 旧网络模式停机现在会等待 I/O 工作线程退出，再清理和移除组件。新增回归覆盖连接拒绝、认证/选库失败、断连、生命周期回滚、插件归属、非法配置与工厂失败。使用与迁移契约见 [APP_HOST.md](APP_HOST.md)。
 
-验证状态：PR #58 已合并，Windows、Linux、ASan/UBSan 与 TSan CI 通过。依赖图、接口注册表、回调/定时器注销令牌与安全动态插件替换仍未实现；此阶段的所有权仅覆盖组件。
+验证状态：PR #58 已合并，Windows、Linux、ASan/UBSan 与 TSan CI 通过。后续依赖图增量见第 13 节；接口注册表、回调/定时器注销令牌与安全动态插件替换仍未实现，此阶段的所有权仅覆盖组件。
 
 ## 10. 第二阶段实现进展
 
@@ -170,3 +170,11 @@ PR #60 的 Linux、Windows、ASan/UBSan、TSan 和真实 Consul CI 已通过，�
 新增独立参考工程 v1，通过安装后的 `find_package(ChwellCore)` 消费 namespaced 构建目标，联通 AppHost、角色/装备内容、ORM 往返、权限同步、TCP 回显与停止。CMake 包版本 0.1.0，安装生成工具、文档、参考工程和许可证，使用相对安装路径并在消费者机器重新发现外部依赖；未承诺跨版本 ABI。新增 [贡献说明](../CONTRIBUTING.md) 和 [包契约](PACKAGING.md)。
 
 Linux CI 新增最小包、全可选依赖包与 FetchContent YAML 包的安装/移动/独立构建验证，并覆盖真实 TCP 关闭、引用错误保留产物和目录增删表的依赖更新。完整框架仍需 Linux/POSIX；没有因此新增 Windows 网络支持或生产部署能力。
+
+PR #61 的八项 CI 已通过，尚待合并，包括三种安装包场景。
+
+## 13. 组件依赖顺序增量
+
+补齐运行基础中的显式依赖图：组件可按运行时名称声明 prerequisites，AppHost 的 depends_on 按 manifest 入口名解析并映射工厂返回的运行时名称。初始化前统一校验缺失、空目标、自依赖与循环依赖；依赖优先，ready 节点用 priority/原稳定顺序决定先后。循环报告实际路径，不把被阻塞的后继误报为环。规划器独立于平台 I/O，迭代处理深层依赖。
+
+Service 在插件 Install 完成后规划全部组件；正常关闭的 PreShut/Flush/Shut 逆序，失败初始化沿实际记录回滚。AppHost 错误配置不替换旧 host，Service/AppHost 暴露启动错误。安装参考工程增加 ReferenceContent -> ReferenceGame 启动与反向关闭验证。此处只管理组件生命周期，不改变插件安装/卸载顺序，也不实现接口注入、回调注销或安全热替换；完整契约见 [APP_HOST.md](APP_HOST.md)。

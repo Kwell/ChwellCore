@@ -25,6 +25,24 @@ bool config_boolean(const core::Config& config, const std::string& key, bool fal
     if (value == "false" || value == "0" || value == "no" || value == "off") return false;
     throw std::invalid_argument("Invalid boolean: " + key);
 }
+
+std::vector<std::string> config_dependencies(const core::Config& config, const std::string& key) {
+    const auto text = config.get_string(key, "");
+    std::vector<std::string> result;
+    if (text.find_first_not_of(" \t\r\n") == std::string::npos) return result;
+    std::size_t start = 0;
+    while (true) {
+        const auto end = text.find(',', start);
+        const auto token = text.substr(start, end == std::string::npos ? end : end - start);
+        const auto first = token.find_first_not_of(" \t\r\n");
+        if (first == std::string::npos) throw std::invalid_argument("Empty dependency in " + key);
+        const auto last = token.find_last_not_of(" \t\r\n");
+        result.push_back(token.substr(first, last - first + 1));
+        if (end == std::string::npos) break;
+        start = end + 1;
+    }
+    return result;
+}
 } // namespace
 
 bool AppHost::fail(const std::string& error) {
@@ -58,6 +76,7 @@ bool AppHost::configure(const core::Config& config) {
             const auto prefix = "component." + component.name + ".";
             component.enabled = config_boolean(config, prefix + "enabled", true);
             component.priority = config_integer(config, prefix + "priority", 100);
+            component.dependencies = config_dependencies(config, prefix + "depends_on");
         }
         return configure(manifest);
     } catch (const std::exception& error) {
@@ -86,10 +105,26 @@ bool AppHost::configure(const AppManifest& manifest) {
         return a.priority != b.priority ? a.priority < b.priority : a.name < b.name;
     });
     try {
-        std::vector<std::pair<std::unique_ptr<Component>, int>> pending;
+        configs.erase(std::remove_if(configs.begin(), configs.end(), [](const auto& config) {
+            return !config.enabled;
+        }), configs.end());
+        std::vector<ComponentSpec> specs;
+        for (const auto& config : configs) specs.push_back({config.name, config.priority, config.dependencies});
+        std::vector<std::size_t> manifest_order;
+        std::string error;
+        if (!resolve_component_order(specs, manifest_order, &error)) return fail(error);
+
+        struct PendingComponent {
+            std::unique_ptr<Component> component;
+            int priority;
+            std::vector<std::string> dependencies;
+            std::vector<std::string> manifest_dependencies;
+        };
+        std::vector<PendingComponent> pending;
+        std::unordered_map<std::string, std::string> entry_to_runtime;
         std::unordered_set<std::string> runtime_names;
-        for (const auto& config : configs) {
-            if (!config.enabled) continue;
+        for (auto index : manifest_order) {
+            const auto& config = configs[index];
             auto component = factories_.at(config.name)(config);
             if (!component || component->name().empty()) {
                 return fail("Factory returned a null or unnamed component: " + config.name);
@@ -97,8 +132,20 @@ bool AppHost::configure(const AppManifest& manifest) {
             if (!runtime_names.insert(component->name()).second) {
                 return fail("Duplicate runtime component name: " + component->name());
             }
-            pending.emplace_back(std::move(component), config.priority);
+            entry_to_runtime.emplace(config.name, component->name());
+            auto dependencies = component->dependencies();
+            pending.push_back({std::move(component), config.priority, std::move(dependencies), config.dependencies});
         }
+        specs.clear();
+        for (auto& item : pending) {
+            for (auto& entry : item.manifest_dependencies) {
+                entry = entry_to_runtime.at(entry);
+                item.dependencies.push_back(entry);
+            }
+            specs.push_back({item.component->name(), item.priority, item.dependencies});
+        }
+        std::vector<std::size_t> runtime_order;
+        if (!resolve_component_order(specs, runtime_order, &error)) return fail(error);
         // Construct the serving host only after every manifest entry is validated.
         auto candidate = std::make_unique<Service>(static_cast<unsigned short>(manifest.listen_port),
             static_cast<std::size_t>(manifest.worker_threads), manifest.use_epoll,
@@ -106,8 +153,9 @@ bool AppHost::configure(const AppManifest& manifest) {
         const bool listener_ready = manifest.use_epoll
             ? candidate->epoll_server()->is_valid() : candidate->tcp_server()->is_valid();
         if (!listener_ready) return fail("Network listener creation failed");
-        for (auto& component : pending) {
-            if (!candidate->add_component(std::move(component.first), component.second)) {
+        for (auto index : runtime_order) {
+            auto& item = pending[index];
+            if (!candidate->add_component(std::move(item.component), item.priority, std::move(item.manifest_dependencies))) {
                 return fail("Component registration failed");
             }
         }
@@ -123,7 +171,7 @@ bool AppHost::configure(const AppManifest& manifest) {
 
 bool AppHost::start() {
     if (!service_) return fail("Configure the application before starting");
-    if (!service_->start_checked()) return fail("Service startup failed; see lifecycle log");
+    if (!service_->start_checked()) return fail(service_->last_error());
     last_error_.clear();
     return true;
 }

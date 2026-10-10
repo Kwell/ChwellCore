@@ -34,7 +34,8 @@ def verify_server(executable, configuration):
         reserve.bind(('127.0.0.1', 0))
         port = reserve.getsockname()[1]
     configuration.write_text(f'listen_port={port}\nworker_threads=2\n'
-                             'component.ReferenceGame.enabled=true\n', encoding='utf-8')
+                             'component.ReferenceGame.enabled=true\n'
+                             'component.ReferenceContent.enabled=true\n', encoding='utf-8')
     process = subprocess.Popen([str(executable), '--serve', str(configuration)],
                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     try:

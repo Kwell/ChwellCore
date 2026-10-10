@@ -13,6 +13,8 @@
 
 **独立应用入口**：[参考工程 v1](examples/reference_service/README.md)、[CMake 安装包与导出目标](docs/PACKAGING.md)、[贡献说明](CONTRIBUTING.md)。支持构建期 CSV 表间引用校验，安装后可通过 `find_package(ChwellCore 0.1 CONFIG REQUIRED)` 使用 `Chwell::core` / `Chwell::schema` 等目标。
 
+[AppHost](docs/APP_HOST.md) 支持 `depends_on` 与代码声明的组件依赖：启动前校验缺失/循环依赖，按依赖顺序初始化和逆序关闭。
+
 ---
 
 ## 目录

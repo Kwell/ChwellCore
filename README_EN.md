@@ -11,6 +11,8 @@ Modular, high-performance C++17 game server framework for SLG / MMO titles.
 
 **Standalone application**: [Reference service v1](examples/reference_service/README.md), [installable CMake package](docs/PACKAGING.md), and [contributing](CONTRIBUTING.md). CSV content supports build-time cross-table ID validation. Installed consumers use `find_package(ChwellCore 0.1 CONFIG REQUIRED)` and targets such as `Chwell::core` / `Chwell::schema`.
 
+[AppHost](docs/APP_HOST.md) supports manifest `depends_on` and component dependency declarations: missing prerequisites/cycles fail before Init, lifecycle phases follow dependency order, and shutdown reverses it.
+
 **中文文档**：[README.md](README.md)
 
 ---

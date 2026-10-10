@@ -18,6 +18,8 @@ struct ComponentConfig {
     bool enabled = true;    // 是否启用
     int priority = 100;     // 优先级（数字越小越先初始化）
     std::unordered_map<std::string, std::string> params; // 组件参数
+    // AppHost resolves these manifest entry names to runtime component names.
+    std::vector<std::string> dependencies;
 };
 
 /**

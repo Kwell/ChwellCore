@@ -23,6 +23,8 @@ ctest --test-dir build-schema -C Debug --output-on-failure
 
 涉及导出目标、依赖、安装布局或参考工程时，按 [PACKAGING.md](docs/PACKAGING.md) 构建安装包，再运行 `python3 integration_tests/test_installed_package.py build-package`。该测试会在临时目录安装和移动包，验证独立链接、真实 TCP 回显、停止与生成依赖。
 
+组件依赖改动可在任一平台用 `cmake -S tests/service_order -B build-order` 构建规划器回归；真实 Service/AppHost 的生命周期与插件回滚在 Linux 核心测试验证。无依赖声明时保留稳定 priority 顺序；新增前置依赖需覆盖初始化失败、重试与逆序关闭行为。
+
 ## 兼容性与评审
 
 发布过的 schema 保留显式字段 ID；删除后保留编号，使用 `--previous` 检查演进。不要用表格顺序或类成员顺序充当长期协议。改变存储、可见性、约束或引用策略时说明迁移方案。参考工程 schema version=1 作为当前样例版本，CMake 包的 0.1.0 独立管理；两者不能替代客户端协议版本。
