@@ -29,6 +29,12 @@ jobs:
         run: cmake --build build-schema --config Debug --parallel 4
       - name: Run schema runtime, generator and example
         run: ctest --test-dir build-schema -C Debug --output-on-failure --timeout 120
+      - name: Configure portable task shutdown tests
+        run: cmake -S tests/task -B build-task
+      - name: Build portable task tests
+        run: cmake --build build-task --config Debug --parallel 4
+      - name: Run portable task tests
+        run: ctest --test-dir build-task -C Debug --output-on-failure --timeout 30
 
   build-and-test:
     runs-on: ubuntu-latest
