@@ -1,0 +1,2 @@
+# Optional dependency: CSV and C# generation do not require this package.
+openpyxl==3.1.5

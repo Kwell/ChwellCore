@@ -1,5 +1,6 @@
 #include "chwell/storage/storage_factory.h"
 #include "chwell/net/tls.h"
+#include "excel_item.h"
 #ifdef PACKAGE_HAS_MONGODB
 #include "chwell/storage/mongodb_storage.h"
 #endif
@@ -11,6 +12,8 @@
 #endif
 
 int main() {
+    const auto content = chwell::generated::ReferenceItem::content();
+    if (content.size() != 1 || content[0].id() != "excel" || content[0].get_power() != 12) return 1;
     // StorageFactory pulls in MySQL/Mongo implementations, without connecting to a DB.
     auto storage = chwell::storage::StorageFactory::create("memory");
     if (!storage || !storage->put("probe", "value").ok) return 1;

@@ -12,6 +12,9 @@ import socket
 import subprocess
 import tempfile
 import time
+import sys
+
+import openpyxl
 
 
 def run(command, success=True):
@@ -85,11 +88,21 @@ def main():
                 raise RuntimeError(f'Non-relocatable package: {path}')
         source = root / 'independent source'
         shutil.copytree(relocated / 'share/ChwellCore/examples/reference_service', source)
+        workbook = openpyxl.Workbook()
+        workbook.active.title = 'Items'
+        workbook.active.append(['id', 'power'])
+        workbook.active.append(['excel', 12])
+        workbook.save(source / 'content/items.xlsx')
+        workbook.close()
         shutil.copyfile(pathlib.Path(__file__).with_name('package_probe.cpp'), source / 'package_probe.cpp')
         with (source / 'CMakeLists.txt').open('a', encoding='utf-8') as cmake:
             cmake.write('''
 add_executable(package_probe package_probe.cpp)
-target_link_libraries(package_probe PRIVATE Chwell::core)
+chwell_generate_entity_schema(excel_content content/item.schema.json generated/excel_item.h
+    XLSX content/items.xlsx SHEET Items CSHARP_OUTPUT generated/ReferenceItem.cs)
+add_dependencies(package_probe excel_content)
+target_include_directories(package_probe PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+target_link_libraries(package_probe PRIVATE Chwell::core Chwell::schema)
 if(TARGET Chwell::consul)
     target_link_libraries(package_probe PRIVATE Chwell::consul)
     target_compile_definitions(package_probe PRIVATE PACKAGE_HAS_CONSUL)
@@ -108,6 +121,27 @@ endif()
              '-DCMAKE_FIND_USE_SYSTEM_PACKAGE_REGISTRY=OFF'])
         compile_command = [args.cmake, '--build', consumer, '--config', args.config, '--parallel', '2']
         run(compile_command)
+        # Deleting a secondary output must regenerate the C# contract too.
+        client_contract = consumer / 'generated/ReferenceItem.cs'
+        if not client_contract.exists(): raise RuntimeError('Missing C# CMake output')
+        client_contract.unlink()
+        run(compile_command)
+        if not client_contract.exists(): raise RuntimeError('C# output was not regenerated')
+        # XLSX is a real build dependency, and invalid cells preserve both outputs.
+        excel_header = consumer / 'generated/excel_item.h'
+        previous_outputs = {path: path.read_bytes() for path in (excel_header, client_contract)}
+        workbook = openpyxl.load_workbook(source / 'content/items.xlsx')
+        workbook.active['B2'] = '=1+1'
+        workbook.save(source / 'content/items.xlsx')
+        failure = run(compile_command, success=False)
+        if 'Items!B2' not in failure or 'formula' not in failure: raise RuntimeError(failure)
+        if any(path.read_bytes() != value for path, value in previous_outputs.items()):
+            raise RuntimeError('Excel validation failure replaced output')
+        workbook.active['B2'] = 12
+        workbook.save(source / 'content/items.xlsx'); workbook.close()
+        run(compile_command)
+        run([sys.executable, pathlib.Path(__file__).resolve().parents[1] / 'tests/test_content_clients.py',
+             '--tool', relocated / 'share/ChwellCore/tools/entity_schema.py', '--require-dotnet'])
         # The full package must also consume the multi-service reference without
         # access to this repository's build targets or source include paths.
         config_text = next(relocated.rglob('ChwellCoreConfig.cmake')).read_text()

@@ -55,7 +55,7 @@
 | **灰度** | `TrafficSplitter` 加权版本路由（会话粘滞 + 随机）；`ConfigVersionStore` 多版本配置原子切换 |
 | **GM / 分析** | `GmConsole` 指令注册 + 权限等级 + 审计日志；`GmAdminApi` HTTP/JSON 管理接口；`AnalyticsPipeline` 埋点聚合 / 漏斗 / top 事件；`AnalyticsStore` 落盘快照 |
 | **支付** | `PaymentGateway` 渠道抽象；`MemoryPaymentGateway`；**微信/支付宝适配骨架**（可注入签名与 HTTP） |
-| **代码生成** | `SchemaCodegen` 骨架；可选 [EntitySchema](docs/ENTITY_SCHEMA.md)：稳定字段 ID、类型/约束、ORM、可见性同步、CSV 校验与原子生成 |
+| **代码生成** | `SchemaCodegen` 骨架；可选 [EntitySchema](docs/ENTITY_SCHEMA.md)：稳定字段 ID、类型/约束、ORM、可见性同步、CSV/Excel 内容与引用校验、C++/C# 契约生成 |
 | **Redis** | 自研 RESP/TCP 客户端，默认真实连接、失败显式返回；显式开启内存 Mock；分布式锁（`SET NX EX` / CAS 删除 / CAS 续租 + RAII） |
 | **Benchmark** | 内置 `BenchmarkSuite`：预热 + 多次采样 + CSV/JSON 导出 |
 

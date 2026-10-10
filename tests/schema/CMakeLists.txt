@@ -18,7 +18,7 @@ if(NOT GTest_FOUND)
 endif()
 include(../../cmake/ChwellEntitySchema.cmake)
 chwell_generate_entity_schema(player_schema ../../schemas/player.schema.json generated/player_schema.h
-    CSV ../../schemas/player_defaults.csv)
+    CSV ../../schemas/player_defaults.csv CSHARP_OUTPUT generated/SchemaPlayer.cs)
 chwell_generate_entity_schema(edge_schema edge.schema.json generated/edge_schema.h)
 chwell_generate_entity_schema(reference_player ../../examples/reference_service/content/player.schema.json
     generated/reference_player.h CATALOG ../../examples/reference_service/content/catalog.json)
