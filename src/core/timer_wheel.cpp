@@ -16,6 +16,7 @@ TimerWheel::TimerWheel(int tick_ms, int wheel_size, int layers)
 
 TimerWheel::~TimerWheel() {
     stop();
+    registration_source_->detach();
 }
 
 void TimerWheel::start() {
@@ -92,6 +93,31 @@ TimerHandle TimerWheel::add_repeat_timer(int interval_ms, TimerCallback callback
     }
 
     return TimerHandle(task->id, layer, slot);
+}
+
+Registration TimerWheel::add_timer_scoped(int delay_ms, TimerCallback callback) {
+    return add_scoped(delay_ms, std::move(callback), false);
+}
+
+Registration TimerWheel::add_repeat_timer_scoped(int interval_ms, TimerCallback callback) {
+    return add_scoped(interval_ms, std::move(callback), true);
+}
+
+Registration TimerWheel::add_scoped(int delay_ms, TimerCallback callback, bool repeat) {
+    if (delay_ms <= 0 || !callback) return {};
+    auto slot = std::make_shared<detail::CallbackSlot<>>(std::move(callback));
+    auto handle = repeat ? add_repeat_timer(delay_ms, slot->wrapper(slot))
+                         : add_timer(delay_ms, slot->wrapper(slot));
+    std::weak_ptr<detail::RegistrationSource<TimerWheel>> source = registration_source_;
+    try {
+        return Registration([slot, source, handle]() mutable {
+            slot->cancel();
+            if (auto owner = source.lock()) {
+                std::lock_guard<std::mutex> lock(owner->mutex);
+                if (owner->source) owner->source->cancel_timer(handle);
+            }
+        });
+    } catch (...) { slot->cancel(); cancel_timer(handle); throw; }
 }
 
 void TimerWheel::cancel_timer(TimerHandle& handle) {
@@ -261,8 +287,9 @@ void TimerWheel::tick() {
     // 在锁外执行回调
     for (auto& task : due_tasks) {
         // 弹出后仍可能被 cancel：跳过回调
-        if (task->cancelled) {
-            continue;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (task->cancelled) continue;
         }
 
         if (task->callback) {
@@ -276,24 +303,16 @@ void TimerWheel::tick() {
         }
 
         // 重复定时器重新添加
+        std::lock_guard<std::mutex> lock(mutex_);
         if (task->interval > 0 && !task->cancelled) {
             // 重新计算 expire_time，基于当前时间而非上次到期时间
             // 这样即使回调执行耗时较长，也不会导致重复定时器堆积
             task->expire_time = current_time_ms() + task->interval;
-            auto new_task = std::make_shared<TimerTask>(*task);
-            new_task->in_wheel = false;
-            new_task->list_iter = {};
-            new_task->layer = -1;
-            new_task->slot = -1;
-            {
-                std::lock_guard<std::mutex> lock2(mutex_);
-                // 回调期间可能已 cancel：不得复活已删除的 id
-                if (task->cancelled) continue;
-                auto map_it = task_map_.find(task->id);
-                if (map_it == task_map_.end()) continue;
-                add_task_to_wheel(new_task);
-                task_map_[task->id] = new_task;
-            }
+            // Cancellation and re-arm share the lock: a removed id cannot revive.
+            if (task_map_.find(task->id) == task_map_.end()) continue;
+            add_task_to_wheel(task);
+        } else {
+            task_map_.erase(task->id);
         }
     }
 }

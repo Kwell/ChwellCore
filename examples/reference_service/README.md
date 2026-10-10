@@ -28,6 +28,8 @@ ctest --test-dir build-reference --output-on-failure
 
 smoke 使用系统分配端口，只执行一轮更新后退出；验证成功会输出 `PASS: content, ORM, owner/public sync and shutdown`。把 sword 改成不存在的装备 ID 会在生成时失败。修改任一内容输入会自动重新生成，不需要手动清理 build。
 
+ReferenceContent 显式注册 ContentReader 接口，ReferenceGame 通过接口读取内容。Game 在 Init 中订阅更新事件并交给 Service 管理；smoke 同时检查 PreShut 前订阅已经注销、内容接口在消费者 Shut 期间仍可使用。接口和注册令牌契约见 [REGISTRATIONS.md](../../docs/REGISTRATIONS.md)。
+
 持续运行：
 
 ```bash

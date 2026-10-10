@@ -20,6 +20,8 @@
 #include "chwell/service/component.h"
 #include "chwell/service/component_order.h"
 #include "chwell/service/plugin.h"
+#include "chwell/core/registration.h"
+#include "chwell/service/interface_registry.h"
 
 namespace chwell {
 namespace service {
@@ -132,6 +134,7 @@ public:
     ~Service() {
         registration_blocked_ = true;
         stop();
+        release_all_registrations();
         std::vector<Component*> remaining;
         for (auto it = components_.rbegin(); it != components_.rend(); ++it) {
             if (component_records_.at(it->get()).needs_shutdown) remaining.push_back(it->get());
@@ -140,6 +143,8 @@ public:
             cleanup_call(component, true);
             cleanup_call(component, false);
         }
+        for (const auto& component : components_) interfaces_.remove_owner(component.get());
+        components_.clear();
     }
 
     // ========== 组件管理 ==========
@@ -174,12 +179,17 @@ public:
         components_.push_back(std::move(comp));
 
         // 兼容旧接口
+        const auto failures_before_register = registration_failures_;
         try {
             raw->on_register(*this);
         } catch (...) {
             registration_failed("Component on_register threw: " + raw->name());
             remove_component(raw);
             throw;
+        }
+        if (registration_failures_ != failures_before_register) {
+            remove_component(raw);
+            return nullptr;
         }
 
         CHWELL_LOG_INFO("Component registered: " + raw->name());
@@ -212,6 +222,45 @@ public:
         return 0;
     }
 
+    // Explicit interface binding to a component owned by this Service. Bindings
+    // remain available during shutdown and are erased before component destruction.
+    template <typename Interface>
+    bool register_interface(Component& owner) {
+        static_assert(std::is_polymorphic<Interface>::value, "Interface must be polymorphic");
+        if (registration_blocked_ || running_ || !initialized_components_.empty() ||
+            !component_records_.count(&owner)) {
+            registration_failed("Interface registration requires a registered inactive component");
+            return false;
+        }
+        auto* implementation = dynamic_cast<Interface*>(&owner);
+        if (!interfaces_.add<Interface>(implementation, &owner)) {
+            registration_failed("Interface registration rejected: incompatible or duplicate interface");
+            return false;
+        }
+        return true;
+    }
+
+    template <typename Interface>
+    Interface* get_interface() const { return interfaces_.get<Interface>(); }
+
+    // Component callbacks can be acquired in on_register/Init/PreUpdate. Plugin
+    // Install may use the owner-free overload for callbacks belonging to the plugin.
+    bool track_registration(Component& owner, core::Registration registration) {
+        if (!component_records_.count(&owner)) {
+            registration_failed("Callback registration rejected: component belongs to another service");
+            return false;
+        }
+        return track_registration_for(&owner, std::move(registration));
+    }
+
+    bool track_registration(core::Registration registration) {
+        if (!registration_owner_) {
+            registration_failed("Callback registration requires a component owner or plugin Install");
+            return false;
+        }
+        return track_registration_for(registration_owner_, std::move(registration));
+    }
+
     // ========== 7 阶段生命周期管理 ==========
 
     bool Init() {
@@ -220,6 +269,7 @@ public:
 
         last_error_.clear();
         if (!plan_component_order()) return false;
+        callback_registration_blocked_ = false;
 
         for (auto& comp : components_) {
             // Include failed Init: it may have allocated resources before returning false.
@@ -275,6 +325,7 @@ public:
             return startup_failed("Service cannot start in its current lifecycle state");
         last_error_.clear();
         starting_ = true;
+        callback_registration_blocked_ = false;
         try {
             if (!plugin_manager_.InstallAll(*this)) {
                 if (last_error_.empty()) startup_failed("Plugin installation failed");
@@ -328,7 +379,11 @@ public:
     void stop() {
         if (!running_.exchange(false)) {
             if (!initialized_components_.empty()) cleanup_start_failure();
-            else plugin_manager_.UninstallAll(*this);
+            else {
+                callback_registration_blocked_ = true;
+                release_all_registrations();
+                plugin_manager_.UninstallAll(*this);
+            }
             return;
         }
         stopped_after_run_ = true;
@@ -406,6 +461,8 @@ public:
 
     void PreShut() {
         CHWELL_LOG_INFO("Service PreShut: notifying components...");
+        callback_registration_blocked_ = true;
+        release_all_registrations();
         for (auto it = initialized_components_.rbegin(); it != initialized_components_.rend(); ++it) {
             cleanup_call(*it, true);
         }
@@ -413,6 +470,8 @@ public:
 
     void Shut() {
         CHWELL_LOG_INFO("Service Shut: releasing resources...");
+        callback_registration_blocked_ = true;
+        release_all_registrations();
         for (auto it = initialized_components_.rbegin(); it != initialized_components_.rend(); ++it) {
             cleanup_call(*it, false);
             component_records_.at(*it).needs_shutdown = false;
@@ -453,6 +512,31 @@ private:
         std::vector<std::string> dependencies;
     };
 
+    bool track_registration_for(const void* owner, core::Registration registration) {
+        if (!registration || registration_blocked_ || callback_registration_blocked_) {
+            registration_failed("Callback registration rejected: invalid token or service shutting down");
+            return false;
+        }
+        for (auto& group : registration_groups_) {
+            if (group.first == owner) return group.second->add(std::move(registration));
+        }
+        auto group = std::make_unique<core::RegistrationGroup>();
+        group->add(std::move(registration));
+        registration_groups_.emplace_back(owner, std::move(group));
+        return true;
+    }
+
+    void release_registrations(const void* owner) noexcept {
+        for (auto& group : registration_groups_) {
+            if (group.first == owner) group.second->clear();
+        }
+    }
+
+    void release_all_registrations() noexcept {
+        for (auto it = registration_groups_.rbegin(); it != registration_groups_.rend(); ++it)
+            it->second->clear();
+    }
+
     bool startup_failed(const std::string& message) {
         last_error_ = message;
         CHWELL_LOG_ERROR(message);
@@ -487,6 +571,7 @@ private:
     }
 
     Component* registration_failed(const std::string& message) {
+        ++registration_failures_;
         registration_error_ = true;
         last_error_ = message;
         CHWELL_LOG_ERROR(message);
@@ -503,15 +588,22 @@ private:
     }
 
     void remove_component(Component* component) {
+        const bool was_blocked = callback_registration_blocked_;
+        callback_registration_blocked_ = true;
+        release_registrations(component);
         auto record = component_records_.find(component);
         if (record != component_records_.end() && record->second.needs_shutdown) {
             cleanup_call(component, true);
             cleanup_call(component, false);
         }
         component_records_.erase(component);
+        interfaces_.remove_owner(component);
+        registration_groups_.erase(std::remove_if(registration_groups_.begin(), registration_groups_.end(),
+            [component](const auto& group) { return group.first == component; }), registration_groups_.end());
         components_.erase(std::remove_if(components_.begin(), components_.end(),
             [component](const std::unique_ptr<Component>& comp) { return comp.get() == component; }),
             components_.end());
+        callback_registration_blocked_ = was_blocked;
     }
 
     void remove_owned_components(const IPlugin* owner) {
@@ -520,9 +612,16 @@ private:
             if (component_records_.at(it->get()).owner == owner) owned.push_back(it->get());
         }
         for (auto* component : owned) remove_component(component);
+        registration_groups_.erase(std::remove_if(registration_groups_.begin(), registration_groups_.end(),
+            [owner](const auto& group) { return group.first == owner; }), registration_groups_.end());
     }
 
     void shutdown_owned_components(const IPlugin* owner) {
+        release_registrations(owner);
+        // Quiesce every owned callback before the first component releases resources.
+        for (auto& component : components_) {
+            if (component_records_.at(component.get()).owner == owner) release_registrations(component.get());
+        }
         for (auto it = components_.rbegin(); it != components_.rend(); ++it) {
             auto& record = component_records_.at(it->get());
             if (record.owner == owner && record.needs_shutdown) {
@@ -603,11 +702,16 @@ private:
     std::vector<Component*> initialized_components_;
     const IPlugin* registration_owner_ = nullptr;
     bool registration_error_ = false;
+    std::size_t registration_failures_ = 0;
     bool registration_blocked_ = false;
+    bool callback_registration_blocked_ = false;
     bool starting_ = false;
     bool network_attempted_ = false;
     bool stopped_after_run_ = false;
     std::string last_error_;
+
+    InterfaceRegistry interfaces_;
+    std::vector<std::pair<const void*, std::unique_ptr<core::RegistrationGroup>>> registration_groups_;
 
     PluginManager plugin_manager_;
     std::atomic<bool> running_;

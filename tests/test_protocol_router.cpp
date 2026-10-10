@@ -4,6 +4,8 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include <chrono>
+#include <future>
 
 #include "chwell/net/posix_io.h"
 #include "chwell/net/tcp_connection.h"
@@ -30,6 +32,85 @@ std::string_view as_view(const std::vector<char>& v) {
 }
 
 }  // namespace
+
+TEST(ScopedProtocolRouterTest, RejectsCollisionsAndAllowsReuseAfterCancellation) {
+    service::ProtocolRouterComponent router;
+    auto conn = make_dummy_conn();
+    auto frame = make_frame(0x1234, "scoped");
+    int calls = 0;
+    auto token = router.register_handler_scoped(0x1234, [&](const auto&, const auto&) { ++calls; });
+    ASSERT_TRUE(token);
+    EXPECT_FALSE(router.register_handler_scoped(0x1234, [](const auto&, const auto&) {}));
+    EXPECT_FALSE(router.register_handler_scoped(0x4321, {}));
+    router.on_message(conn, as_view(frame));
+    EXPECT_EQ(calls, 1);
+    token.reset();
+    router.on_message(conn, as_view(frame));
+    EXPECT_EQ(calls, 1);
+    auto next = router.register_handler_scoped(0x1234, [&](const auto&, const auto&) { ++calls; });
+    ASSERT_TRUE(next);
+    router.on_message(conn, as_view(frame));
+    EXPECT_EQ(calls, 2);
+}
+
+TEST(ScopedProtocolRouterTest, CancellingOldTokenDoesNotRemoveLegacyReplacement) {
+    service::ProtocolRouterComponent router;
+    int calls = 0;
+    auto token = router.register_handler_scoped(7, [&](const auto&, const auto&) { calls += 100; });
+    router.register_handler(7, [&](const auto&, const auto&) { ++calls; });
+    token.reset();
+    auto frame = make_frame(7, "replacement");
+    router.on_message(make_dummy_conn(), as_view(frame));
+    EXPECT_EQ(calls, 1);
+}
+
+TEST(ScopedProtocolRouterTest, SelfCancellationSuppressesSecondMessageInSameFeed) {
+    service::ProtocolRouterComponent router;
+    int calls = 0;
+    core::Registration token;
+    token = router.register_handler_scoped(8, [&](const auto&, const auto&) { ++calls; token.reset(); });
+    auto frame = make_frame(8, "self");
+    auto combined = frame;
+    combined.insert(combined.end(), frame.begin(), frame.end());
+    router.on_message(make_dummy_conn(), as_view(combined));
+    EXPECT_EQ(calls, 1);
+    EXPECT_FALSE(token);
+}
+
+TEST(ScopedProtocolRouterTest, TokenOutlivesRouterAndReleasesCaptures) {
+    core::Registration token;
+    auto capture = std::make_shared<int>(42);
+    std::weak_ptr<int> weak = capture;
+    {
+        service::ProtocolRouterComponent router;
+        token = router.register_handler_scoped(9, [capture](const auto&, const auto&) {});
+    }
+    capture.reset();
+    EXPECT_FALSE(weak.expired());
+    token.reset();
+    EXPECT_TRUE(weak.expired());
+}
+
+TEST(ScopedProtocolRouterTest, CancellationWaitsForExecutingHandler) {
+    using namespace std::chrono_literals;
+    service::ProtocolRouterComponent router;
+    auto conn = make_dummy_conn();
+    auto frame = make_frame(10, "in-flight");
+    std::promise<void> entered, release, cancelling;
+    auto released = release.get_future();
+    auto token = router.register_handler_scoped(10, [&](const auto&, const auto&) {
+        entered.set_value();
+        released.wait_for(3s);
+    });
+    auto dispatch = std::async(std::launch::async, [&] { router.on_message(conn, as_view(frame)); });
+    EXPECT_EQ(entered.get_future().wait_for(2s), std::future_status::ready);
+    auto reset = std::async(std::launch::async, [&] { cancelling.set_value(); token.reset(); });
+    cancelling.get_future().wait();
+    EXPECT_EQ(reset.wait_for(30ms), std::future_status::timeout);
+    release.set_value();
+    reset.get();
+    dispatch.get();
+}
 
 // 1. 注册 handler 后，完整帧被正确路由并调用
 TEST(ProtocolRouterTest, RoutesToRegisteredHandler) {
@@ -136,4 +217,3 @@ TEST(ProtocolRouterTest, DisconnectCleansParserForConnection) {
     router.on_message(conn, as_view(tail_rest));
     EXPECT_EQ(call_count, 0);
 }
-

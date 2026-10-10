@@ -90,7 +90,7 @@ bool FrameSyncComponent::PreUpdate() {
     // 🆕 启动帧超时检测定时器
     // 每帧间隔调用一次，检查所有房间是否有超时帧
     int tick_ms = 1000 / frame_rate_;
-    frame_timer_handle_ = core::TimerManager::instance().add_repeat_timer(tick_ms,
+    frame_timer_registration_ = core::TimerManager::instance().add_repeat_timer_scoped(tick_ms,
         [this]() {
             std::vector<std::pair<std::string, FrameState>> to_broadcast;
             {
@@ -110,7 +110,7 @@ bool FrameSyncComponent::PreUpdate() {
             }
         });
 
-    if (frame_timer_handle_.valid()) {
+    if (frame_timer_registration_) {
         CHWELL_LOG_INFO("FrameSyncComponent: frame timeout timer started (interval="
                          << tick_ms << "ms)");
     }
@@ -118,8 +118,8 @@ bool FrameSyncComponent::PreUpdate() {
 }
 
 bool FrameSyncComponent::Shut() {
-    if (frame_timer_handle_.valid()) {
-        core::TimerManager::instance().cancel_timer(frame_timer_handle_);
+    if (frame_timer_registration_) {
+        frame_timer_registration_.reset();
         CHWELL_LOG_INFO("FrameSyncComponent: frame timeout timer cancelled");
     }
     return true;

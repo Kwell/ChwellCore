@@ -373,7 +373,7 @@ private:
     uint32_t frame_rate_;
 
     // 🆕 帧超时检测定时器句柄
-    core::TimerHandle frame_timer_handle_;
+    core::Registration frame_timer_registration_;
 };
 
 } // namespace sync

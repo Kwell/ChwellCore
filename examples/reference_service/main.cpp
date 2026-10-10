@@ -4,6 +4,7 @@
 #include "chwell/storage/memory_storage.h"
 #include "chwell/storage/orm/repository.h"
 #include "chwell/sync/schema_sync.h"
+#include "chwell/event/event_bus.h"
 #include <algorithm>
 #include <chrono>
 #include <csignal>
@@ -15,15 +16,27 @@ volatile std::sig_atomic_t stopping = 0;
 void stop_signal(int) { stopping = 1; }
 using Player = chwell::generated::ReferencePlayer;
 
-class ReferenceContent final : public chwell::service::Component {
+struct ContentReader {
+    virtual ~ContentReader() = default;
+    virtual const std::vector<chwell::generated::ReferenceItem>& items() const = 0;
+};
+struct TickCompleted : chwell::event::Event {
+    std::string name() const override { return "ReferenceTickCompleted"; }
+    int type_id() const override { return 903; }
+};
+class ReferenceContent final : public chwell::service::Component, public ContentReader {
 public:
     std::string name() const override { return "ReferenceContent"; }
+    void on_register(chwell::service::Service& service) override {
+        if (!service.register_interface<ContentReader>(*this))
+            throw std::logic_error("Content interface registration failed");
+    }
     bool Init() override {
         items_ = chwell::generated::ReferenceItem::content();
         return !items_.empty();
     }
     bool Shut() override { items_.clear(); return true; }
-    const std::vector<chwell::generated::ReferenceItem>& items() const { return items_; }
+    const std::vector<chwell::generated::ReferenceItem>& items() const override { return items_; }
 private:
     std::vector<chwell::generated::ReferenceItem> items_;
 };
@@ -36,8 +49,11 @@ public:
     void on_register(chwell::service::Service& service) override { service_ = &service; }
     bool Init() override {
         const auto players = Player::content();
-        content_ = service_->get_component<ReferenceContent>();
+        content_ = service_->get_interface<ContentReader>();
         if (!content_) return false;
+        if (!service_->track_registration(*this,
+            chwell::event::EventBus::instance().subscribe_scoped<TickCompleted>(
+                [this](const auto&) { ++ticks_received_; }))) return false;
         const auto& items = content_->items();
         if (players.empty()) return false;
         player_ = std::make_shared<Player>(players.front());
@@ -66,7 +82,16 @@ public:
         if (!loaded || loaded->get_level() != 7 || loaded->get_gold() != 200)
             throw std::logic_error("Reference round trip failed");
         updated_ = true;
+        TickCompleted tick;
+        chwell::event::EventBus::instance().publish(tick);
         return true;
+    }
+    bool PreShut() override {
+        const auto before = ticks_received_;
+        TickCompleted tick;
+        chwell::event::EventBus::instance().publish(tick);
+        callbacks_stopped_ = before == ticks_received_;
+        return callbacks_stopped_;
     }
     bool Shut() override {
         room_.remove_entity(player_ ? player_->id() : "");
@@ -77,7 +102,9 @@ public:
     void on_message(const chwell::net::TcpConnectionPtr& connection, std::string_view data) override {
         connection->send(data);
     }
-    bool smoke_passed() const { return updated_ && stopped_ && packets_ == 4; }
+    bool smoke_passed() const {
+        return updated_ && stopped_ && callbacks_stopped_ && ticks_received_ == 1 && packets_ == 4;
+    }
 private:
     void receive(const chwell::sync::SchemaPacket& packet, bool owner) {
         for (const auto& field : packet.fields) {
@@ -98,8 +125,10 @@ private:
     unsigned packets_ = 0;
     bool updated_ = false;
     bool stopped_ = false;
+    bool callbacks_stopped_ = false;
+    unsigned ticks_received_ = 0;
     chwell::service::Service* service_ = nullptr;
-    ReferenceContent* content_ = nullptr;
+    ContentReader* content_ = nullptr;
 };
 } // namespace
 

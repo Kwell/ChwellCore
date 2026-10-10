@@ -177,9 +177,10 @@ they do not replace testing against a real Redis deployment.
 
 Component ownership, startup rollback, manifest assembly and dependency ordering
 are implemented. Discovery, EntitySchema/content and installed reference projects
-are described in DISCOVERY.md, ENTITY_SCHEMA.md and PACKAGING.md. Callback tokens,
-interface injection, safe dynamic plugin replacement and production reference
-deployments remain separate work.
+are described in DISCOVERY.md, ENTITY_SCHEMA.md and PACKAGING.md. Explicit interface
+bindings and owned callback/timer/handler tokens are described in
+[REGISTRATIONS.md](REGISTRATIONS.md). Safe dynamic plugin replacement and production
+reference deployments remain separate work.
 
 ## Validation
 

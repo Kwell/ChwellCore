@@ -9,6 +9,7 @@
 #include <memory>
 #include <thread>
 #include <unordered_map>
+#include "chwell/core/registration.h"
 
 namespace chwell {
 namespace core {
@@ -106,6 +107,9 @@ public:
      */
     void cancel_timer(TimerHandle& handle);
 
+    Registration add_timer_scoped(int delay_ms, TimerCallback callback);
+    Registration add_repeat_timer_scoped(int interval_ms, TimerCallback callback);
+
     // 检查定时器是否有效
     bool is_timer_valid(const TimerHandle& handle) const;
 
@@ -151,6 +155,7 @@ private:
 
     // 生成唯一ID
     uint64_t generate_id();
+    Registration add_scoped(int delay_ms, TimerCallback callback, bool repeat);
 
     std::vector<Wheel> wheels_;
     mutable std::mutex mutex_;
@@ -160,6 +165,8 @@ private:
 
     // 用于快速查找（fallback 路径）
     mutable std::unordered_map<uint64_t, std::weak_ptr<TimerTask>> task_map_;
+    std::shared_ptr<detail::RegistrationSource<TimerWheel>> registration_source_ =
+        std::make_shared<detail::RegistrationSource<TimerWheel>>(this);
 };
 
 /**
@@ -209,6 +216,16 @@ public:
         if (wheel_) {
             wheel_->cancel_timer(handle);
         }
+    }
+
+    Registration add_timer_scoped(int delay_ms, TimerCallback callback) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return wheel_ ? wheel_->add_timer_scoped(delay_ms, std::move(callback)) : Registration{};
+    }
+
+    Registration add_repeat_timer_scoped(int interval_ms, TimerCallback callback) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return wheel_ ? wheel_->add_repeat_timer_scoped(interval_ms, std::move(callback)) : Registration{};
     }
 
     TimerWheel* get_wheel() {
