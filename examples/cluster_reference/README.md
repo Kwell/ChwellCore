@@ -55,7 +55,8 @@ cluster_reference gateway http://127.0.0.1:8500 9100
 
 ## 请求与数据契约
 
-这是参考 JSON 载荷，不承诺稳定生产客户端线协议。沿用框架的
+这是参考 JSON 请求载荷；响应中的玩家数据使用稳定的
+`chwell-sync-v1-hex` 同步协议（详见 [SYNC_PROTOCOL.md](../../docs/SYNC_PROTOCOL.md)）。沿用框架的
 `cmd:uint16 | len:uint16 | body` 网络字节序帧，cmd=1；外部 body 是 UTF-8 JSON。
 内部 RPC 在 JSON 前包含框架的 4 字节 request ID。参考请求上限 8192 字节。
 每条 TCP 连接按顺序请求/响应；Python 客户端只用标准库。

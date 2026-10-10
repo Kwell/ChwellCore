@@ -1228,7 +1228,8 @@ TcpServer（传统）                EpollTcpServer（高性能）
 新增 [多服务持久化参考工程](examples/cluster_reference/README.md)：真实 TCP 客户端、网关、
 两个 Game、Consul 与 MySQL，附 Docker Compose、安装包独立构建和故障恢复验证。
 新增 [MySQL 分布式会话所有权](docs/SESSION_OWNERSHIP.md)：双网关全局租约、持久 epoch、
-同事务写入 fencing 与进程故障接管。稳定客户端同步协议见后续路线。
+同事务写入 fencing 与进程故障接管。稳定客户端同步协议见
+[SYNC_PROTOCOL.md](docs/SYNC_PROTOCOL.md)。
 
 ### 已完成
 
@@ -1236,6 +1237,7 @@ TcpServer（传统）                EpollTcpServer（高性能）
 - 二进制协议 + 粘包解析 + 三种 Codec
 - 组件化服务层（登录 / 聊天 / 房间 / 心跳 / 移动）
 - 帧同步 / 状态同步
+- 版本化 `CHWS` 客户端状态同步：显式字段类型与 ID、64 位序号、快照/增量原子应用、owner/public 可见性
 - 时间轮 / 线程池 / 对象池 / 任务队列 / 事件总线
 - 存储抽象（Memory / MySQL / MongoDB）+ ORM + 异步适配器 + **写回缓存（字段脏标）**
 - 集群节点注册 + 一致性哈希虚拟节点 + RPC + 网关转发 + **`RpcRouter` 跨服透传 / `SessionLocator` 会话定位**
