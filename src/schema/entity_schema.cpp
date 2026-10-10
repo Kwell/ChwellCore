@@ -95,8 +95,9 @@ EntitySchema::EntitySchema(std::string name, std::string table, FieldId key,
     std::sort(fields_.begin(), fields_.end(), [](const auto& a, const auto& b) { return a.id < b.id; });
     const auto* identity = find(key_);
     if (!identity || identity->name != "id" || identity->type != FieldType::String || !identity->stored ||
-        !std::get<std::string>(identity->default_value).empty()) {
-        throw std::invalid_argument("Schema key must be a stored string field named id");
+        !std::get<std::string>(identity->default_value).empty() || identity->visibility != Visibility::Public ||
+        (identity->max_bytes && *identity->max_bytes == 0)) {
+        throw std::invalid_argument("Schema key must be a public stored string field named id with empty default and room for a nonempty identity");
     }
 }
 

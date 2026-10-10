@@ -112,6 +112,8 @@ def load_schema(path):
     if not identity or identity['name'] != 'id' or identity['type'] != 'string' or not identity['stored']:
         error(path, 'key must identify the stored string field named id')
     if identity['default'] != '': error(path, 'key default must be empty; set identity explicitly')
+    if identity['visibility'] != 'public': error(path, 'key must be public because sync packets carry entity identity')
+    if identity.get('max_bytes') == 0: error(path, 'key must allow a nonempty identity')
     data['fields'].sort(key=lambda field: field['id'])
     data['reserved_ids'].sort()
     symbols = {'entity_schema', 'schema_version', 'client_schema', 'content'}

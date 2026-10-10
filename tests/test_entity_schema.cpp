@@ -54,6 +54,9 @@ TEST(EntitySchema, MetadataRejectsReservedDuplicateAndInvalidDefaults) {
     fields.push_back(fields.back());
     EXPECT_THROW(EntitySchema("P", "players", 1, fields), std::invalid_argument);
     fields.pop_back();
+    fields[0].visibility = chwell::schema::Visibility::Server;
+    EXPECT_THROW(EntitySchema("P", "players", 1, fields), std::invalid_argument);
+    fields[0].visibility = chwell::schema::Visibility::Public;
     fields[1].default_value = std::int64_t{0};
     EXPECT_THROW(EntitySchema("P", "players", 1, fields), std::invalid_argument);
     EXPECT_THROW(EntitySchema("P", "players", 20, fields), std::invalid_argument);

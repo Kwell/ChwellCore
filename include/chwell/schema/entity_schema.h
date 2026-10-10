@@ -36,7 +36,7 @@ struct FieldValue {
 };
 
 // Immutable metadata shared by generated typed entities, storage and sync.
-// Deleted IDs remain reserved. The key is a stored string field named "id" to
+// Deleted IDs remain reserved. The key is a public stored string field named "id" to
 // match the existing Repository convention. No runtime reflection dependency.
 class EntitySchema {
 public:

@@ -44,6 +44,9 @@ class SchemaToolTests(unittest.TestCase):
         schema = copy.deepcopy(self.schema)
         schema['fields'][4]['max'] = 10**400
         with self.assertRaises(ValueError): self.load(schema)
+        for key, value in [('visibility', 'server'), ('visibility', 'owner'), ('default', 'fixed'), ('max_bytes', 0)]:
+            schema = copy.deepcopy(self.schema); schema['fields'][0][key] = value
+            with self.subTest(identity=key, value=value), self.assertRaises(ValueError): self.load(schema)
 
     def test_duplicate_json_keys_fail(self):
         path = self.directory / 'schema.json'

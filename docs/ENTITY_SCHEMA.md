@@ -38,7 +38,7 @@ ctest --test-dir build-schema -C Debug --output-on-failure
 | `min` / `max` | 可选数字范围；int64 边界使用整数，不转为浮点 |
 | `max_bytes` | 可选字符串字节上限；生成器按 UTF-8 计数，运行时按 std::string 字节数 |
 
-主键必须是名为 `id` 的持久化 string 字段，默认值为空，以兼容已有 Repository 的存储键约定。创建后显式设定非空主键；非空主键不能通过 setter 修改。加载必须包含非空主键。加载应在加入同步房间前完成。
+主键必须是名为 `id` 的持久化 string 字段，默认值为空，visibility 为 public，以兼容已有 Repository 的存储键约定与同步包中的实体身份。max_bytes 如设置必须大于零。创建后显式设定非空主键；非空主键不能通过 setter 修改。加载必须包含非空主键。加载应在加入同步房间前完成。
 
 生成的 `<实体名>` 位于 `chwell::generated`，提供 `field_<name>` 常量、`get_<name>()`、`set_<name>()`、`entity_schema()`、`schema_version`、`content()` 和 `client_schema()`。setter 返回 bool，可通过 string 指针取得错误。没有可绕过验证的可写字段引用。
 
