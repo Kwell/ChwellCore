@@ -117,6 +117,7 @@ endif()
 ''')
         consumer = root / 'consumer build'
         run([args.cmake, '-S', source, '-B', consumer, f'-DCMAKE_PREFIX_PATH={relocated}',
+             f'-DPython3_EXECUTABLE={sys.executable}',
              f'-DCMAKE_BUILD_TYPE={args.config}', '-DCMAKE_FIND_USE_PACKAGE_REGISTRY=OFF',
              '-DCMAKE_FIND_USE_SYSTEM_PACKAGE_REGISTRY=OFF'])
         compile_command = [args.cmake, '--build', consumer, '--config', args.config, '--parallel', '2']
@@ -150,6 +151,7 @@ endif()
             shutil.copytree(relocated / 'share/ChwellCore/examples/cluster_reference', cluster_source)
             cluster_build = root / 'cluster consumer build'
             run([args.cmake, '-S', cluster_source, '-B', cluster_build,
+                 f'-DPython3_EXECUTABLE={sys.executable}',
                  f'-DCMAKE_PREFIX_PATH={relocated}', f'-DCMAKE_BUILD_TYPE={args.config}',
                  '-DCMAKE_FIND_USE_PACKAGE_REGISTRY=OFF'])
             run([args.cmake, '--build', cluster_build, '--parallel', '2'])

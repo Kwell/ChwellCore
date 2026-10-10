@@ -170,6 +170,8 @@ chwell_generate_entity_schema(player_content content/player.schema.json generate
 
 CMake 也可将 XLSX/SHEET 换为 CATALOG，生成的 C# 文件是受追踪的输出，删除后会重新生成。安装包包含可选依赖清单，安装后的生成函数支持相同参数。依赖安装使用安装前缀下的 `share/ChwellCore/tools/requirements-excel.txt`。
 
+机器有多个 Python 或使用虚拟环境时，配置 CMake 时传入 `-DPython3_EXECUTABLE=/path/to/python`，并使用该解释器安装 Excel 依赖，避免生成器选到另一个环境。
+
 C# 输出位于 `Chwell.Generated.<schema name>` 命名空间，`ClientEntity` 提供 `value_<field name>` 类型化属性及默认值；`Contract` 提供 `field_<field name>` 常量、SchemaVersion、KeyFieldId 和 SchemaJson，字段 ID 与 C++ 完全一致。类型对应 long/double/bool/string，字符串按 UTF-16 转义，支持 Unicode 与 NUL。字段前缀避免 C# 关键字与生成成员冲突。SchemaJson 与 C++ `client_schema()` 使用同一可见性筛选逻辑，排除 server 字段和 reference 元数据；不输出内容行、服务器表名或服务器默认值。
 
 该 C# 类型是数据契约，属性赋值不执行服务器约束，也不包含 CHWS 解码器；客户端仍需按 [同步协议](SYNC_PROTOCOL.md) 处理快照/差量及权限。所有内容验证完成后才写产物，每个文件单独原子替换；磁盘写入失败时多个产物不是一组事务。

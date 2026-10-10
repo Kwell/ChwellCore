@@ -27,7 +27,7 @@ class ContentClientTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
-        self.directory = pathlib.Path(temporary.name)
+        self.directory = pathlib.Path(temporary.name).resolve()
         self.schema = tool.load_schema(ROOT / 'schemas/player.schema.json')
         self.definition = self.directory / 'player.json'
         self.definition.write_text(json.dumps(self.schema), encoding='utf-8')
