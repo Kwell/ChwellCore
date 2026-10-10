@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include "chwell/net/epoll_server.h"
+#include "chwell/net/posix_io.h"
 #include <arpa/inet.h>
 #include <poll.h>
 #include <unistd.h>
@@ -76,4 +77,14 @@ TEST(EpollAcceptOrder, GreetingQueuedDuringInitializationIsSentAfterRegistration
     }
     EXPECT_EQ(received, "hello");
     server.stop();
+}
+
+TEST(IoServiceShutdown, IdleRunnersCanStopDuringWaitTransitions) {
+    for (int cycle = 0; cycle < 500; ++cycle) {
+        chwell::net::IoService service;
+        std::thread worker([&] { service.run(); });
+        std::this_thread::yield();
+        service.stop();
+        worker.join();
+    }
 }
