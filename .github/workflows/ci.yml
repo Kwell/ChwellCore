@@ -6,6 +6,68 @@ on:
   pull_request:
 
 jobs:
+  persistent-reference:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      CHWELL_DEMO_TOKEN: ci-demo-token
+      CHWELL_CLUSTER_TOKEN: ci-internal-token
+      CHWELL_DB_HOST: 127.0.0.1
+      CHWELL_DB_PORT: 3306
+      CHWELL_DB_NAME: chwell
+      CHWELL_DB_USER: chwell
+      CHWELL_DB_PASSWORD: ci-db-password
+      MYSQL_PWD: ci-db-password
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install reference dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcurl4-openssl-dev nlohmann-json3-dev default-libmysqlclient-dev
+      - name: Build framework and standalone installed reference
+        run: |
+          cmake -S . -B build-persistent -DCHWELL_BUILD_TESTS=OFF -DCHWELL_BUILD_EXAMPLES=OFF \
+            -DCHWELL_USE_YAML=OFF -DCHWELL_USE_PROTOBUF=OFF -DCHWELL_USE_MYSQL=ON \
+            -DCHWELL_USE_CONSUL=ON -DCHWELL_USE_ENTITY_SCHEMA=ON -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
+          cmake --build build-persistent --parallel 4
+          cmake --install build-persistent --prefix "$RUNNER_TEMP/original-package"
+          mv "$RUNNER_TEMP/original-package" "$RUNNER_TEMP/relocated-package"
+          cp -r "$RUNNER_TEMP/relocated-package/share/ChwellCore/examples/cluster_reference" "$RUNNER_TEMP/cluster-source"
+          cmake -S "$RUNNER_TEMP/cluster-source" -B build-reference \
+            -DCMAKE_PREFIX_PATH="$RUNNER_TEMP/relocated-package" -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
+          cmake --build build-reference --parallel 4
+      - name: Start isolated real dependencies
+        run: |
+          docker run -d --name chwell-persistent-consul -p 127.0.0.1:8500:8500 \
+            hashicorp/consul:1.20.6 agent -dev -client=0.0.0.0
+          docker run -d --name chwell-persistent-mysql -p 127.0.0.1:3306:3306 \
+            -e MYSQL_ROOT_PASSWORD=ci-root-password -e MYSQL_DATABASE=chwell \
+            -e MYSQL_USER=chwell -e MYSQL_PASSWORD=ci-db-password mysql:8.0
+          for attempt in $(seq 1 90); do
+            if curl --fail --silent http://127.0.0.1:8500/v1/status/leader | grep -q ':8300' \
+              && docker exec -e MYSQL_PWD chwell-persistent-mysql mysql -uchwell -e 'SELECT 1' chwell; then exit 0; fi
+            sleep 1
+          done
+          exit 1
+      - name: Verify TCP, durable commit and dependency/process failures under ASan/UBSan
+        run: >-
+          python3 integration_tests/test_persistent_cluster.py build-reference/cluster_reference
+          --consul-container chwell-persistent-consul --mysql-container chwell-persistent-mysql
+      - name: Verify documented Compose build and volume recovery
+        run: python3 integration_tests/test_reference_compose.py
+      - name: External dependency diagnostics
+        if: failure()
+        run: |
+          docker logs chwell-persistent-consul || true
+          docker logs chwell-persistent-mysql || true
+      - name: Cleanup reference dependencies
+        if: always()
+        run: |
+          docker rm -f chwell-persistent-consul chwell-persistent-mysql || true
+          docker compose -p chwell-reference-ci -f examples/cluster_reference/compose.yml down -v --remove-orphans || true
+
   config-windows:
     runs-on: windows-latest
     steps:

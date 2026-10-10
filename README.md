@@ -1225,6 +1225,10 @@ TcpServer（传统）                EpollTcpServer（高性能）
 
 ## 路线图
 
+新增 [多服务持久化参考工程](examples/cluster_reference/README.md)：真实 TCP 客户端、网关、
+两个 Game、Consul 与 MySQL，附 Docker Compose、安装包独立构建和故障恢复验证。
+会话仍是单网关本地索引；分布式所有权与稳定客户端同步协议见后续路线。
+
 ### 已完成
 
 - 网络层：TCP / UDP / WebSocket / HTTP / TLS，Epoll 多 Reactor

@@ -5,6 +5,9 @@
 #include <mysql/mysql.h>
 #include <cstring>
 #include <type_traits>
+#include <limits>
+#include <stdexcept>
+#include <utility>
 #endif
 
 namespace chwell {
@@ -27,6 +30,27 @@ bool MysqlStorage::connect() {
     if (!mysql) {
         CHWELL_LOG_ERROR("MysqlStorage: mysql_init failed");
         return false;
+    }
+
+    // Optional seconds; reject invalid values instead of silently disabling bounds.
+    for (const auto& option : {std::make_pair("connect_timeout", MYSQL_OPT_CONNECT_TIMEOUT),
+                               std::make_pair("read_timeout", MYSQL_OPT_READ_TIMEOUT),
+                               std::make_pair("write_timeout", MYSQL_OPT_WRITE_TIMEOUT)}) {
+        const auto setting = config_.extra.find(option.first);
+        if (setting == config_.extra.end()) continue;
+        try {
+            std::size_t used = 0;
+            const auto parsed = std::stoull(setting->second, &used);
+            if (setting->second.empty() || setting->second.front() == '-' ||
+                used != setting->second.size() || parsed == 0 || parsed > std::numeric_limits<unsigned int>::max())
+                throw std::invalid_argument("Invalid MySQL timeout");
+            const auto seconds = static_cast<unsigned int>(parsed);
+            if (mysql_options(mysql, option.second, &seconds) != 0) throw std::invalid_argument("Invalid MySQL option");
+        } catch (const std::exception&) {
+            CHWELL_LOG_ERROR("MysqlStorage: invalid timeout option " + std::string(option.first));
+            mysql_close(mysql);
+            return false;
+        }
     }
 
     const char* host = config_.host.empty() ? nullptr : config_.host.c_str();
@@ -146,13 +170,16 @@ StorageResult MysqlStorage::get(const std::string& key) {
             ret = StorageResult::success("");
         } else {
             std::string buf(value_len, '\0');
-            result.buffer        = &buf[0];
+            result.buffer        = buf.data();
             result.buffer_length = value_len;
-            mysql_stmt_fetch_column(stmt, &result, 0, 0);
-            ret = StorageResult::success(buf);
+            if (mysql_stmt_fetch_column(stmt, &result, 0, 0) != 0)
+                ret = StorageResult::failure(mysql_stmt_error(stmt));
+            else ret = StorageResult::success(buf);
         }
-    } else {
+    } else if (fetch_rc == MYSQL_NO_DATA) {
         ret = StorageResult::failure("key not found");
+    } else {
+        ret = StorageResult::failure(mysql_stmt_error(stmt));
     }
     mysql_stmt_close(stmt);
     return ret;
