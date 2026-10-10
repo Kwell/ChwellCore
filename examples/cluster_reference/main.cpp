@@ -267,6 +267,8 @@ protected:
     }
     Json request(std::uint64_t, const Json& command) override {
         if (command.value("cluster_token", std::string()) != key_) return failure("unauthorized");
+        if (!command.contains("sync_version") || !command.at("sync_version").is_number_integer() ||
+            command.at("sync_version") != sync::sync_wire_version) return failure("unsupported_sync_version");
         const auto action = command.at("action").get<std::string>();
         const auto viewer = command.at("player").get<std::string>();
         const auto id = action == "observe" ? command.at("target").get<std::string>() : viewer;
@@ -378,7 +380,7 @@ protected:
         if (action == "logout") { disconnected(conn); return {{"ok", true}}; }
         if (!available_) return failure("discovery_unavailable");
         const auto session = std::to_string(conn);
-        Json forwarded = {{"action", action}, {"cluster_token", key_}};
+        Json forwarded = {{"action", action}, {"cluster_token", key_}, {"sync_version", sync::sync_wire_version}};
         cluster::NodeInfo node;
         cluster::SessionLease lease;
         const bool login = action == "login";

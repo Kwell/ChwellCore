@@ -58,7 +58,9 @@ def main():
 
     def direct(fence):
         payload = struct.pack('!I', 7) + json.dumps(dict(action='advance', player=player,
-            cluster_token=os.environ['CHWELL_CLUSTER_TOKEN'], lease=fence)).encode()
+            cluster_token=os.environ['CHWELL_CLUSTER_TOKEN'], lease=fence,
+            sync_version=1, stream='stale-gateway:' + fence['epoch'],
+            sequence='2', base_sequence='1')).encode()
         with socket.create_connection(('127.0.0.1', game_port), timeout=10) as connection:
             connection.sendall(struct.pack('!HH', 1, len(payload)) + payload)
             def receive(length):

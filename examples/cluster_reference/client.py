@@ -43,9 +43,11 @@ class Client:
             self.close()
             raise ValueError('Reference response is too large')
         response = json.loads(self.receive(length))
+        if response.get('ok') and action in ('login', 'get', 'advance', 'observe') and 'packet' not in response:
+            raise sync_wire.SyncError('Missing sync packet')
         if response.get('ok') and 'packet' in response:
             envelope = response['packet']
-            if set(envelope) != {'encoding', 'data'} or envelope['encoding'] != 'chwell-sync-v1-hex':
+            if not isinstance(envelope, dict) or set(envelope) != {'encoding', 'data'} or envelope['encoding'] != 'chwell-sync-v1-hex':
                 raise sync_wire.SyncError('Unsupported sync encoding')
             hex_data = envelope['data']
             if not isinstance(hex_data, str) or len(hex_data) % 2 or any(c not in '0123456789abcdef' for c in hex_data):
@@ -55,7 +57,7 @@ class Client:
             if action == 'login':
                 pending = sync_wire.Replica(sync_wire.CLUSTER_SCHEMA, fields['player'], True)
                 pending.reset_stream(packet['stream'])
-                if not packet['snapshot'] or pending.apply(wire_bytes) != 'applied':
+                if not packet['snapshot'] or packet['sequence'] != 1 or pending.apply(wire_bytes) != 'applied':
                     raise sync_wire.SyncError('Login requires a complete snapshot')
                 self.player, self.stream = fields['player'], packet['stream']
                 self.replicas = {self.player: pending}
