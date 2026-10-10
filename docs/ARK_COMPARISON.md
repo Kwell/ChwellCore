@@ -198,7 +198,7 @@ Service 在插件 Install 完成后规划全部组件；正常关闭的 PreShut/
 实现只参考角色划分，未复制 ARK 源码。
 
 此处的 JSON 是示范载荷，SessionLocator 仍是网关本地索引，分布式会话增量见第 16 节。
-后续依次推进：稳定客户端同步协议、Excel/C# 内容工具与热切换/迁移、安全插件版本替换，再补生产部署
+稳定客户端同步协议见第 17 节。后续依次推进：Excel/C# 内容工具与热切换/迁移、安全插件版本替换，再补生产部署
 和按需的跨平台网络/KCP/外部 HTTP。
 
 ## 16. 分布式会话所有权与恢复增量
@@ -212,3 +212,12 @@ Service 在插件 Install 完成后规划全部组件；正常关闭的 PreShut/
 暂停/杀死网关后的接管、旧 RPC/续租/释放和 Game 重启。数据库断连 fail closed，不自动重放。
 契约、已有键表迁移及主库持久性前提见 [SESSION_OWNERSHIP.md](SESSION_OWNERSHIP.md)。
 此增量尚未实现跨玩家事务、幂等请求日志、无损主库容灾或生产吞吐保证。
+
+## 17. 稳定客户端同步协议增量
+
+独立实现 `CHWS` wire v1，在 EntitySchema/SchemaSyncRoom 输出之上定义 schema/version、
+stream、entity、完整 64 位序号和类型标签。C++ 与标准库 Python 客户端共享 golden bytes，
+原子应用完整快照/增量；丢包、旧包、错误 stream 和越权字段不改变既有缓存。
+参考网关为每个 viewer/entity/stream 分配序号，登录协商协议及 schema 版本，重连清空旧基线。
+编码端与 replica 校验 owner/public 字段；server 字段不进入同步包。契约见
+[SYNC_PROTOCOL.md](SYNC_PROTOCOL.md)。传输认证、加密、framing、ACK 和自动重传不由本协议提供。

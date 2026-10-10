@@ -26,11 +26,12 @@ chwell_generate_entity_schema(reference_item ../../examples/reference_service/co
     generated/reference_item.h CATALOG ../../examples/reference_service/content/catalog.json)
 find_package(Threads REQUIRED)
 add_library(chwell_schema_portable
-    ../../src/schema/entity_schema.cpp ../../src/sync/schema_sync.cpp
+    ../../src/schema/entity_schema.cpp ../../src/sync/schema_sync.cpp ../../src/sync/sync_wire.cpp
     ../../src/storage/orm/document.cpp ../../src/storage/memory_storage.cpp ../../src/core/logger.cpp)
 target_include_directories(chwell_schema_portable PUBLIC ../../include)
 target_link_libraries(chwell_schema_portable PUBLIC Threads::Threads)
-add_executable(chwell_schema_tests ../test_entity_schema.cpp)
+add_executable(chwell_schema_tests ../test_entity_schema.cpp ../test_sync_wire.cpp)
+target_compile_definitions(chwell_schema_tests PRIVATE SYNC_WIRE_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../fixtures")
 add_dependencies(chwell_schema_tests player_schema edge_schema reference_player reference_item)
 target_include_directories(chwell_schema_tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_link_libraries(chwell_schema_tests PRIVATE chwell_schema_portable GTest::gtest_main)
@@ -43,3 +44,4 @@ enable_testing()
 add_test(NAME chwell_schema_tests COMMAND chwell_schema_tests)
 add_test(NAME entity_schema_generator COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/../test_entity_schema_tool.py")
 add_test(NAME entity_schema_example COMMAND example_entity_schema)
+add_test(NAME sync_wire_python COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/../test_sync_wire.py")

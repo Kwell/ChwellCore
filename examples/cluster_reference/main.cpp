@@ -8,15 +8,18 @@
 #include "chwell/cluster/mysql_session_store.h"
 #include "chwell/storage/orm/repository.h"
 #include "chwell/sync/schema_sync.h"
+#include "chwell/sync/sync_wire.h"
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <chrono>
+#include <charconv>
 #include <condition_variable>
 #include <csignal>
 #include <cstdlib>
 #include <deque>
 #include <future>
 #include <iostream>
+#include <limits>
 #include <random>
 #include <thread>
 #include <unordered_set>
@@ -89,11 +92,22 @@ Json session_failure(const cluster::SessionResult& result) {
     default: return failure("storage_unavailable");
     }
 }
-Json packet_json(const sync::SchemaPacket& packet) {
-    Json fields = Json::object();
-    for (const auto& field : packet.fields)
-        std::visit([&](const auto& value) { fields[std::to_string(field.id)] = value; }, field.value);
-    return {{"entity", packet.entity_id}, {"snapshot", packet.snapshot}, {"fields", fields}};
+std::uint64_t counter(const Json& command, const char* key) {
+    const auto value = command.at(key).get<std::string>();
+    std::uint64_t parsed = 0;
+    const auto result = std::from_chars(value.data(), value.data() + value.size(), parsed);
+    if (result.ec != std::errc() || result.ptr != value.data() + value.size() || value.empty() ||
+        std::to_string(parsed) != value) throw Json::type_error::create(302, "Invalid sync counter", &command);
+    return parsed;
+}
+Json packet_json(const sync::SyncWirePacket& wire, bool owner) {
+    std::string bytes;
+    if (!sync::encode_sync_wire(wire, *Player::entity_schema(), owner, bytes, nullptr, 3072))
+        return Json();
+    const char* digits = "0123456789abcdef";
+    std::string hex;
+    for (unsigned char byte : bytes) { hex += digits[byte >> 4]; hex += digits[byte & 15]; }
+    return {{"encoding", "chwell-sync-v1-hex"}, {"data", hex}};
 }
 
 // Network callbacks only copy into a bounded inbox. Discovery, sessions, schema
@@ -253,18 +267,27 @@ protected:
     }
     Json request(std::uint64_t, const Json& command) override {
         if (command.value("cluster_token", std::string()) != key_) return failure("unauthorized");
+        if (!command.contains("sync_version") || !command.at("sync_version").is_number_integer() ||
+            command.at("sync_version") != sync::sync_wire_version) return failure("unsupported_sync_version");
         const auto action = command.at("action").get<std::string>();
         const auto viewer = command.at("player").get<std::string>();
         const auto id = action == "observe" ? command.at("target").get<std::string>() : viewer;
         if (!valid_player(viewer) || !valid_player(id)) return failure("bad_player");
         if (action != "login" && action != "get" && action != "advance" && action != "observe") return failure("bad_action");
-        Json snapshot, delta;
+        sync::SchemaPacket snapshot, delta;
         const auto& fence = command.at("lease");
         cluster::SessionLease lease{viewer, fence.at("owner").get<std::string>(),
             fence.at("node").get<std::string>(), fence.at("incarnation").get<std::string>(),
             fence.at("epoch").get<std::string>()};
         if (lease.node != instance_.instance_id || lease.incarnation != instance_.metadata.at("incarnation"))
             return failure("session_lost");
+        sync::SyncWirePacket wire;
+        wire.schema_name = Player::entity_schema()->name(); wire.schema_version = Player::schema_version;
+        wire.stream = command.at("stream").get<std::string>(); wire.sequence = counter(command, "sequence");
+        wire.base_sequence = action == "advance" ? counter(command, "base_sequence") : 0;
+        auto initial = Player(); initial.set_id(id);
+        wire.packet = {id, action != "advance", action == "advance" ? std::vector<schema::FieldValue>{} : initial.snapshot(viewer == id)};
+        if (packet_json(wire, viewer == id).is_null()) return failure("bad_request");
         const auto guarded = db_->apply(lease, [&](storage::StorageInterface& transaction) {
             auto player = std::make_shared<Player>();
             const auto stored = transaction.get("cluster_players:" + id);
@@ -283,7 +306,7 @@ protected:
             room.add_entity(player, id);
             room.subscribe(id, viewer, [&](const auto& packet) {
                 // Stage packets locally; they become visible only after COMMIT.
-                (packet.snapshot ? snapshot : delta) = packet_json(packet);
+                (packet.snapshot ? snapshot : delta) = packet;
             });
             if (action == "advance") {
                 if (!player->set_level(player->get_level() + 1) || !player->set_gold(player->get_gold() + 10))
@@ -295,8 +318,11 @@ protected:
             return storage::StorageResult::success();
         });
         if (!guarded.ok()) return session_failure(guarded);
+        wire.packet = action == "advance" ? delta : snapshot;
+        const auto encoded = packet_json(wire, viewer == id);
+        if (encoded.is_null()) return failure("outcome_unknown"); // Commit succeeded, no mutation replay.
         return {{"ok", true}, {"node", instance_.instance_id}, {"generation", generation_}, {"epoch", lease.epoch},
-                {"packet", action == "advance" ? delta : snapshot}};
+                {"packet", encoded}};
     }
 private:
     std::shared_ptr<discovery::ConsulServiceDiscovery> discovery_;
@@ -338,10 +364,13 @@ protected:
     }
     void disconnected(std::uint64_t id) override {
         sessions_.unbind(std::to_string(id));
+        sequences_.erase(id);
         const auto found = players_.find(id);
         if (found != players_.end()) { authority_.release(found->second); players_.erase(found); }
     }
     Json request(std::uint64_t conn, const Json& command) override {
+        if (!command.contains("sync_version") || !command.at("sync_version").is_number_integer() ||
+            command.at("sync_version") != sync::sync_wire_version) return failure("unsupported_sync_version");
         const auto action = command.at("action").get<std::string>();
         if (action == "status") {
             Json nodes = Json::array();
@@ -351,11 +380,13 @@ protected:
         if (action == "logout") { disconnected(conn); return {{"ok", true}}; }
         if (!available_) return failure("discovery_unavailable");
         const auto session = std::to_string(conn);
-        Json forwarded = {{"action", action}, {"cluster_token", key_}};
+        Json forwarded = {{"action", action}, {"cluster_token", key_}, {"sync_version", sync::sync_wire_version}};
         cluster::NodeInfo node;
         cluster::SessionLease lease;
         const bool login = action == "login";
         if (login) {
+            if (!command.contains("schema_version") || !command.at("schema_version").is_number_integer() ||
+                command.at("schema_version") != Player::schema_version) return failure("unsupported_schema_version");
             if (command.value("token", std::string()) != token_) return failure("unauthorized");
             const auto player = command.at("player").get<std::string>();
             if (!valid_player(player)) return failure("bad_player");
@@ -380,6 +411,18 @@ protected:
         }
         forwarded["lease"] = {{"owner", lease.owner}, {"node", lease.node},
             {"incarnation", lease.incarnation}, {"epoch", lease.epoch}};
+        const auto entity = action == "observe" ? forwarded.at("target").get<std::string>() : lease.player;
+        const auto& history = sequences_[conn];
+        const auto found_sequence = history.find(entity);
+        if (!login && found_sequence == history.end() && history.size() >= 128) return failure("sync_entity_limit");
+        const auto previous = login || found_sequence == history.end() ? 0 : found_sequence->second;
+        if (previous == std::numeric_limits<std::uint64_t>::max()) {
+            if (login) authority_.release(lease);
+            disconnected(conn); return failure("sync_sequence_exhausted");
+        }
+        forwarded["stream"] = identity_ + ":" + session + ":" + lease.epoch;
+        forwarded["sequence"] = std::to_string(previous + 1);
+        forwarded["base_sequence"] = std::to_string(previous);
         const auto text = forwarded.dump();
         const std::vector<char> request(text.begin(), text.end());
         std::vector<char> response;
@@ -390,6 +433,7 @@ protected:
             disconnected(conn); return failure("outcome_unknown");
         }
         auto result = Json::parse(response.begin(), response.end());
+        if (result.value("ok", false)) sequences_[conn][entity] = previous + 1;
         if (login && result.value("ok", false)) {
             sessions_.bind(session, node.node_id, "persistent-game");
             players_[conn] = lease;
@@ -407,6 +451,7 @@ private:
     cluster::SessionLocator sessions_;
     cluster::DiscoveryRouter routes_;
     std::unordered_map<std::uint64_t, cluster::SessionLease> players_;
+    std::unordered_map<std::uint64_t, std::map<std::string, std::uint64_t>> sequences_;
     cluster::MysqlSessionStore authority_;
     std::string token_, key_, identity_;
     bool available_ = false;

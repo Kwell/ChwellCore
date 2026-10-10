@@ -74,6 +74,8 @@ def main():
         gateway = spawn('gateway')
         status = eventually(connect, 'TCP gateway listening')
         eventually(lambda: set(status.ask('status')['nodes']) == nodes, 'Two database-backed game nodes')
+        assert status.ask('status', sync_version=2)['error'] == 'unsupported_sync_version'
+        assert status.ask('login', player='alice', token=token, schema_version=2)['error'] == 'unsupported_schema_version'
         assert status.ask('advance')['error'] == 'login_required'
         assert status.ask('login', player='alice', token='wrong')['error'] == 'unauthorized'
         assert status.ask('login', player='../bad', token=token)['error'] == 'bad_player'
@@ -91,6 +93,7 @@ def main():
             node = result['node']
             fields = result['packet']['fields']
             assert fields == {'1': player, '10': 1, '20': 0}, result
+            assert result['packet']['sequence'] == '1' and result['packet']['base_sequence'] == '0', result
             if node in reached:
                 assert client.ask('logout')['ok']
                 client.close()
@@ -108,6 +111,8 @@ def main():
         result = owner.ask('advance', player=players[second_id], viewer=players[second_id])
         assert result['ok'] and result['node'] == first_id and not result['packet']['snapshot'], result
         assert result['packet']['fields'] == {'10': 2, '20': 10}, result
+        assert result['packet']['sequence'] == '2' and result['packet']['base_sequence'] == '1', result
+        assert owner.replicas[player].values == {'1': player, '10': 2, '20': 10}
         result = observer.ask('observe', target=player, viewer=player)
         assert result['ok'] and result['packet']['fields'] == {'1': player, '10': 2}, result
         assert observer.ask('get')['packet']['fields']['10'] == 1
