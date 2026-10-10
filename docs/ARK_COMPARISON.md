@@ -66,6 +66,8 @@ ARK 将 master/router/world/game/login/proxy 等角色做成独立插件与配�
 
 ## 3. 建议借鉴的地方
 
+下列表格记录调研时的状态；随后实现与合并情况见第 9–14 节。
+
 下面的依赖图、ABI 校验、回滚、稳定字段 ID 等是根据咱们代码提出的增强方案，不是宣称 ARK 已经完整实现这些能力。
 
 | 优先级 | 借鉴方向 | 咱们当前状态 | 适合咱们的落地方式 | 验收标准 |
@@ -153,17 +155,17 @@ ARK 是 Apache-2.0，咱们是 MIT。借鉴架构并独立实现可以保持咱�
 
 旧网络模式停机现在会等待 I/O 工作线程退出，再清理和移除组件。新增回归覆盖连接拒绝、认证/选库失败、断连、生命周期回滚、插件归属、非法配置与工厂失败。使用与迁移契约见 [APP_HOST.md](APP_HOST.md)。
 
-验证状态：PR #58 已合并，Windows、Linux、ASan/UBSan 与 TSan CI 通过。后续依赖图增量见第 13 节；接口注册表、回调/定时器注销令牌与安全动态插件替换仍未实现，此阶段的所有权仅覆盖组件。
+验证状态：PR #58 已合并，Windows、Linux、ASan/UBSan 与 TSan CI 通过。后续依赖图增量见第 13 节，接口注册表与注销令牌见第 14 节；安全动态插件替换仍待推进。
 
 ## 10. 第二阶段实现进展
 
-PR #59 实现可选 Consul/libcurl 后端、TTL 健康检查、DiscoveryRouter 与数字 IPv4 TCP RPC 传输。独立 game 进程验证注册、路由、TTL 失联、会话失效、端点/incarnation 变化后的重连、注册中心重启恢复与优雅注销。五项 CI 通过，包括真实 Consul 多进程场景。契约与限制见 [DISCOVERY.md](DISCOVERY.md)；PR 尚待合并。
+PR #59 已合并，实现可选 Consul/libcurl 后端、TTL 健康检查、DiscoveryRouter 与数字 IPv4 TCP RPC 传输。独立 game 进程验证注册、路由、TTL 失联、会话失效、端点/incarnation 变化后的重连、注册中心重启恢复与优雅注销。五项 CI 通过，包括真实 Consul 多进程场景。契约与限制见 [DISCOVERY.md](DISCOVERY.md)。
 
 ## 11. 第三阶段首批实现
 
 可选 EntitySchema 以显式稳定 ID 统一类型、默认值、约束、持久化与可见性，生成 C++ 实体接入 Repository。SchemaSyncRoom 支持 owner/public 快照、tick 合并、立即发送与 AOI 订阅接口；server 字段不进入客户端元数据或同步。标准库 Python 工具校验 JSON schema、版本演进与 CSV 单表内容，成功后原子生成头文件。
 
-PR #60 的 Linux、Windows、ASan/UBSan、TSan 和真实 Consul CI 已通过，尚待合并。用法与边界见 [ENTITY_SCHEMA.md](ENTITY_SCHEMA.md)。后续增量补充字段声明的内容引用和 JSON 内容目录：对全部 CSV 校验目标 ID，包括默认值、自引用和循环引用；错误保留原头文件，引用策略进入版本演进检查。Excel、C# 生成、客户端线协议和内容热切换仍待推进。
+PR #60 已合并，Linux、Windows、ASan/UBSan、TSan 和真实 Consul CI 已通过。用法与边界见 [ENTITY_SCHEMA.md](ENTITY_SCHEMA.md)。后续增量补充字段声明的内容引用和 JSON 内容目录：对全部 CSV 校验目标 ID，包括默认值、自引用和循环引用；错误保留原头文件，引用策略进入版本演进检查。Excel、C# 生成、客户端线协议和内容热切换仍待推进。
 
 ## 12. 第四阶段首批实现
 
@@ -171,10 +173,18 @@ PR #60 的 Linux、Windows、ASan/UBSan、TSan 和真实 Consul CI 已通过，�
 
 Linux CI 新增最小包、全可选依赖包与 FetchContent YAML 包的安装/移动/独立构建验证，并覆盖真实 TCP 关闭、引用错误保留产物和目录增删表的依赖更新。完整框架仍需 Linux/POSIX；没有因此新增 Windows 网络支持或生产部署能力。
 
-PR #61 的八项 CI 已通过，尚待合并，包括三种安装包场景。
+PR #61 已合并，八项 CI 已通过，包括三种安装包场景。
 
 ## 13. 组件依赖顺序增量
 
 补齐运行基础中的显式依赖图：组件可按运行时名称声明 prerequisites，AppHost 的 depends_on 按 manifest 入口名解析并映射工厂返回的运行时名称。初始化前统一校验缺失、空目标、自依赖与循环依赖；依赖优先，ready 节点用 priority/原稳定顺序决定先后。循环报告实际路径，不把被阻塞的后继误报为环。规划器独立于平台 I/O，迭代处理深层依赖。
 
-Service 在插件 Install 完成后规划全部组件；正常关闭的 PreShut/Flush/Shut 逆序，失败初始化沿实际记录回滚。AppHost 错误配置不替换旧 host，Service/AppHost 暴露启动错误。安装参考工程增加 ReferenceContent -> ReferenceGame 启动与反向关闭验证。此处只管理组件生命周期，不改变插件安装/卸载顺序，也不实现接口注入、回调注销或安全热替换；完整契约见 [APP_HOST.md](APP_HOST.md)。
+Service 在插件 Install 完成后规划全部组件；正常关闭的 PreShut/Flush/Shut 逆序，失败初始化沿实际记录回滚。AppHost 错误配置不替换旧 host，Service/AppHost 暴露启动错误。安装参考工程增加 ReferenceContent -> ReferenceGame 启动与反向关闭验证。PR #62 已合并，八项 CI 通过。此处管理组件生命周期，不改变插件安装/卸载顺序；完整契约见 [APP_HOST.md](APP_HOST.md)。
+
+## 14. 接口与注册所有权增量
+
+新增显式接口注册表，支持多继承指针调整、重复/不兼容/外部所有者检查和插件卸载前移除绑定。消费者仍声明生命周期依赖；接口查询不自动注入依赖，借用指针不能跨所有者移除保留。
+
+事件、协议处理器与定时器新增 move-only 注销令牌。令牌可交给 Service，按组件或插件归属统一清理；关闭、启动回滚及部分注册失败时先取消回调，再清理组件。取消等待其他线程的在途回调，已复制快照不再进入业务函数，自取消的重复定时器不再复活。旧注册 API 保留，只有显式使用新令牌并托管的注册项自动清理。
+
+安装参考工程实际使用 ContentReader 接口和归属事件订阅，FrameSync 超时定时器采用注销令牌。便携测试与 Linux 生命周期/路由测试接入 CI；契约及线程限制见 [REGISTRATIONS.md](REGISTRATIONS.md)。此增量仍不保证动态库安全热替换。

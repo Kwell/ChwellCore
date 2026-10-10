@@ -10,8 +10,12 @@
 #include <any>
 #include <typeindex>
 #include <algorithm>
+#include <chrono>
+#include <cstdint>
+#include <type_traits>
 
 #include "chwell/core/logger.h"
+#include "chwell/core/registration.h"
 
 namespace chwell {
 namespace event {
@@ -83,6 +87,7 @@ struct Subscriber {
 // 事件总线
 class EventBus {
 public:
+    ~EventBus() { registration_source_->detach(); }
     static EventBus& instance() {
         static EventBus inst;
         return inst;
@@ -111,6 +116,24 @@ public:
         return id;
     }
     
+    // Scoped callbacks are gated even when publish has already copied a snapshot.
+    template<typename EventT>
+    core::Registration subscribe_scoped(std::function<void(const EventT&)> callback, int priority = 0) {
+        if (!callback) return {};
+        auto slot = std::make_shared<core::detail::CallbackSlot<const EventT&>>(std::move(callback));
+        auto id = subscribe<EventT>(slot->wrapper(slot), priority);
+        std::weak_ptr<core::detail::RegistrationSource<EventBus>> source = registration_source_;
+        try {
+            return core::Registration([slot, source, id] {
+                slot->cancel();
+                if (auto owner = source.lock()) {
+                    std::lock_guard<std::mutex> lock(owner->mutex);
+                    if (owner->source) owner->source->unsubscribe(id);
+                }
+            });
+        } catch (...) { slot->cancel(); unsubscribe(id); throw; }
+    }
+
     // 取消订阅
     void unsubscribe(HandlerId id) {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -200,6 +223,8 @@ private:
     mutable std::mutex mutex_;
     std::unordered_map<std::type_index, std::vector<std::unique_ptr<Subscriber>>> subscribers_;
     std::atomic<HandlerId> next_id_;  // 原子类型，支持多线程并发 subscribe
+    std::shared_ptr<core::detail::RegistrationSource<EventBus>> registration_source_ =
+        std::make_shared<core::detail::RegistrationSource<EventBus>>(this);
 };
 
 // 常用事件定义

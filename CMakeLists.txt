@@ -238,6 +238,8 @@ if (CHWELL_BUILD_TESTS)
             tests/test_service_lifecycle.cpp
             tests/test_app_host.cpp
             tests/test_component_order.cpp
+            tests/test_registrations.cpp
+            tests/test_owned_registrations.cpp
             tests/test_slg.cpp
             tests/test_game_components.cpp
             tests/test_player_move.cpp

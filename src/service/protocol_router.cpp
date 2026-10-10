@@ -39,7 +39,7 @@ void ProtocolRouterComponent::on_message(const net::TcpConnectionPtr& conn,
         if (it != handlers_.end()) {
             CHWELL_LOG_DEBUG("Calling handler for cmd=0x" << std::hex << msg.cmd << std::dec);
             // 在读锁下调用 handler，避免死锁风险
-            auto handler = it->second;
+            auto handler = it->second.callback;
             hlock.unlock();
 
             // 打点：handler 耗时 + trace span

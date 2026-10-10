@@ -41,6 +41,12 @@ jobs:
         run: cmake --build build-order --config Debug --parallel 4
       - name: Run component dependency tests
         run: ctest --test-dir build-order -C Debug --output-on-failure --timeout 30
+      - name: Configure portable registration tests
+        run: cmake -S tests/registrations -B build-registrations
+      - name: Build portable registration tests
+        run: cmake --build build-registrations --config Debug --parallel 4
+      - name: Run portable registration tests
+        run: ctest --test-dir build-registrations -C Debug --output-on-failure --timeout 30
 
   build-and-test:
     runs-on: ubuntu-latest
