@@ -7,7 +7,6 @@
 #include <chrono>
 #include <cstring>
 #include <mutex>
-#include <atomic>
 #include <cstdlib>
 #endif
 
@@ -15,24 +14,34 @@ namespace chwell {
 namespace storage {
 
 #if defined(CHWELL_USE_MONGODB)
-// mongoc_init/cleanup 必须在整个进程生命周期内各调用一次。
-// 用引用计数保证：第一个实例 connect 时 init，所有实例 disconnect 后 cleanup（通过 atexit）。
+// Process initialization is independent of client connect/disconnect cycles.
 namespace {
-std::mutex  g_mongoc_mutex;
-std::atomic<int> g_mongoc_refcount{0};
+std::once_flag g_mongoc_once;
 
 void ensure_mongoc_init() {
-    std::lock_guard<std::mutex> lk(g_mongoc_mutex);
-    if (g_mongoc_refcount.fetch_add(1) == 0) {
+    std::call_once(g_mongoc_once, [] {
         mongoc_init();
         // 进程退出时执行一次 cleanup
         std::atexit([]() { mongoc_cleanup(); });
-    }
+    });
 }
 
-void release_mongoc_ref() {
-    // 引用计数递减；cleanup 由 atexit 负责，此处不再主动调用
-    g_mongoc_refcount.fetch_sub(1);
+// libmongoc exposes find_with_opts, not find_one_with_opts. Copy before destroying
+// the cursor so callers own the BSON document just as the storage parser expects.
+bson_t* find_one(mongoc_collection_t* collection, const bson_t* query,
+                 const bson_t* options, bson_error_t* error) {
+    bson_t* limited = options ? bson_copy(options) : bson_new();
+    BSON_APPEND_INT64(limited, "limit", 1);
+    auto* cursor = mongoc_collection_find_with_opts(collection, query, limited, nullptr);
+    bson_destroy(limited);
+    const bson_t* view = nullptr;
+    bson_t* result = mongoc_cursor_next(cursor, &view) ? bson_copy(view) : nullptr;
+    if (mongoc_cursor_error(cursor, error)) {
+        if (result) bson_destroy(result);
+        result = nullptr;
+    }
+    mongoc_cursor_destroy(cursor);
+    return result;
 }
 }  // namespace
 #endif
@@ -56,12 +65,17 @@ bool MongodbStorage::connect() {
                   std::to_string(config_.port > 0 ? config_.port : 27017);
     }
 
-    bson_error_t error;
-    mongoc_client_t* client = mongoc_client_new_with_error(uri_str.c_str(), &error);
-    if (!client) {
+    bson_error_t error{};
+    auto* uri = mongoc_uri_new_with_error(uri_str.c_str(), &error);
+    if (!uri) {
         CHWELL_LOG_ERROR("MongodbStorage: connect failed: " +
                                        std::string(error.message));
-        release_mongoc_ref();
+        return false;
+    }
+    auto* client = mongoc_client_new_from_uri(uri);
+    mongoc_uri_destroy(uri);
+    if (!client) {
+        CHWELL_LOG_ERROR("MongodbStorage: client creation failed");
         return false;
     }
 
@@ -72,6 +86,10 @@ bool MongodbStorage::connect() {
 
     mongoc_collection_t* coll =
         mongoc_client_get_collection(client, db_name.c_str(), coll_name.c_str());
+    if (!coll) {
+        mongoc_client_destroy(client);
+        return false;
+    }
 
     client_ = client;
     collection_ = coll;
@@ -97,7 +115,6 @@ void MongodbStorage::disconnect() {
     if (client_) {
         mongoc_client_destroy(static_cast<mongoc_client_t*>(client_));
         client_ = nullptr;
-        release_mongoc_ref();
     }
 #endif
 }
@@ -113,8 +130,8 @@ StorageResult MongodbStorage::get(const std::string& key) {
     bson_t* query = bson_new();
     BSON_APPEND_UTF8(query, "_id", key.c_str());
 
-    bson_error_t error;
-    bson_t* doc = mongoc_collection_find_one_with_opts(coll, query, nullptr, nullptr, &error);
+    bson_error_t error{};
+    bson_t* doc = find_one(coll, query, nullptr, &error);
     bson_destroy(query);
 
     if (!doc) {
@@ -239,9 +256,9 @@ bool MongodbStorage::exists(const std::string& key) {
     BSON_APPEND_DOCUMENT(opts, "projection", &projection);
     bson_destroy(&projection);
 
-    bson_error_t error;
+    bson_error_t error{};
     bson_t* doc =
-        mongoc_collection_find_one_with_opts(coll, query, opts, nullptr, &error);
+        find_one(coll, query, opts, &error);
     bson_destroy(opts);
     bson_destroy(query);
 

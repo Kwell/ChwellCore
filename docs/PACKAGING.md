@@ -27,7 +27,9 @@ target_link_libraries(my_service PRIVATE Chwell::schema)
 
 请求未编译的 REQUIRED component 会在配置时失败。同名别名也可以在源码 `add_subdirectory` 后使用。源码目标名 chwell_core/chwell_schema 等保留。
 
-启用 YAML、OpenSSL、MySQL、MongoDB 时，构建阶段必须能找到对应依赖；不会将启用但缺依赖的数据库/TLS 后端当作有效产物。YAML 仍可通过 FetchContent 获取固定上游版本；它自身的安装目标会一并安装。Protobuf 保留原来的可选探测行为，缺失时关闭该目标。
+`ChwellCore_WITH_YAML/MYSQL/MONGODB/OPENSSL` 布尔变量报告包的编译能力，不表示这些后端已经连接到外部服务。
+
+启用 YAML、OpenSSL、MySQL、MongoDB 时，构建阶段必须能找到对应依赖；不会将启用但缺依赖的数据库/TLS 后端当作有效产物。YAML 仍可通过 FetchContent 获取固定上游版本；此路径将 yaml-cpp 库、头文件和 MIT 许可证一并安装，导出为 `Chwell::yaml_cpp`，消费者无需另找系统 YAML。使用系统 YAML 构建的包仍在消费者机器查找 yaml-cpp。Protobuf 保留原来的可选探测行为，缺失时关闭该目标。
 
 安装包按实际编译选项调用 `find_dependency`。YAML、OpenSSL、CURL、JSON、Protobuf 使用上游 CMake 包/查找模块；MySQL/MongoDB 使用附带的查找模块，优先 pkg-config，也支持标准头文件/库探测。导出文件不硬编码构建机的依赖目录，消费者须安装兼容的第三方开发包；这些依赖不会全部静态打包进去。MySQL/MongoDB 查找验证不等于真实数据库故障验证。
 

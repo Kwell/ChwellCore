@@ -25,7 +25,8 @@ def changed(path, text):
     previous = path.stat().st_mtime
     path.write_text(text, encoding='utf-8')
     # Make dependencies newer even on filesystems with coarse timestamp resolution.
-    os.utime(path, (previous + 2, previous + 2))
+    timestamp = max(time.time(), previous) + 2
+    os.utime(path, (timestamp, timestamp))
 
 
 def verify_server(executable, configuration):
@@ -95,6 +96,9 @@ endif()
 if(TARGET Chwell::game_proto)
     target_link_libraries(package_probe PRIVATE Chwell::game_proto)
     target_compile_definitions(package_probe PRIVATE PACKAGE_HAS_PROTOBUF)
+endif()
+if(ChwellCore_WITH_MONGODB)
+    target_compile_definitions(package_probe PRIVATE PACKAGE_HAS_MONGODB)
 endif()
 ''')
         consumer = root / 'consumer build'

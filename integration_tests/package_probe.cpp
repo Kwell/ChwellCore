@@ -1,5 +1,8 @@
 #include "chwell/storage/storage_factory.h"
 #include "chwell/net/tls.h"
+#ifdef PACKAGE_HAS_MONGODB
+#include "chwell/storage/mongodb_storage.h"
+#endif
 #ifdef PACKAGE_HAS_CONSUL
 #include "chwell/discovery/consul_discovery.h"
 #endif
@@ -12,6 +15,15 @@ int main() {
     auto storage = chwell::storage::StorageFactory::create("memory");
     if (!storage || !storage->put("probe", "value").ok) return 1;
     chwell::net::TlsContext tls; // Pull in OpenSSL when enabled.
+#ifdef PACKAGE_HAS_MONGODB
+    // Invalid URIs fail locally; repeated construction must not double-init/cleanup.
+    for (int cycle = 0; cycle < 3; ++cycle) {
+        chwell::storage::StorageConfig invalid;
+        invalid.extra["uri"] = "invalid-uri";
+        chwell::storage::MongodbStorage database(invalid);
+        if (database.connect()) return 1;
+    }
+#endif
 #ifdef PACKAGE_HAS_CONSUL
     auto discovery = chwell::discovery::make_consul_discovery({}); // No registry request.
     if (!discovery) return 1;

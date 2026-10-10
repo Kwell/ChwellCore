@@ -52,6 +52,7 @@ endif()
 
 
 # yaml-cpp（优先 find_package，未找到则 FetchContent，需 CMake 3.14+）
+set(CHWELL_BUNDLED_YAML OFF)
 if(CHWELL_USE_YAML)
     find_package(yaml-cpp 0.6 QUIET)
     if(NOT yaml-cpp_FOUND AND CMAKE_VERSION VERSION_GREATER_EQUAL 3.14)
@@ -64,6 +65,7 @@ if(CHWELL_USE_YAML)
         set(YAML_CPP_BUILD_TESTS OFF CACHE BOOL "" FORCE)
         set(YAML_CPP_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
         FetchContent_MakeAvailable(yaml-cpp)
+        set(CHWELL_BUNDLED_YAML ON)
     endif()
     if(NOT TARGET yaml-cpp::yaml-cpp)
         if(TARGET yaml-cpp)
@@ -336,6 +338,13 @@ foreach(module schema consul game_proto)
         add_library(Chwell::${module} ALIAS chwell_${module})
     endif()
 endforeach()
+if(CHWELL_BUNDLED_YAML)
+    # The pinned upstream disables its install rules when included as a subproject.
+    # Export the independently built dependency and retain its headers/license.
+    list(APPEND CHWELL_EXPORT_TARGETS yaml-cpp)
+    set_target_properties(yaml-cpp PROPERTIES EXPORT_NAME yaml_cpp)
+    add_library(Chwell::yaml_cpp ALIAS yaml-cpp)
+endif()
 include(cmake/ChwellInstall.cmake)
 
 # 复制 config 到 build 目录，便于 example_storage 从 build 运行
