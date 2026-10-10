@@ -163,4 +163,4 @@ PR #59 实现可选 Consul/libcurl 后端、TTL 健康检查、DiscoveryRouter �
 
 可选 EntitySchema 以显式稳定 ID 统一类型、默认值、约束、持久化与可见性，生成 C++ 实体接入 Repository。SchemaSyncRoom 支持 owner/public 快照、tick 合并、立即发送与 AOI 订阅接口；server 字段不进入客户端元数据或同步。标准库 Python 工具校验 JSON schema、版本演进与 CSV 单表内容，成功后原子生成头文件。
 
-本机 Windows 已验证 10 项 C++ 回归、10 项生成器回归和示例；Linux 与 sanitizer 在本轮 CI 验证。用法与边界见 [ENTITY_SCHEMA.md](ENTITY_SCHEMA.md)。Excel、表间引用校验、C# 生成、客户端线协议和内容热切换仍待推进。随后继续第 4 阶段的参考工程、构建目标导出与贡献文档。
+本机 Windows 已验证 11 项 C++ 回归、11 项生成器回归和示例；Linux 与 sanitizer 在本轮 CI 验证。用法与边界见 [ENTITY_SCHEMA.md](ENTITY_SCHEMA.md)。Excel、表间引用校验、C# 生成、客户端线协议和内容热切换仍待推进。随后继续第 4 阶段的参考工程、构建目标导出与贡献文档。

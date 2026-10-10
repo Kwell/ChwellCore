@@ -115,6 +115,13 @@ class SchemaToolTests(unittest.TestCase):
         generated = tool.generate(self.load(schema), [])
         self.assertIn('::chwell::schema::SchemaEntity::set_value(field_value', generated)
 
+    def test_namespace_tokens_in_data_are_preserved(self):
+        schema = copy.deepcopy(self.schema)
+        schema['fields'][3]['default'] = 'std::abc schema::xyz'
+        output = tool.generate(schema, [])
+        self.assertIn('"std::abc schema::xyz"', output)
+        self.assertNotIn('"::std::abc', output)
+
 
 if __name__ == '__main__':
     unittest.main()

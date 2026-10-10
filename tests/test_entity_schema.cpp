@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include "player_schema.h"
+#include "edge_schema.h"
 #include "chwell/sync/schema_sync.h"
 #include "chwell/storage/memory_storage.h"
 #include "chwell/storage/orm/repository.h"
@@ -133,6 +134,20 @@ TEST(EntitySchema, GeneratedContentAndClientMetadata) {
     EXPECT_EQ(metadata.find("secret"), std::string::npos);
     EXPECT_EQ(metadata.find("server-default"), std::string::npos);
     EXPECT_NE(metadata.find("gold"), std::string::npos);
+}
+
+TEST(EntitySchema, GeneratorPreservesStringsAndHandlesNamesShadowingNamespaces) {
+    chwell::generated::std entity;
+    const char expected[] = "std::hello schema::world \0中文";
+    EXPECT_EQ(entity.get_value(), std::string(expected, sizeof(expected) - 1));
+    EXPECT_EQ(entity.get_count(), std::numeric_limits<std::int64_t>::min());
+    EXPECT_TRUE(entity.set_id("edge"));
+    EXPECT_TRUE(entity.set_value("next std::value"));
+    EXPECT_EQ(entity.get_value(), "next std::value");
+    auto doc = entity.to_document();
+    chwell::generated::std loaded;
+    ASSERT_TRUE(loaded.load_document(doc));
+    EXPECT_EQ(loaded.get_value(), entity.get_value());
 }
 
 TEST(SchemaSync, OwnerPublicSnapshotTickCoalescingAndAoiLeave) {
