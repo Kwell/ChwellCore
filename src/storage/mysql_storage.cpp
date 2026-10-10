@@ -26,9 +26,17 @@ MysqlStorage::~MysqlStorage() {
 
 bool MysqlStorage::connect() {
 #if defined(CHWELL_USE_MYSQL)
+    std::lock_guard<std::recursive_mutex> lock(conn_mutex_);
+    if (conn_) return true;
     MYSQL* mysql = mysql_init(nullptr);
     if (!mysql) {
         CHWELL_LOG_ERROR("MysqlStorage: mysql_init failed");
+        return false;
+    }
+    // A transparent reconnect would discard the active fencing transaction.
+    MysqlBindBool reconnect = 0;
+    if (mysql_options(mysql, MYSQL_OPT_RECONNECT, &reconnect) != 0) {
+        mysql_close(mysql);
         return false;
     }
 
@@ -84,7 +92,7 @@ bool MysqlStorage::connect() {
 
     std::string create_sql =
         "CREATE TABLE IF NOT EXISTS `" + table_ + "` ("
-        "`k` VARCHAR(512) PRIMARY KEY, "
+        "`k` VARCHAR(512) COLLATE utf8mb4_bin PRIMARY KEY, "
         "`v` MEDIUMTEXT NOT NULL, "
         "`expire_at` BIGINT DEFAULT 0"
         ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
@@ -110,7 +118,7 @@ bool MysqlStorage::connect() {
 void MysqlStorage::disconnect() {
 #if defined(CHWELL_USE_MYSQL)
     // 加锁保护，确保没有其他线程正在使用连接
-    std::lock_guard<std::shared_mutex> lock(conn_mutex_);
+    std::lock_guard<std::recursive_mutex> lock(conn_mutex_);
     if (conn_) {
         mysql_close(static_cast<MYSQL*>(conn_));
         conn_ = nullptr;
@@ -120,10 +128,9 @@ void MysqlStorage::disconnect() {
 
 StorageResult MysqlStorage::get(const std::string& key) {
 #if defined(CHWELL_USE_MYSQL)
+    // Serialize connection lifetime as well as queries.
+    std::lock_guard<std::recursive_mutex> lock(conn_mutex_);
     if (!conn_) return StorageResult::failure("not connected");
-
-    // 加锁保护 MySQL 连接（MYSQL* 非线程安全）
-    std::lock_guard<std::shared_mutex> lock(conn_mutex_);
 
     MYSQL* mysql = static_cast<MYSQL*>(conn_);
     MYSQL_STMT* stmt = mysql_stmt_init(mysql);
@@ -192,10 +199,9 @@ StorageResult MysqlStorage::get(const std::string& key) {
 StorageResult MysqlStorage::put(const std::string& key, const std::string& value,
                                   std::int64_t expire_at) {
 #if defined(CHWELL_USE_MYSQL)
+    // Serialize connection lifetime as well as queries.
+    std::lock_guard<std::recursive_mutex> lock(conn_mutex_);
     if (!conn_) return StorageResult::failure("not connected");
-
-    // 加锁保护 MySQL 连接（MYSQL* 非线程安全）
-    std::lock_guard<std::shared_mutex> lock(conn_mutex_);
 
     MYSQL* mysql = static_cast<MYSQL*>(conn_);
     MYSQL_STMT* stmt = mysql_stmt_init(mysql);
@@ -245,10 +251,9 @@ StorageResult MysqlStorage::put(const std::string& key, const std::string& value
 
 StorageResult MysqlStorage::remove(const std::string& key) {
 #if defined(CHWELL_USE_MYSQL)
+    // Serialize connection lifetime as well as queries.
+    std::lock_guard<std::recursive_mutex> lock(conn_mutex_);
     if (!conn_) return StorageResult::failure("not connected");
-
-    // 加锁保护 MySQL 连接（MYSQL* 非线程安全）
-    std::lock_guard<std::shared_mutex> lock(conn_mutex_);
 
     MYSQL* mysql = static_cast<MYSQL*>(conn_);
     MYSQL_STMT* stmt = mysql_stmt_init(mysql);
@@ -286,10 +291,9 @@ StorageResult MysqlStorage::remove(const std::string& key) {
 
 bool MysqlStorage::exists(const std::string& key) {
 #if defined(CHWELL_USE_MYSQL)
+    // Serialize connection lifetime as well as queries.
+    std::lock_guard<std::recursive_mutex> lock(conn_mutex_);
     if (!conn_) return false;
-
-    // 加锁保护 MySQL 连接（MYSQL* 非线程安全）
-    std::lock_guard<std::shared_mutex> lock(conn_mutex_);
 
     MYSQL* mysql = static_cast<MYSQL*>(conn_);
     MYSQL_STMT* stmt = mysql_stmt_init(mysql);
@@ -338,10 +342,9 @@ bool MysqlStorage::exists(const std::string& key) {
 
 std::vector<std::string> MysqlStorage::keys(const std::string& prefix) {
 #if defined(CHWELL_USE_MYSQL)
+    // Serialize connection lifetime as well as queries.
+    std::lock_guard<std::recursive_mutex> lock(conn_mutex_);
     if (!conn_) return {};
-
-    // 加锁保护 MySQL 连接（MYSQL* 非线程安全）
-    std::lock_guard<std::shared_mutex> lock(conn_mutex_);
 
     MYSQL* mysql = static_cast<MYSQL*>(conn_);
     MYSQL_STMT* stmt = mysql_stmt_init(mysql);

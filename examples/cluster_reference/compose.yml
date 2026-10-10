@@ -58,5 +58,10 @@ services:
     command: ["gateway", "http://consul:8500", "9100"]
     ports:
       - "127.0.0.1:9100:9100"
+  gateway-two:
+    <<: *role
+    command: ["gateway", "http://consul:8500", "9100"]
+    ports:
+      - "127.0.0.1:9101:9100"
 volumes:
   player-data:

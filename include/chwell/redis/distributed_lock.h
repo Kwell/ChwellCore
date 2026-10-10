@@ -21,8 +21,8 @@ namespace redis {
 //
 // 安全属性：
 //   1. 互斥性：同一时刻只有一个持有者可成功加锁
-//   2. 唯一令牌（fencing token）：每次加锁生成唯一 token，释放时使用 Lua 脚本原子校验，
-//      防止过期锁被错误释放（fencing token 递增可与存储层配合做"栅栏"）
+//   2. 锁所有者 token：释放/续租时使用 Lua 脚本原子校验，防止操作其他持有者的锁。
+//      fencing_token() 仅为进程内序号，不提供跨进程存储写入保护。
 //   3. 自动续租：持锁期间后台线程定期 EXPIRE，防止业务未完成时锁过期
 //   4. 安全释放：只有持有者可释放自己的锁（通过 value 校验）
 //
@@ -106,8 +106,8 @@ public:
 
     bool is_locked() const { return locked_.load(); }
 
-    // 返回本次加锁的 fencing token（单调递增计数器）
-    // 调用方可将此 token 传递给后端存储，后端拒绝 token 值更小的写操作
+    // 仅进程内单调序号；禁止用作跨进程 fencing。需要数据库事务级保护时，
+    // 使用 MysqlSessionStore 或实现相应后端的原子所有权校验与写入协议。
     uint64_t fencing_token() const { return fencing_token_.load(); }
 
     const std::string& lock_key() const { return lock_key_; }

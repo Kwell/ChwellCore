@@ -197,6 +197,18 @@ Service 在插件 Install 完成后规划全部组件；正常关闭的 PreShut/
 附标准库 Python 客户端、Docker Compose 和独立安装包构建，CI 验证真实外部依赖故障与落库。
 实现只参考角色划分，未复制 ARK 源码。
 
-此处的 JSON 是示范载荷，SessionLocator 仍是单网关本地索引。后续依次推进：分布式会话所有权
-与恢复、稳定客户端同步协议、Excel/C# 内容工具与热切换/迁移、安全插件版本替换，再补生产部署
+此处的 JSON 是示范载荷，SessionLocator 仍是网关本地索引，分布式会话增量见第 16 节。
+后续依次推进：稳定客户端同步协议、Excel/C# 内容工具与热切换/迁移、安全插件版本替换，再补生产部署
 和按需的跨平台网络/KCP/外部 HTTP。
+
+## 16. 分布式会话所有权与恢复增量
+
+新增 MysqlSessionStore，以真实 MySQL 保存玩家归属、持久递增 epoch 和数据库时间租约。
+所有权校验与文档 read-modify-write 在同一 InnoDB 事务中完成；旧 epoch、已过期租约、
+错误 Game 进程身份不能继续写入。SessionLocator 只缓存本地路由，Compose 扩展为双网关。
+每次启动自动生成 Game incarnation，避免同 generation 参数重启时旧请求被接收。
+
+真实数据库双连接测试覆盖抢占、并发增量、回滚、过期及重连；双网关进程测试覆盖同时登录、
+暂停/杀死网关后的接管、旧 RPC/续租/释放和 Game 重启。数据库断连 fail closed，不自动重放。
+契约、已有键表迁移及主库持久性前提见 [SESSION_OWNERSHIP.md](SESSION_OWNERSHIP.md)。
+此增量尚未实现跨玩家事务、幂等请求日志、无损主库容灾或生产吞吐保证。

@@ -131,6 +131,7 @@ add_library(chwell_core
     src/aoi/aoi.cpp
     src/task/task_queue.cpp
     src/redis/redis_client.cpp
+    src/cluster/mysql_session_store.cpp
     src/slg/map.cpp
     src/slg/battle.cpp
     src/game/game_components.cpp

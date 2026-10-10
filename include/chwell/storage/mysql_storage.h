@@ -2,11 +2,12 @@
 
 #include "chwell/storage/storage_interface.h"
 #include "chwell/storage/storage_types.h"
-#include <shared_mutex>
+#include <mutex>
 #include <string>
 #include <cctype>
 
 namespace chwell {
+namespace cluster { class MysqlSessionStore; }
 namespace storage {
 
 // MySQL 存储实现：条件编译，CHWELL_USE_MYSQL=ON 时链接 libmysqlclient
@@ -38,13 +39,14 @@ public:
     }
 
 private:
+    friend class cluster::MysqlSessionStore;
     // 尝试重连，成功返回 true；失败返回 false
     bool ensure_connected();
 
     StorageConfig config_;
     void* conn_{nullptr};  // MYSQL* 不暴露到头文件，避免依赖 mysql.h
     std::string table_{"kv"};  // 消毒后的表名，connect() 时一次性设置
-    mutable std::shared_mutex conn_mutex_;  // 保护 conn_ 的多线程访问
+    mutable std::recursive_mutex conn_mutex_; // Serializes connection and guarded transaction callbacks.
 };
 
 }  // namespace storage
