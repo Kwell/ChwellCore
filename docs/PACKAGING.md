@@ -33,7 +33,7 @@ target_link_libraries(my_service PRIVATE Chwell::schema)
 
 安装包按实际编译选项调用 `find_dependency`。YAML、OpenSSL、CURL、JSON、Protobuf 使用上游 CMake 包/查找模块；MySQL/MongoDB 使用附带的查找模块，优先 pkg-config，也支持标准头文件/库探测。导出文件不硬编码构建机的依赖目录，消费者须安装兼容的第三方开发包；这些依赖不会全部静态打包进去。MySQL/MongoDB 查找验证不等于真实数据库故障验证。
 
-安装布局遵循 GNUInstallDirs（默认 include、lib、share；某些平台使用 lib64）。除了头文件和库，还安装 Python 内容生成器、CMake 生成函数、MIT 许可证、文档与 [独立参考工程 v1](../examples/reference_service/README.md)。包配置按安装位置解析自身资源，安装前缀可移动；移动后消费者应重新配置并使用新的 CMAKE_PREFIX_PATH。系统依赖仍须可发现。
+安装布局遵循 GNUInstallDirs（默认 include、lib、share；某些平台使用 lib64）。除了头文件和库，还安装 Python 内容生成器、Excel 可选依赖清单、支持 C++/C# 输出的 CMake 生成函数、MIT 许可证、文档与 [独立参考工程 v1](../examples/reference_service/README.md)。包配置按安装位置解析自身资源，安装前缀可移动；移动后消费者应重新配置并使用新的 CMAKE_PREFIX_PATH。系统依赖仍须可发现。
 
 ```cmake
 # find_package 自动提供此函数，Python 只在生成内容时需要
@@ -43,4 +43,6 @@ add_dependencies(my_service content_header)
 target_include_directories(my_service PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 ```
 
-完整网络框架仍需要 Linux/POSIX。本机 Windows 可以验证可移植模块，不能据此宣称 Windows 整包运行。Linux CI 分别构建最小包、全部可选依赖包和 FetchContent YAML 包，再安装、移动目录、构建独立消费者并执行 TCP/关闭测试；另验证引用错误不会覆盖产物，以及 CSV/目录增删表会触发重新构建。
+完整网络框架仍需要 Linux/POSIX。本机 Windows 可以验证可移植模块，不能据此宣称 Windows 整包运行。Linux CI 分别构建最小包、全部可选依赖包和 FetchContent YAML 包，再安装、移动目录、构建独立消费者并执行 TCP/关闭测试；另验证引用和 Excel 错误不会覆盖产物，以及工作簿/CSV/目录增删表会触发重新构建，删除 C# 输出会重新生成。
+
+运行 `python3 integration_tests/test_installed_package.py build-package` 前，需用同一 Python 安装 `tools/requirements-excel.txt`，并准备 .NET 8 SDK。测试把该解释器传给消费者 CMake，实际编译运行 C++ 内容和 C# 客户端契约；普通 CSV 内容构建不需要 Excel 依赖或 .NET SDK。

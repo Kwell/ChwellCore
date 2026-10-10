@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Validate a schema/content table and atomically generate one C++ header.
+"""Validate schema/content tables and generate C++ and C# client contracts.
 
-No third-party Python dependencies. Build with --previous to enforce evolution
+CSV/C# need only the standard library; Excel requires tools/requirements-excel.txt.
+Build with --previous to enforce evolution
 against a committed prior schema. Server-only metadata never enters client_schema.
 """
 import argparse
@@ -178,18 +179,7 @@ def load_csv(path, schema, locations=None):
             values = {field['name']: field['default'] for field in schema['fields']}
             for column, (name, text) in enumerate(zip(header, row), 1):
                 where = f'{path}:{line}:{column} ({name})'
-                kind = fields[name]['type']
-                if kind == 'int64':
-                    if not re.fullmatch(r'-?(0|[1-9][0-9]*)', text): error(where, 'invalid integer')
-                    value = int(text)
-                elif kind == 'double':
-                    if not re.fullmatch(r'-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?', text): error(where, 'invalid double')
-                    value = float(text)
-                elif kind == 'bool':
-                    if text not in ('true', 'false'): error(where, 'expected true or false')
-                    value = text == 'true'
-                else: value = text
-                values[name] = checked_value(fields[name], value, where)
+                values[name] = parse_text(fields[name], text, where)
             if not values['id'] or values['id'] in ids: error(f'{path}:{line}:{header.index("id") + 1}', 'empty or duplicate content ID')
             ids.add(values['id']); rows.append(values)
             if locations is not None:
@@ -200,7 +190,81 @@ def load_csv(path, schema, locations=None):
     return rows
 
 
-def catalog_inputs(path):
+def parse_text(field, text, where):
+    kind = field['type']
+    if kind == 'int64':
+        if not re.fullmatch(r'-?(0|[1-9][0-9]*)', text): error(where, 'invalid integer')
+        value = int(text)
+    elif kind == 'double':
+        if not re.fullmatch(r'-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?', text): error(where, 'invalid double')
+        value = float(text)
+    elif kind == 'bool':
+        if text not in ('true', 'false'): error(where, 'expected true or false')
+        value = text == 'true'
+    else: value = text
+    return checked_value(field, value, where)
+
+
+def load_xlsx(path, schema, locations=None, sheet=None):
+    try:
+        import openpyxl
+    except ImportError:
+        error(path, 'Excel import requires pip install -r tools/requirements-excel.txt')
+    from zipfile import BadZipFile
+    from xml.etree.ElementTree import ParseError
+    try:
+        workbook = openpyxl.load_workbook(path, data_only=False, keep_links=False)
+    except (BadZipFile, ValueError, KeyError, ParseError, openpyxl.utils.exceptions.InvalidFileException) as exc:
+        error(path, f'invalid XLSX: {exc}')
+    try:
+        if sheet is None:
+            if len(workbook.sheetnames) != 1: error(path, 'multiple worksheets; specify --sheet or catalog sheet')
+            sheet = workbook.sheetnames[0]
+        if sheet not in workbook.sheetnames: error(path, f'missing worksheet {sheet!r}')
+        source = workbook[sheet]
+        where = f'{path}:{sheet}'
+        if source.merged_cells.ranges: error(where, 'merged cells are not supported')
+        fields = {field['name']: field for field in schema['fields']}
+        records = source.iter_rows()
+        header_cells = next(records, ())
+        header = [cell.value for cell in header_cells]
+        while header and header[-1] is None: header.pop()
+        if not header or any(type(name) is not str for name in header): error(where, 'expected text column headers in row 1')
+        if len(header) != len(set(header)): error(where, 'duplicate XLSX column')
+        if set(header) - set(fields): error(where, 'unknown XLSX column')
+        if 'id' not in header: error(where, 'missing id column')
+        rows, ids = [], set()
+        for cells in records:
+            if all(cell.value is None for cell in cells): continue
+            if any(cell.value is not None for cell in cells[len(header):]): error(where, 'data outside header columns')
+            values = {name: field['default'] for name, field in fields.items()}
+            row_locations = {name: f'{where}:{cells[0].row} ({name}; omitted column, schema default)' for name in fields}
+            for name, cell in zip(header, cells):
+                location = f'{where}!{cell.coordinate} ({name})'
+                row_locations[name] = location
+                if cell.data_type in ('f', 'e') or cell.is_date: error(location, 'formula, error and date cells are not supported')
+                value = cell.value
+                if value is None: value = ''
+                if isinstance(value, str):
+                    value = parse_text(fields[name], value, location)
+                else:
+                    if fields[name]['type'] == 'int64':
+                        if type(value) not in (int, float) or (type(value) is float and not math.isfinite(value)):
+                            error(location, 'expected an integer or decimal text')
+                        if abs(value) > 999999999999999: error(location, 'integers beyond 15 digits require a text cell')
+                        if int(value) != value: error(location, 'expected an integer or decimal text')
+                        value = int(value)
+                    value = checked_value(fields[name], value, location)
+                values[name] = value
+            if not values['id'] or values['id'] in ids: error(row_locations['id'], 'empty or duplicate content ID')
+            ids.add(values['id']); rows.append(values)
+            if locations is not None: locations.append(row_locations)
+        return rows
+    finally:
+        workbook.close()
+
+
+def catalog_entries(path):
     """Resolve manifest paths without reading data, also used by CMake DEPENDS."""
     path = pathlib.Path(path).resolve()
     data = load_json(path)
@@ -209,10 +273,14 @@ def catalog_inputs(path):
     inputs, seen = [], set()
     for index, entry in enumerate(data['tables']):
         where = f'{path}:tables[{index}]'
-        if not isinstance(entry, dict) or set(entry) != {'schema', 'csv'}:
-            error(where, 'table entry requires schema and csv paths')
+        if (not isinstance(entry, dict) or 'schema' not in entry or
+                set(entry) - {'schema', 'csv', 'xlsx', 'sheet'} or
+                ('csv' in entry) == ('xlsx' in entry) or ('sheet' in entry and 'xlsx' not in entry)):
+            error(where, 'table entry requires schema and exactly one csv/xlsx path; sheet is XLSX only')
+        sheet = entry.get('sheet')
+        if 'sheet' in entry and (not isinstance(sheet, str) or not sheet): error(where, 'sheet must be nonempty text')
         paths = []
-        for key in ('schema', 'csv'):
+        for key in ('schema', 'csv' if 'csv' in entry else 'xlsx'):
             value = entry[key]
             if not isinstance(value, str) or not value or any(c in value for c in '\r\n;\x00'):
                 error(where, 'expected nonempty path without newline, semicolon or NUL')
@@ -221,21 +289,27 @@ def catalog_inputs(path):
                 error(where, 'resolved path cannot contain newline or semicolon')
             paths.append(resolved)
         if paths[0] in seen: error(where, 'duplicate catalog schema')
-        seen.add(paths[0]); inputs.append(tuple(paths))
+        seen.add(paths[0]); inputs.append((*paths, 'xlsx' in entry, sheet))
     return inputs
 
 
-def load_content(schema_path, schema, csv_path=None, catalog_path=None):
-    if catalog_path and csv_path: error(catalog_path, '--catalog and --csv are mutually exclusive')
-    inputs = catalog_inputs(catalog_path) if catalog_path else [(pathlib.Path(schema_path).resolve(), csv_path)]
+def catalog_inputs(path):
+    return [entry[:2] for entry in catalog_entries(path)]
+
+
+def load_content(schema_path, schema, csv_path=None, catalog_path=None, xlsx_path=None, sheet=None):
+    if sum(bool(p) for p in (csv_path, catalog_path, xlsx_path)) > 1:
+        error('content', '--catalog, --csv and --xlsx are mutually exclusive')
+    if sheet is not None and not xlsx_path: error('content', '--sheet requires --xlsx')
+    inputs = catalog_entries(catalog_path) if catalog_path else [(pathlib.Path(schema_path).resolve(), csv_path or xlsx_path, bool(xlsx_path), sheet)]
     tables, selected = {}, None
     # Load all tables first, so self-references and cycles need no recursion.
-    for definition, content in inputs:
+    for definition, content, excel, worksheet in inputs:
         current = schema if definition == pathlib.Path(schema_path).resolve() else load_schema(definition)
         table = current['table']
         if table in tables: error(definition, f'duplicate catalog table {table}')
         locations = []
-        rows = load_csv(content, current, locations) if content else []
+        rows = (load_xlsx(content, current, locations, worksheet) if excel else load_csv(content, current, locations)) if content else []
         tables[table] = (current, rows, locations, definition, {row['id'] for row in rows})
         if definition == pathlib.Path(schema_path).resolve(): selected = rows
     if selected is None: error(catalog_path, 'requested schema is not in catalog')
@@ -270,6 +344,40 @@ def cpp_value(kind, value):
     return f'double{{{repr(float(value))}}}'
 
 
+def client_schema(schema):
+    return {'name': schema['name'], 'version': schema['version'], 'reserved_ids': schema['reserved_ids'],
+            'fields': [{key: value for key, value in field.items() if key != 'reference'}
+                       for field in schema['fields'] if field['visibility'] != 'server']}
+
+
+def cs_value(kind, value):
+    if kind == 'string': return json.dumps(value, ensure_ascii=True)
+    if kind == 'bool': return str(value).lower()
+    if kind == 'int64': return 'long.MinValue' if value == -(2**63) else str(value) + 'L'
+    return repr(float(value)) + 'D'
+
+
+def generate_csharp(schema):
+    client = client_schema(schema)
+    # Separate namespace per schema avoids collisions with arbitrary valid field names.
+    # Property prefixes also avoid C# keywords and the fixed generated class members.
+    lines = ['// Generated by tools/entity_schema.py; do not edit.',
+             f'namespace Chwell.Generated.@{schema["name"]}', '{',
+             '    public sealed class ClientEntity', '    {']
+    kinds = {'string': 'string', 'int64': 'long', 'double': 'double', 'bool': 'bool'}
+    for field in client['fields']:
+        lines += [f'        // {field["visibility"]}; field ID {field["id"]}.',
+                  f'        public {kinds[field["type"]]} value_{field["name"]} {{ get; set; }} = {cs_value(field["type"], field["default"])};']
+    lines += ['    }', '    public static class Contract', '    {',
+              f'        public const uint SchemaVersion = {schema["version"]}u;',
+              f'        public const uint KeyFieldId = {schema["key"]}u;',
+              '        public const string SchemaJson = ' + cs_value('string', json.dumps(client, ensure_ascii=True, sort_keys=True, separators=(',', ':'))) + ';']
+    for field in client['fields']:
+        lines.append(f'        public const uint field_{field["name"]} = {field["id"]}u;')
+    lines += ['    }', '}', '']
+    return '\n'.join(lines)
+
+
 def generate(schema, rows):
     name = schema['name']
     lines = ['// Generated by tools/entity_schema.py; do not edit.', '#pragma once',
@@ -301,9 +409,7 @@ def generate(schema, rows):
         lines += [f'    static constexpr ::chwell::schema::FieldId field_{key} = {field["id"]}u;',
                   f'    const {cpp_type}& get_{key}() const {{ return ::std::get<{cpp_type}>(::chwell::schema::SchemaEntity::value(field_{key})); }}',
                   f'    bool set_{key}({cpp_type} input, ::std::string* error = nullptr) {{ return ::chwell::schema::SchemaEntity::set_value(field_{key}, ::std::move(input), error); }}']
-    client = {'name': name, 'version': schema['version'], 'reserved_ids': schema['reserved_ids'],
-              'fields': [{key: value for key, value in field.items() if key != 'reference'}
-                         for field in schema['fields'] if field['visibility'] != 'server']}
+    client = client_schema(schema)
     client_text = json.dumps(client, ensure_ascii=True, sort_keys=True, separators=(',', ':'))
     lines += [f'    static ::std::string client_schema() {{ return {cpp_string(client_text)}; }}',
               f'    static ::std::vector<{name}> content() {{', f'        ::std::vector<{name}> rows;']
@@ -336,22 +442,30 @@ def main():
     parser.add_argument('schema', nargs='?')
     parser.add_argument('--previous')
     parser.add_argument('--csv')
+    parser.add_argument('--xlsx', help='Excel content workbook (requires openpyxl)')
+    parser.add_argument('--sheet', help='worksheet name; mandatory for multiple worksheets')
     parser.add_argument('--catalog', help='JSON manifest of schema/CSV pairs; validate the entire graph')
     parser.add_argument('--list-inputs', action='store_true', help='list catalog dependencies for build systems')
     parser.add_argument('--output')
+    parser.add_argument('--csharp-output', help='client contract only; excludes server fields and content rows')
     args = parser.parse_args()
     try:
         if args.list_inputs:
-            if not args.catalog or args.schema or args.output or args.csv or args.previous:
+            if not args.catalog or args.schema or args.output or args.csv or args.previous or args.xlsx or args.sheet or args.csharp_output:
                 error('arguments', '--list-inputs requires only --catalog')
             for pair in catalog_inputs(args.catalog):
                 for path in pair: print(path.as_posix())
             return
-        if not args.schema or not args.output: error('arguments', 'schema and --output are required')
+        if not args.schema or not (args.output or args.csharp_output): error('arguments', 'schema and --output or --csharp-output are required')
+        if args.output and args.csharp_output and pathlib.Path(args.output).resolve() == pathlib.Path(args.csharp_output).resolve():
+            error('arguments', 'C++ and C# outputs must have different paths')
         schema = load_schema(args.schema)
         if args.previous: check_evolution(schema, load_schema(args.previous), args.schema)
-        rows = load_content(args.schema, schema, args.csv, args.catalog)
-        atomic_write(args.output, generate(schema, rows))
+        rows = load_content(args.schema, schema, args.csv, args.catalog, args.xlsx, args.sheet)
+        outputs = []
+        if args.output: outputs.append((args.output, generate(schema, rows)))
+        if args.csharp_output: outputs.append((args.csharp_output, generate_csharp(schema)))
+        for path, content in outputs: atomic_write(path, content)
     except (ValueError, OSError, csv.Error) as exc:
         parser.exit(1, str(exc) + '\n')
 

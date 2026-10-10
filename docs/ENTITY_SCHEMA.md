@@ -134,4 +134,46 @@ chwell_generate_entity_schema(player_content content/player.schema.json generate
 
 CMake 将目录中的每个 schema/CSV 加入 DEPENDS，目录增删表会触发重新配置，更新依赖图。引用元数据不会出现在 `client_schema()`；引用不新增数据库外键，也不校验运行时 setter 或存储加载的关联值。动态修改实体引用时，业务需校验目标并处理内容版本。完整可运行例子见 [参考工程](../examples/reference_service/README.md)。
 
-还没有 Excel 导入、C# 生成、二进制内容格式、内容热切换或在线存储迁移。
+## Excel 导入与 C# 客户端契约
+
+CSV 和 C# 生成只需 Python 标准库；Excel 是可选依赖，不影响既有构建：
+
+```bash
+python -m pip install -r tools/requirements-excel.txt
+python tools/entity_schema.py schemas/player.schema.json \
+  --xlsx content/players.xlsx --sheet Players \
+  --output build/generated/player.h --csharp-output build/client/Player.cs
+# 只生成客户端契约也可以；--previous 同样执行版本演进检查
+python tools/entity_schema.py schemas/player.schema.json --csharp-output build/client/Player.cs
+python tests/test_content_clients.py --require-dotnet
+```
+
+仅支持 `.xlsx`，第一行是字段名，必须有文本类型的 id。单工作表可省略 sheet，多工作表必须显式指定。未知/重复列、合并单元格、标题外有数据、重复/空 ID 均报错。完全空白的行跳过；遗漏列采用默认值；已声明列中的空白单元格按空字符串解析，所以数字和布尔列的空白会报错。
+
+接受原生数字、布尔和文本单元格，类型不得隐式转换：数字 id 不能变字符串，数字 0/1 不能变布尔；文本数字及 true/false 沿用 CSV 的严格规则。int64 数字单元格最多允许 15 位，超过该范围必须使用文本，完整支持有符号 64 位范围。公式（包括存在缓存结果的公式）、Excel 错误值和日期单元格一律拒绝。工具不执行公式，也不借助缓存值掩盖输入错误。错误定位示例：`players.xlsx:Players!C2 (gold)`。
+
+内容目录支持混合 CSV 与 Excel，每个条目恰好选择一种内容源，sheet 仅用于 Excel：
+
+```json
+{"tables":[
+  {"schema":"player.schema.json","xlsx":"players.xlsx","sheet":"Players"},
+  {"schema":"item.schema.json","csv":"items.csv"}
+]}
+```
+
+Excel 与 CSV 共用 schema 约束、跨表引用和演进策略，包含未选中表、遗漏列默认值、自引用与循环引用的校验。`--list-inputs` 列出全部 schema 和工作簿/CSV 路径，CMake 据此更新依赖。
+
+```cmake
+chwell_generate_entity_schema(player_content content/player.schema.json generated/player.h
+    XLSX content/players.xlsx SHEET Players CSHARP_OUTPUT generated/Player.cs)
+```
+
+CMake 也可将 XLSX/SHEET 换为 CATALOG，生成的 C# 文件是受追踪的输出，删除后会重新生成。安装包包含可选依赖清单，安装后的生成函数支持相同参数。依赖安装使用安装前缀下的 `share/ChwellCore/tools/requirements-excel.txt`。
+
+机器有多个 Python 或使用虚拟环境时，配置 CMake 时传入 `-DPython3_EXECUTABLE=/path/to/python`，并使用该解释器安装 Excel 依赖，避免生成器选到另一个环境。
+
+C# 输出位于 `Chwell.Generated.<schema name>` 命名空间，`ClientEntity` 提供 `value_<field name>` 类型化属性及默认值；`Contract` 提供 `field_<field name>` 常量、SchemaVersion、KeyFieldId 和 SchemaJson，字段 ID 与 C++ 完全一致。类型对应 long/double/bool/string，字符串按 UTF-16 转义，支持 Unicode 与 NUL。字段前缀避免 C# 关键字与生成成员冲突。SchemaJson 与 C++ `client_schema()` 使用同一可见性筛选逻辑，排除 server 字段和 reference 元数据；不输出内容行、服务器表名或服务器默认值。
+
+该 C# 类型是数据契约，属性赋值不执行服务器约束，也不包含 CHWS 解码器；客户端仍需按 [同步协议](SYNC_PROTOCOL.md) 处理快照/差量及权限。所有内容验证完成后才写产物，每个文件单独原子替换；磁盘写入失败时多个产物不是一组事务。
+
+后续尚待实现二进制内容格式、内容热切换和在线存储迁移。

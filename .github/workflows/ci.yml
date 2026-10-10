@@ -6,6 +6,25 @@ on:
   pull_request:
 
 jobs:
+  content-clients:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Install optional Excel importer
+        run: python -m pip install -r tools/requirements-excel.txt
+      - name: Validate Excel cells, mixed catalogs and compiled C# contracts
+        run: python tests/test_content_clients.py --require-dotnet
+
   persistent-reference:
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -153,6 +172,14 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Install optional Excel importer
+        run: python -m pip install -r tools/requirements-excel.txt
       - name: Install package dependencies
         run: |
           sudo apt-get update
