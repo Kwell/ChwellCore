@@ -1,0 +1,3 @@
+id,level,gold,secret,speed,online
+template_warrior,5,100,server-default,1.25,false
+template_mage,3,150,server-default,1.1,false

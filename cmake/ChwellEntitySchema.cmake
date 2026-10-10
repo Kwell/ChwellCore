@@ -1,0 +1,22 @@
+# Reusable build-time generator. Python is required only for generation.
+set(CHWELL_ENTITY_SCHEMA_TOOL "${CMAKE_CURRENT_LIST_DIR}/../tools/entity_schema.py")
+function(chwell_generate_entity_schema target schema output)
+    cmake_parse_arguments(SCHEMA "" "CSV;PREVIOUS" "" ${ARGN})
+    find_package(Python3 3.8 REQUIRED COMPONENTS Interpreter)
+    get_filename_component(schema "${schema}" ABSOLUTE BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+    get_filename_component(output "${output}" ABSOLUTE BASE_DIR "${CMAKE_CURRENT_BINARY_DIR}")
+    set(arguments "${schema}" --output "${output}")
+    set(dependencies "${schema}" "${CHWELL_ENTITY_SCHEMA_TOOL}")
+    foreach(option CSV PREVIOUS)
+        if(SCHEMA_${option})
+            get_filename_component(input "${SCHEMA_${option}}" ABSOLUTE BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+            string(TOLOWER "${option}" flag)
+            list(APPEND arguments "--${flag}" "${input}")
+            list(APPEND dependencies "${input}")
+        endif()
+    endforeach()
+    add_custom_command(OUTPUT "${output}"
+        COMMAND "${Python3_EXECUTABLE}" "${CHWELL_ENTITY_SCHEMA_TOOL}" ${arguments}
+        DEPENDS ${dependencies} VERBATIM COMMENT "Generating validated entity schema")
+    add_custom_target(${target} DEPENDS "${output}")
+endfunction()

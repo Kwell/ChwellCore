@@ -4,7 +4,6 @@ on:
   push:
     branches: [ main ]
   pull_request:
-    branches: [ main ]
 
 jobs:
   config-windows:
@@ -24,6 +23,12 @@ jobs:
         run: cmake --build build-discovery --config Debug --parallel 4
       - name: Run portable discovery tests
         run: ctest --test-dir build-discovery -C Debug --output-on-failure --timeout 120
+      - name: Configure portable schema tests
+        run: cmake -S tests/schema -B build-schema
+      - name: Build portable schema tests and example
+        run: cmake --build build-schema --config Debug --parallel 4
+      - name: Run schema runtime, generator and example
+        run: ctest --test-dir build-schema -C Debug --output-on-failure --timeout 120
 
   build-and-test:
     runs-on: ubuntu-latest
@@ -40,6 +45,7 @@ jobs:
             -DCHWELL_BUILD_EXAMPLES=OFF \
             -DCHWELL_BUILD_TESTS=ON \
             -DCHWELL_USE_CONSUL=ON \
+            -DCHWELL_USE_ENTITY_SCHEMA=ON \
             -DCMAKE_CXX_FLAGS="-Wall -Wextra"
       - name: Build
         run: cmake --build build -j 4
@@ -61,6 +67,7 @@ jobs:
             -DCHWELL_BUILD_EXAMPLES=OFF \
             -DCHWELL_BUILD_TESTS=ON \
             -DCHWELL_USE_CONSUL=ON \
+            -DCHWELL_USE_ENTITY_SCHEMA=ON \
             -DCMAKE_BUILD_TYPE=Debug \
             -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
       - name: Build ASan
@@ -83,6 +90,7 @@ jobs:
             -DCHWELL_BUILD_EXAMPLES=OFF \
             -DCHWELL_BUILD_TESTS=ON \
             -DCHWELL_USE_CONSUL=ON \
+            -DCHWELL_USE_ENTITY_SCHEMA=ON \
             -DCMAKE_BUILD_TYPE=Debug \
             -DCMAKE_CXX_FLAGS="-fsanitize=thread -fno-omit-frame-pointer"
       - name: Build TSan

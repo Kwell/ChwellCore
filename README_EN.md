@@ -51,8 +51,8 @@ Modular, high-performance C++17 game server framework for SLG / MMO titles.
 | **Gray release** | `TrafficSplitter` weighted version routing (sticky by key + random); `ConfigVersionStore` multi-version config atomic switch |
 | **GM / Analytics** | `GmConsole` command registry + permission levels + audit log; `GmAdminApi` HTTP/JSON admin API; `AnalyticsPipeline` event aggregation / funnel / top events; `AnalyticsStore` snapshot persistence |
 | **Payment** | `PaymentGateway` abstraction; `MemoryPaymentGateway`; **WeChat/Alipay adapter skeletons** (injectable sign/verify/http) |
-| **Codegen** | `SchemaCodegen` field table → `PersistableEntity` skeleton |
-| **Redis** | Hand-rolled RESP/TCP client with in-memory **mock fallback**; distributed lock (`SET NX EX` / CAS delete / CAS renew + RAII) |
+| **Codegen** | `SchemaCodegen` skeletons; optional [EntitySchema](docs/ENTITY_SCHEMA.md): stable IDs, typed constraints, ORM, visibility sync, validated CSV and atomic generation |
+| **Redis** | RESP/TCP client with explicit connection failure and opt-in in-memory mock; distributed lock (`SET NX EX` / CAS delete / CAS renew + RAII) |
 | **Benchmark** | Built-in `BenchmarkSuite`: warmup + multi-sample runs + CSV/JSON export |
 
 ---
@@ -451,7 +451,7 @@ std::string text = registry.export_metrics();
 
 ### Redis & distributed lock (`chwell/redis`)
 
-`RedisClient` speaks RESP over TCP; on connect failure (or with `CHWELL_REDIS_MOCK=1`) it falls back to an **in-memory mock**. Use `is_mock()` to check the current mode.
+`RedisClient` speaks RESP over TCP and reports connection failure. Enable an **in-memory mock** explicitly with `RedisConfig::mock_mode=true` or `CHWELL_REDIS_MOCK=1`. Use `is_mock()` to check the current mode.
 
 ```cpp
 #include "chwell/redis/redis_client.h"
@@ -848,6 +848,8 @@ auto visible = aoi.get_entities_in_view(1);
 | `CHWELL_USE_MYSQL` | `OFF` | MySQL storage backend |
 | `CHWELL_USE_MONGODB` | `OFF` | MongoDB storage backend |
 | `CHWELL_USE_OPENSSL` | `OFF` | TLS / WebSocket SHA-1 handshake |
+| `CHWELL_USE_CONSUL` | `OFF` | [Consul discovery and cross-process routing](docs/DISCOVERY.md), requires libcurl / nlohmann-json |
+| `CHWELL_USE_ENTITY_SCHEMA` | `OFF` | [Shared entity metadata and content generation](docs/ENTITY_SCHEMA.md), requires Python 3.8+ for generation |
 
 **Minimal build:**
 
@@ -878,6 +880,14 @@ ctest --output-on-failure
 ```
 
 CI (GitHub Actions) runs three Linux checks: `build-and-test`, `asan`, `tsan`.
+
+CI also runs portable Windows tests and a real Consul cluster scenario. EntitySchema runtime and generator tests run in all three Linux checks and on Windows. Its standalone tests and example require no network or database dependencies:
+
+```bash
+cmake -S tests/schema -B build-schema
+cmake --build build-schema --config Debug --parallel 4
+ctest --test-dir build-schema -C Debug --output-on-failure
+```
 
 The configuration module also has a standalone Windows / Linux test project without network or optional storage dependencies. It requires CMake 3.14+ and a C++17 compiler, and downloads GoogleTest if no installed copy is found. Run these commands from the repository root; the `config-windows` CI job uses the same entry point:
 
@@ -1171,7 +1181,7 @@ TcpServer (legacy)               EpollTcpServer (high performance)
 - **Distributed transactions**: TCC two-phase + Saga compensation
 - **Plugin hot reload** (dlopen safe swap + mtime check)
 - **Config**: JSON / env profile / hot reload / snapshot rollback
-- Redis RESP client (mock fallback) + distributed lock (SET NX EX / CAS)
+- Redis RESP client (explicit mock; connection errors remain failures) + distributed lock (SET NX EX / CAS)
 - AOI (callbacks fired outside lock) + SLG map / battle
 - **Game systems**: leaderboard / mail / wallet (TCC holds) / social / match / anti-cheat / replay / load-bot planner
 - Benchmark framework + E2E closed-loop load test
