@@ -342,6 +342,9 @@ foreach(module schema consul game_proto)
         add_library(Chwell::${module} ALIAS chwell_${module})
     endif()
 endforeach()
+if(CHWELL_BUILD_EXAMPLES AND CHWELL_USE_CONSUL AND CHWELL_USE_ENTITY_SCHEMA AND CHWELL_USE_MYSQL)
+    add_subdirectory(examples/cluster_reference)
+endif()
 if(CHWELL_BUNDLED_YAML)
     # The pinned upstream disables its install rules when included as a subproject.
     # Export the independently built dependency and retain its headers/license.

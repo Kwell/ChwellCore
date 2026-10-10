@@ -1,0 +1,9 @@
+{
+  "name": "ClusterPlayer", "table": "cluster_players", "key": 1, "version": 1,
+  "fields": [
+    {"id": 1, "name": "id", "type": "string", "default": "", "stored": true, "visibility": "public", "max_bytes": 64},
+    {"id": 10, "name": "level", "type": "int64", "default": 1, "stored": true, "visibility": "public", "min": 1, "max": 100},
+    {"id": 20, "name": "gold", "type": "int64", "default": 0, "stored": true, "visibility": "owner", "min": 0, "max": 1000000},
+    {"id": 30, "name": "secret", "type": "string", "default": "server-only", "stored": true, "visibility": "server", "max_bytes": 128}
+  ]
+}

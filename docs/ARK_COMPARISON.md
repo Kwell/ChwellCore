@@ -188,3 +188,15 @@ Service 在插件 Install 完成后规划全部组件；正常关闭的 PreShut/
 事件、协议处理器与定时器新增 move-only 注销令牌。令牌可交给 Service，按组件或插件归属统一清理；关闭、启动回滚及部分注册失败时先取消回调，再清理组件。取消等待其他线程的在途回调，已复制快照不再进入业务函数，自取消的重复定时器不再复活。旧注册 API 保留，只有显式使用新令牌并托管的注册项自动清理。
 
 安装参考工程实际使用 ContentReader 接口和归属事件订阅，FrameSync 超时定时器采用注销令牌。便携测试与 Linux 生命周期/路由测试接入 CI；契约及线程限制见 [REGISTRATIONS.md](REGISTRATIONS.md)。此增量仍不保证动态库安全热替换。
+
+## 15. 多服务与真实持久化参考增量
+
+新增独立 [cluster_reference](../examples/cluster_reference/README.md)：TCP 客户端经网关登录，
+发现两个 Game 节点并固定会话路由，生成玩家实体接入真实 MySQL Repository 和权限同步。
+持久化先于成功响应，数据库错误不当作记录不存在；节点/网关/注册中心恢复后重新登录。
+附标准库 Python 客户端、Docker Compose 和独立安装包构建，CI 验证真实外部依赖故障与落库。
+实现只参考角色划分，未复制 ARK 源码。
+
+此处的 JSON 是示范载荷，SessionLocator 仍是单网关本地索引。后续依次推进：分布式会话所有权
+与恢复、稳定客户端同步协议、Excel/C# 内容工具与热切换/迁移、安全插件版本替换，再补生产部署
+和按需的跨平台网络/KCP/外部 HTTP。

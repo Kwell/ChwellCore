@@ -1,0 +1,62 @@
+# Local reference credentials only. Start from the repository root as documented.
+x-role: &role
+  image: chwell-cluster-reference:local
+  build:
+    context: ../..
+    dockerfile: examples/cluster_reference/Dockerfile
+  init: true
+  stop_grace_period: 20s
+  environment: &environment
+    CHWELL_DEMO_TOKEN: local-demo-token
+    CHWELL_CLUSTER_TOKEN: local-internal-token
+    CHWELL_DB_HOST: mysql
+    CHWELL_DB_NAME: chwell
+    CHWELL_DB_USER: chwell
+    CHWELL_DB_PASSWORD: local-db-password
+  depends_on:
+    consul:
+      condition: service_healthy
+    mysql:
+      condition: service_healthy
+services:
+  consul:
+    image: hashicorp/consul:1.20.6
+    command: agent -dev -client=0.0.0.0
+    healthcheck:
+      test: ["CMD", "consul", "info"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: local-root-password
+      MYSQL_DATABASE: chwell
+      MYSQL_USER: chwell
+      MYSQL_PASSWORD: local-db-password
+    volumes:
+      - player-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=$$MYSQL_PASSWORD mysql -u$$MYSQL_USER -e 'SELECT 1' $$MYSQL_DATABASE"]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+  game-one:
+    <<: *role
+    command: ["game", "http://consul:8500", "game-one", "9201", "v1"]
+    environment:
+      <<: *environment
+      CHWELL_ADVERTISE_HOST: game-one
+  game-two:
+    <<: *role
+    command: ["game", "http://consul:8500", "game-two", "9202", "v1"]
+    environment:
+      <<: *environment
+      CHWELL_ADVERTISE_HOST: game-two
+  gateway:
+    <<: *role
+    command: ["gateway", "http://consul:8500", "9100"]
+    ports:
+      - "127.0.0.1:9100:9100"
+volumes:
+  player-data:

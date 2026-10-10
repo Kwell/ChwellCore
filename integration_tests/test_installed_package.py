@@ -108,6 +108,17 @@ endif()
              '-DCMAKE_FIND_USE_SYSTEM_PACKAGE_REGISTRY=OFF'])
         compile_command = [args.cmake, '--build', consumer, '--config', args.config, '--parallel', '2']
         run(compile_command)
+        # The full package must also consume the multi-service reference without
+        # access to this repository's build targets or source include paths.
+        config_text = next(relocated.rglob('ChwellCoreConfig.cmake')).read_text()
+        if 'set(ChwellCore_WITH_MYSQL ON)' in config_text:
+            cluster_source = root / 'independent cluster source'
+            shutil.copytree(relocated / 'share/ChwellCore/examples/cluster_reference', cluster_source)
+            cluster_build = root / 'cluster consumer build'
+            run([args.cmake, '-S', cluster_source, '-B', cluster_build,
+                 f'-DCMAKE_PREFIX_PATH={relocated}', f'-DCMAKE_BUILD_TYPE={args.config}',
+                 '-DCMAKE_FIND_USE_PACKAGE_REGISTRY=OFF'])
+            run([args.cmake, '--build', cluster_build, '--parallel', '2'])
         run([consumer / 'package_probe'])
         executable = consumer / 'reference_service'
         output = run([executable, '--smoke'])
