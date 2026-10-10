@@ -27,6 +27,7 @@ public:
     TcpServer(IoService& io_service, unsigned short port);
 
     void start_accept();
+    bool start_accept_checked();
     void stop();
     ~TcpServer() { stop(); }
 

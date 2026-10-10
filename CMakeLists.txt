@@ -112,6 +112,7 @@ add_library(chwell_core
     src/net/connection_pool.cpp
     src/cluster/node.cpp
     src/service/service.cpp
+    src/service/app_host.cpp
     src/service/plugin.cpp
     src/service/hot_reload.cpp
     src/protocol/message.cpp
@@ -260,6 +261,8 @@ if (CHWELL_BUILD_TESTS)
             tests/test_hot_reload.cpp
             tests/test_transaction.cpp
             tests/test_config.cpp
+            tests/test_service_lifecycle.cpp
+            tests/test_app_host.cpp
             tests/test_slg.cpp
             tests/test_game_components.cpp
             tests/test_player_move.cpp
@@ -307,6 +310,9 @@ endif()
 file(COPY ${CMAKE_SOURCE_DIR}/config DESTINATION ${CMAKE_BINARY_DIR})
 
 if (CHWELL_BUILD_EXAMPLES)
+    add_executable(example_config_driven examples/config_driven_demo.cpp)
+    target_link_libraries(example_config_driven PRIVATE chwell_core)
+
     add_executable(example_echo_server
         examples/echo_server.cpp
     )

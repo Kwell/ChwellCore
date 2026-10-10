@@ -7,6 +7,8 @@
 #include <unordered_map>
 #include <atomic>
 #include <algorithm>
+#include <exception>
+#include <optional>
 
 #include "chwell/core/thread_pool.h"
 #include "chwell/core/logger.h"
@@ -47,7 +49,6 @@ public:
           thread_pool_(worker_threads),
           worker_threads_(worker_threads),
           running_(false),
-          init_stage_(0),
           io_service_ptr_(std::make_unique<net::IoService>()),
           io_service_(*io_service_ptr_) {
 
@@ -128,7 +129,16 @@ public:
     Service& operator=(const Service&) = delete;
 
     ~Service() {
+        registration_blocked_ = true;
         stop();
+        std::vector<Component*> remaining;
+        for (auto it = components_.rbegin(); it != components_.rend(); ++it) {
+            if (component_records_.at(it->get()).needs_shutdown) remaining.push_back(it->get());
+        }
+        for (auto* component : remaining) {
+            cleanup_call(component, true);
+            cleanup_call(component, false);
+        }
     }
 
     // ========== 组件管理 ==========
@@ -138,15 +148,53 @@ public:
         static_assert(std::is_base_of<Component, T>::value,
                       "T must derive from chwell::service::Component");
 
-        std::unique_ptr<T> comp(new T(std::forward<Args>(args)...));
-        T* raw = comp.get();
+        auto comp = std::make_unique<T>(std::forward<Args>(args)...);
+        return static_cast<T*>(add_component(std::move(comp)));
+    }
+
+    Component* add_component(std::unique_ptr<Component> comp,
+                             std::optional<int> priority = std::nullopt) {
+        if (registration_blocked_ || running_ || (starting_ && !registration_owner_) ||
+            !initialized_components_.empty()) {
+            return registration_failed("Component registration requires an inactive service");
+        }
+        if (!comp) return registration_failed("Component registration rejected: null component");
+        Component* raw = comp.get();
+        if (raw->name().empty()) {
+            return registration_failed("Component registration rejected: empty name");
+        }
+        for (const auto& existing : components_) {
+            if (existing && existing->name() == raw->name()) {
+                return registration_failed("Component registration rejected: duplicate name " + raw->name());
+            }
+        }
+        component_records_[raw] = {registration_owner_, priority, true};
         components_.push_back(std::move(comp));
 
         // 兼容旧接口
-        raw->on_register(*this);
+        try {
+            raw->on_register(*this);
+        } catch (...) {
+            registration_failed("Component on_register threw: " + raw->name());
+            remove_component(raw);
+            throw;
+        }
 
         CHWELL_LOG_INFO("Component registered: " + raw->name());
         return raw;
+    }
+
+    std::size_t component_count() const { return components_.size(); }
+    Component* get_component(const std::string& name) const {
+        for (const auto& comp : components_) {
+            if (comp->name() == name) return comp.get();
+        }
+        return nullptr;
+    }
+    std::string component_owner(const Component* component) const {
+        auto it = component_records_.find(component);
+        return it != component_records_.end() && it->second.owner
+            ? it->second.owner->GetName() : std::string();
     }
 
     template <typename T>
@@ -165,14 +213,20 @@ public:
     // ========== 7 阶段生命周期管理 ==========
 
     bool Init() {
+        if (running_ || !initialized_components_.empty()) return false;
         CHWELL_LOG_INFO("Service Init: initializing components...");
 
-        std::sort(components_.begin(), components_.end(),
-            [](const std::unique_ptr<Component>& a, const std::unique_ptr<Component>& b) {
-                return a->priority() < b->priority();
+        std::stable_sort(components_.begin(), components_.end(),
+            [this](const std::unique_ptr<Component>& a, const std::unique_ptr<Component>& b) {
+                const auto& ar = component_records_.at(a.get());
+                const auto& br = component_records_.at(b.get());
+                return ar.priority.value_or(a->priority()) < br.priority.value_or(b->priority());
             });
 
         for (auto& comp : components_) {
+            // Include failed Init: it may have allocated resources before returning false.
+            initialized_components_.push_back(comp.get());
+            component_records_.at(comp.get()).needs_shutdown = true;
             if (!comp->Init()) {
                 CHWELL_LOG_ERROR("Component Init failed: " + comp->name());
                 return false;
@@ -218,40 +272,63 @@ public:
     // ========== 启动和停止 ==========
 
     void start() {
-        if (!Init()) { CHWELL_LOG_ERROR("Service Init failed, aborting..."); return; }
-        init_stage_ = 1;
-        if (!PostInit()) { CHWELL_LOG_ERROR("Service PostInit failed, aborting..."); Shut(); return; }
-        init_stage_ = 2;
-        if (!CheckConfig()) { CHWELL_LOG_ERROR("Service CheckConfig failed, aborting..."); Shut(); return; }
-        init_stage_ = 3;
-        if (!PreUpdate()) { CHWELL_LOG_ERROR("Service PreUpdate failed, aborting..."); Shut(); return; }
-        init_stage_ = 4;
+        (void)start_checked();
+    }
 
-        // 启动 Logic Thread（epoll 模式）
-        if (use_epoll_ && logic_pool_) {
-            logic_pool_->start();
-            CHWELL_LOG_INFO("Service: LogicThreadPool started (workers="
-                            << logic_pool_->size() << ")");
-        }
-
-        // 启动网络
-        if (use_epoll_) {
-            epoll_server_->start();
-        } else {
-            legacy_server_->start_accept();
-            for (std::size_t i = 0; i < worker_threads_; ++i) {
-                thread_pool_.post([this]() { io_service_.run(); });
+    bool start_checked() {
+        if (running_) return true;
+        if (starting_ || stopped_after_run_ || !initialized_components_.empty()) return false;
+        starting_ = true;
+        try {
+            if (!plugin_manager_.InstallAll(*this) || !Init() || !PostInit() ||
+                !CheckConfig() || !PreUpdate()) {
+                cleanup_start_failure();
+                return false;
             }
-        }
+            if ((use_epoll_ && !epoll_server_->is_valid()) ||
+                (!use_epoll_ && !legacy_server_->is_valid())) {
+                CHWELL_LOG_ERROR("Service: network listener is not ready");
+                cleanup_start_failure();
+                return false;
+            }
 
-        running_ = true;
-        last_update_time_ = std::chrono::steady_clock::now();
-        CHWELL_LOG_INFO("Service started successfully"
-                        << (use_epoll_ ? " (epoll mode)" : " (legacy mode)"));
+            if (use_epoll_ && logic_pool_) logic_pool_->start();
+
+            network_attempted_ = true;
+            const bool network_ready = use_epoll_ ? epoll_server_->start_checked()
+                                                  : legacy_server_->start_accept_checked();
+            if (!network_ready) {
+                cleanup_start_failure();
+                return false;
+            }
+            if (!use_epoll_) {
+                for (std::size_t i = 0; i < worker_threads_; ++i) {
+                    thread_pool_.post([this]() { io_service_.run(); });
+                }
+            }
+
+            last_update_time_ = std::chrono::steady_clock::now();
+            running_ = true;
+            starting_ = false;
+            CHWELL_LOG_INFO("Service started successfully"
+                            << (use_epoll_ ? " (epoll mode)" : " (legacy mode)"));
+            return true;
+        } catch (const std::exception& error) {
+            CHWELL_LOG_ERROR("Service startup exception: " << error.what());
+        } catch (...) {
+            CHWELL_LOG_ERROR("Service startup exception");
+        }
+        cleanup_start_failure();
+        return false;
     }
 
     void stop() {
-        if (!running_.exchange(false)) return;
+        if (!running_.exchange(false)) {
+            if (!initialized_components_.empty()) cleanup_start_failure();
+            else plugin_manager_.UninstallAll(*this);
+            return;
+        }
+        stopped_after_run_ = true;
 
         CHWELL_LOG_INFO("Service stopping (graceful shutdown)...");
 
@@ -268,6 +345,8 @@ public:
                 CHWELL_LOG_INFO("Step 1: Stopping legacy server");
                 legacy_server_->stop();
             }
+            io_service_.stop();
+            thread_pool_.stop();
         }
 
         // Step 2: 通知组件即将关闭（PreShut），组件应停止接收新请求，标记进入关机状态
@@ -288,7 +367,11 @@ public:
         // Step 4: 执行各组件的 flush 操作（强制脏数据落地）
         CHWELL_LOG_INFO("Step 4: Flushing all dirty data to storage");
         for (auto& comp : components_) {
-            comp->Flush();  // 🆕 调用组件的 flush 方法
+            try {
+                comp->Flush();
+            } catch (...) {
+                CHWELL_LOG_ERROR("Component Flush threw during shutdown");
+            }
         }
 
         // Step 5: 停止 Logic Thread
@@ -312,7 +395,6 @@ public:
             bridge_map_.clear();
         }
 
-        init_stage_ = 0;
         CHWELL_LOG_INFO("Service stopped (graceful shutdown complete)");
     }
 
@@ -321,12 +403,18 @@ public:
 
     void PreShut() {
         CHWELL_LOG_INFO("Service PreShut: notifying components...");
-        for (auto& comp : components_) comp->PreShut();
+        for (auto it = initialized_components_.rbegin(); it != initialized_components_.rend(); ++it) {
+            cleanup_call(*it, true);
+        }
     }
 
     void Shut() {
         CHWELL_LOG_INFO("Service Shut: releasing resources...");
-        for (auto& comp : components_) comp->Shut();
+        for (auto it = initialized_components_.rbegin(); it != initialized_components_.rend(); ++it) {
+            cleanup_call(*it, false);
+            component_records_.at(*it).needs_shutdown = false;
+        }
+        initialized_components_.clear();
     }
 
     void Update() {
@@ -353,6 +441,77 @@ public:
     PluginManager& plugin_manager() { return plugin_manager_; }
 
 private:
+    friend class PluginManager;
+    struct ComponentRecord {
+        const IPlugin* owner;
+        std::optional<int> priority;
+        bool needs_shutdown;
+    };
+
+    Component* registration_failed(const std::string& message) {
+        registration_error_ = true;
+        CHWELL_LOG_ERROR(message);
+        return nullptr;
+    }
+
+    void cleanup_call(Component* component, bool pre_shut) noexcept {
+        try {
+            bool ok = pre_shut ? component->PreShut() : component->Shut();
+            if (!ok) CHWELL_LOG_ERROR("Component cleanup failed: " << component->name());
+        } catch (...) {
+            CHWELL_LOG_ERROR("Component cleanup threw");
+        }
+    }
+
+    void remove_component(Component* component) {
+        auto record = component_records_.find(component);
+        if (record != component_records_.end() && record->second.needs_shutdown) {
+            cleanup_call(component, true);
+            cleanup_call(component, false);
+        }
+        component_records_.erase(component);
+        components_.erase(std::remove_if(components_.begin(), components_.end(),
+            [component](const std::unique_ptr<Component>& comp) { return comp.get() == component; }),
+            components_.end());
+    }
+
+    void remove_owned_components(const IPlugin* owner) {
+        std::vector<Component*> owned;
+        for (auto it = components_.rbegin(); it != components_.rend(); ++it) {
+            if (component_records_.at(it->get()).owner == owner) owned.push_back(it->get());
+        }
+        for (auto* component : owned) remove_component(component);
+    }
+
+    void shutdown_owned_components(const IPlugin* owner) {
+        for (auto it = components_.rbegin(); it != components_.rend(); ++it) {
+            auto& record = component_records_.at(it->get());
+            if (record.owner == owner && record.needs_shutdown) {
+                cleanup_call(it->get(), true);
+                cleanup_call(it->get(), false);
+                record.needs_shutdown = false;
+            }
+        }
+    }
+
+    void cleanup_start_failure() {
+        if (network_attempted_) {
+            if (use_epoll_) epoll_server_->stop();
+            else {
+                legacy_server_->stop();
+                io_service_.stop();
+                thread_pool_.stop();
+            }
+            stopped_after_run_ = true;
+        }
+        if (logic_pool_) logic_pool_->stop();
+        running_ = false;
+        PreShut();
+        Shut();
+        plugin_manager_.UninstallAll(*this);
+        starting_ = false;
+    }
+
     /**
      * @brief 分发消息到 Component
      *
@@ -398,10 +557,17 @@ private:
     core::ThreadPool thread_pool_;
     std::size_t worker_threads_;
     std::vector<std::unique_ptr<Component>> components_;
+    std::unordered_map<const Component*, ComponentRecord> component_records_;
+    std::vector<Component*> initialized_components_;
+    const IPlugin* registration_owner_ = nullptr;
+    bool registration_error_ = false;
+    bool registration_blocked_ = false;
+    bool starting_ = false;
+    bool network_attempted_ = false;
+    bool stopped_after_run_ = false;
 
     PluginManager plugin_manager_;
     std::atomic<bool> running_;
-    int init_stage_;
     std::chrono::steady_clock::time_point last_update_time_;
     int shutdown_drain_timeout_ms_ = 5000;  // 🆕 默认 5 秒排空超时
 };

@@ -9,6 +9,10 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <netdb.h>
+#include <fcntl.h>
+#include <poll.h>
+#include <sys/time.h>
+#include <cerrno>
 
 namespace chwell {
 namespace redis {
@@ -29,7 +33,8 @@ void append_resp_cmd(std::string& out, const std::vector<std::string>& args) {
 bool send_all(int fd, const std::string& data) {
     size_t off = 0;
     while (off < data.size()) {
-        ssize_t n = ::send(fd, data.data() + off, data.size() - off, 0);
+        ssize_t n = ::send(fd, data.data() + off, data.size() - off, MSG_NOSIGNAL);
+        if (n < 0 && errno == EINTR) continue;
         if (n <= 0) return false;
         off += static_cast<size_t>(n);
     }
@@ -82,12 +87,21 @@ RedisClient::~RedisClient() {
 }
 
 bool RedisClient::connect() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (connected_) return true;
+    disconnect_unlocked();
+    use_mock_ = false;
     const char* force_mock = std::getenv("CHWELL_REDIS_MOCK");
-    if (force_mock && force_mock[0] == '1') {
+    if (config_.mock_mode || (force_mock && std::strcmp(force_mock, "1") == 0)) {
         use_mock_ = true;
         connected_ = true;
-        CHWELL_LOG_WARN("RedisClient: forced IN-MEMORY MOCK (CHWELL_REDIS_MOCK=1)");
+        CHWELL_LOG_WARN("RedisClient: explicitly enabled IN-MEMORY MOCK");
         return true;
+    }
+    if (config_.port < 1 || config_.port > 65535 || config_.db < 0 ||
+        config_.connection_timeout_ms <= 0 || config_.read_timeout_ms <= 0) {
+        CHWELL_LOG_ERROR("RedisClient: invalid connection configuration");
+        return false;
     }
     struct addrinfo hints;
     std::memset(&hints, 0, sizeof(hints));
@@ -96,42 +110,61 @@ bool RedisClient::connect() {
     struct addrinfo* res = nullptr;
     std::string port = std::to_string(config_.port);
     if (getaddrinfo(config_.host.c_str(), port.c_str(), &hints, &res) != 0 || !res) {
-        CHWELL_LOG_ERROR("RedisClient: DNS failed, fallback mock");
-        use_mock_ = true;
-        connected_ = true;
-        return true;
+        CHWELL_LOG_ERROR("RedisClient: DNS failed");
+        if (res) freeaddrinfo(res);
+        return false;
     }
     int fd = ::socket(res->ai_family, res->ai_socktype, res->ai_protocol);
     if (fd < 0) {
         freeaddrinfo(res);
-        use_mock_ = true;
-        connected_ = true;
-        return true;
+        CHWELL_LOG_ERROR("RedisClient: socket failed");
+        return false;
     }
-    if (::connect(fd, res->ai_addr, res->ai_addrlen) != 0) {
+    int flags = ::fcntl(fd, F_GETFL, 0);
+    bool ready = flags >= 0 && ::fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0;
+    if (ready && ::connect(fd, res->ai_addr, res->ai_addrlen) != 0) {
+        ready = false;
+        if (errno == EINPROGRESS) {
+            pollfd pending{fd, POLLOUT, 0};
+            int error = 0;
+            socklen_t size = sizeof(error);
+            ready = ::poll(&pending, 1, config_.connection_timeout_ms) > 0 &&
+                    ::getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &size) == 0 && error == 0;
+        }
+    }
+    if (!ready || ::fcntl(fd, F_SETFL, flags) != 0) {
         ::close(fd);
         freeaddrinfo(res);
-        CHWELL_LOG_WARN("RedisClient: connect failed, fallback IN-MEMORY MOCK");
-        use_mock_ = true;
-        connected_ = true;
-        return true;
+        CHWELL_LOG_ERROR("RedisClient: connect failed or timed out");
+        return false;
     }
     freeaddrinfo(res);
+    timeval timeout{config_.read_timeout_ms / 1000,
+                    (config_.read_timeout_ms % 1000) * 1000};
+    if (::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) != 0 ||
+        ::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) != 0) {
+        ::close(fd);
+        return false;
+    }
     fd_ = fd;
     use_mock_ = false;
     connected_ = true;
     rbuf_.clear();
     if (!config_.password.empty()) {
-        RedisReply auth = execute({"AUTH", config_.password});
-        if (auth.is_error()) {
-            disconnect();
-            use_mock_ = true;
-            connected_ = true;
-            return true;
+        RedisReply auth = execute_unlocked({"AUTH", config_.password});
+        if (auth.type != ReplyType::STATUS || auth.str != "OK") {
+            CHWELL_LOG_ERROR("RedisClient: AUTH failed");
+            disconnect_unlocked();
+            return false;
         }
     }
     if (config_.db != 0) {
-        execute({"SELECT", std::to_string(config_.db)});
+        RedisReply select = execute_unlocked({"SELECT", std::to_string(config_.db)});
+        if (select.type != ReplyType::STATUS || select.str != "OK") {
+            CHWELL_LOG_ERROR("RedisClient: SELECT failed");
+            disconnect_unlocked();
+            return false;
+        }
     }
     CHWELL_LOG_INFO("RedisClient: RESP connected to " + config_.host + ":" + port);
     return true;
@@ -139,6 +172,10 @@ bool RedisClient::connect() {
 
 void RedisClient::disconnect() {
     std::lock_guard<std::mutex> lock(mutex_);
+    disconnect_unlocked();
+}
+
+void RedisClient::disconnect_unlocked() {
     if (fd_ >= 0) {
         ::close(fd_);
         fd_ = -1;
@@ -157,12 +194,27 @@ void RedisClient::disconnect() {
 }
 
 bool RedisClient::is_connected() const {
+    std::lock_guard<std::mutex> lock(mutex_);
     return connected_;
+}
+
+bool RedisClient::is_mock() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return use_mock_;
 }
 
 RedisReply RedisClient::execute(const std::vector<std::string>& args) {
     std::lock_guard<std::mutex> lock(mutex_);
+    return execute_unlocked(args);
+}
 
+RedisReply RedisClient::execute_unlocked(const std::vector<std::string>& args) {
+    if (!connected_) {
+        RedisReply err;
+        err.type = ReplyType::ERROR;
+        err.str = "not connected";
+        return err;
+    }
     if (!use_mock_) {
         RedisReply err;
         if (args.empty() || fd_ < 0) {
@@ -173,6 +225,7 @@ RedisReply RedisClient::execute(const std::vector<std::string>& args) {
         std::string cmd;
         append_resp_cmd(cmd, args);
         if (!send_all(fd_, cmd)) {
+            disconnect_unlocked();
             err.type = ReplyType::ERROR;
             err.str = "send failed";
             return err;
@@ -186,7 +239,9 @@ RedisReply RedisClient::execute(const std::vector<std::string>& args) {
             }
             char tmp[4096];
             ssize_t n = ::recv(fd_, tmp, sizeof(tmp), 0);
+            if (n < 0 && errno == EINTR) continue;
             if (n <= 0) {
+                disconnect_unlocked();
                 err.type = ReplyType::ERROR;
                 err.str = "recv failed";
                 return err;
@@ -195,7 +250,7 @@ RedisReply RedisClient::execute(const std::vector<std::string>& args) {
             if (rbuf_.size() > 16 * 1024 * 1024) {
                 err.type = ReplyType::ERROR;
                 err.str = "reply too large";
-                rbuf_.clear();
+                disconnect_unlocked();
                 return err;
             }
         }
@@ -312,7 +367,7 @@ RedisReply RedisClient::execute(const std::vector<std::string>& args) {
         } else {
             auto now = std::chrono::steady_clock::now().time_since_epoch().count() / 1000000000;
             reply.type = ReplyType::INTEGER;
-            reply.integer = std::max((int64_t)0, expires_[args[1]] - now);
+            reply.integer = std::max<int64_t>(0, expires_[args[1]] - now);
         }
     }
     else if (cmd == "INCR" && args.size() >= 2) {
@@ -602,11 +657,12 @@ bool RedisClient::setnx(const std::string& key, const std::string& value) {
 
 // 原子 SET NX EX：不存在则设置并带过期（单条命令，避免 SETNX+EXPIRE 两步竞态）
 bool RedisClient::set_nx_ex(const std::string& key, const std::string& value, int seconds) {
+    std::unique_lock<std::mutex> lock(mutex_);
+    if (!connected_ || seconds <= 0) return false;
     if (!use_mock_) {
-        RedisReply r = execute({"SET", key, value, "NX", "EX", std::to_string(seconds)});
+        RedisReply r = execute_unlocked({"SET", key, value, "NX", "EX", std::to_string(seconds)});
         return r.type == ReplyType::STATUS || (r.is_string() && r.str == "OK");
     }
-    std::lock_guard<std::mutex> lock(mutex_);
     // 先检查过期清理
     auto exp_it = expires_.find(key);
     if (exp_it != expires_.end()) {
@@ -628,14 +684,15 @@ bool RedisClient::set_nx_ex(const std::string& key, const std::string& value, in
 
 // 原子 CAS+DEL：仅当值匹配时才删除（避免删除他人的锁）
 bool RedisClient::compare_and_del(const std::string& key, const std::string& expected) {
+    std::unique_lock<std::mutex> lock(mutex_);
+    if (!connected_) return false;
     if (!use_mock_) {
         static const char* kLua =
             "if redis.call('GET', KEYS[1]) == ARGV[1] then "
             "return redis.call('DEL', KEYS[1]) else return 0 end";
-        RedisReply r = execute({"EVAL", kLua, "1", key, expected});
+        RedisReply r = execute_unlocked({"EVAL", kLua, "1", key, expected});
         return r.is_integer() && r.integer > 0;
     }
-    std::lock_guard<std::mutex> lock(mutex_);
     // 先检查过期清理
     auto exp_it = expires_.find(key);
     if (exp_it != expires_.end()) {
@@ -657,14 +714,15 @@ bool RedisClient::compare_and_del(const std::string& key, const std::string& exp
 
 // 原子 CAS+EXPIRE：仅当值匹配时才续期（避免续期他人的锁）
 bool RedisClient::compare_and_expire(const std::string& key, const std::string& expected, int seconds) {
+    std::unique_lock<std::mutex> lock(mutex_);
+    if (!connected_ || seconds <= 0) return false;
     if (!use_mock_) {
         static const char* kLua =
             "if redis.call('GET', KEYS[1]) == ARGV[1] then "
             "return redis.call('EXPIRE', KEYS[1], ARGV[2]) else return 0 end";
-        RedisReply r = execute({"EVAL", kLua, "1", key, expected, std::to_string(seconds)});
+        RedisReply r = execute_unlocked({"EVAL", kLua, "1", key, expected, std::to_string(seconds)});
         return r.is_integer() && r.integer > 0;
     }
-    std::lock_guard<std::mutex> lock(mutex_);
     // 先懒过期：避免复活已死锁
     auto exp_it = expires_.find(key);
     if (exp_it != expires_.end()) {

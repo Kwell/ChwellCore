@@ -7,58 +7,67 @@ namespace chwell {
 namespace service {
 
 bool PluginManager::InstallAll(Service& service) {
-    if (installed_) {
-        CHWELL_LOG_WARN("PluginManager: InstallAll() already called, skipping");
-        return true;
-    }
-
-    // 按优先级排序
-    std::sort(plugins_.begin(), plugins_.end(),
+    if (installed_) return installed_service_ == &service;
+    if (installing_ || uninstalling_ || service.running_ || !service.initialized_components_.empty() ||
+        service.registration_owner_) return false;
+    std::stable_sort(plugins_.begin(), plugins_.end(),
         [](const std::unique_ptr<IPlugin>& a, const std::unique_ptr<IPlugin>& b) {
             return a->GetPriority() < b->GetPriority();
         });
     
-    CHWELL_LOG_INFO("PluginManager: installing " << plugins_.size() << " plugins...");
+    installed_plugins_.reserve(plugins_.size());
+    installing_ = true;
+    installed_service_ = &service;
     
     for (auto& plugin : plugins_) {
-        if (!plugin) continue;
-        
-        CHWELL_LOG_INFO("PluginManager: installing " << plugin->GetName() 
-            << " (v" << plugin->GetVersion() << ")...");
-        
-        if (!plugin->Install(service)) {
-            CHWELL_LOG_ERROR("PluginManager: " << plugin->GetName() << " Install failed!");
+        service.registration_owner_ = plugin.get();
+        service.registration_error_ = false;
+        // Include a failed installation so its partial resources are unwound.
+        installed_plugins_.push_back(plugin.get());
+        bool ok = false;
+        try {
+            ok = plugin->Install(service) && !service.registration_error_;
+        } catch (...) {
+            CHWELL_LOG_ERROR("PluginManager: Install threw for " << plugin->GetName());
+        }
+        service.registration_owner_ = nullptr;
+        if (!ok) {
+            CHWELL_LOG_ERROR("PluginManager: Install failed for " << plugin->GetName());
+            installing_ = false;
+            UninstallAll(service);
             return false;
         }
-        
-        CHWELL_LOG_INFO("PluginManager: " << plugin->GetName() << " installed successfully");
     }
     
+    installing_ = false;
     installed_ = true;
-    CHWELL_LOG_INFO("PluginManager: all plugins installed");
     return true;
 }
 
 bool PluginManager::UninstallAll(Service& service) {
-    CHWELL_LOG_INFO("PluginManager: uninstalling " << plugins_.size() << " plugins...");
-    
-    // 逆序卸载
-    for (auto it = plugins_.rbegin(); it != plugins_.rend(); ++it) {
-        auto& plugin = *it;
-        if (!plugin) continue;
-        
-        CHWELL_LOG_INFO("PluginManager: uninstalling " << plugin->GetName() << "...");
-        
-        if (!plugin->Uninstall(service)) {
-            CHWELL_LOG_ERROR("PluginManager: " << plugin->GetName() << " Uninstall failed!");
-            // 继续尝试卸载其他插件
+    if (installing_ || uninstalling_ || service.running_ || !service.initialized_components_.empty()) return false;
+    if (installed_service_ && installed_service_ != &service) return false;
+    bool ok = true;
+    uninstalling_ = true;
+    const bool was_blocked = service.registration_blocked_;
+    service.registration_blocked_ = true;
+    for (auto it = installed_plugins_.rbegin(); it != installed_plugins_.rend(); ++it) {
+        service.shutdown_owned_components(*it);
+        try {
+            if (!(*it)->Uninstall(service)) ok = false;
+        } catch (...) {
+            CHWELL_LOG_ERROR("PluginManager: Uninstall threw for " << (*it)->GetName());
+            ok = false;
         }
+        service.remove_owned_components(*it);
     }
     
-    plugins_.clear();
+    installed_plugins_.clear();
     installed_ = false;
-    CHWELL_LOG_INFO("PluginManager: all plugins uninstalled");
-    return true;
+    installed_service_ = nullptr;
+    uninstalling_ = false;
+    service.registration_blocked_ = was_blocked;
+    return ok;
 }
 
 } // namespace service

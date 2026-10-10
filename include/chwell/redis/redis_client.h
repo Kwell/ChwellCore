@@ -24,6 +24,7 @@ struct RedisConfig {
     int connection_timeout_ms;
     int read_timeout_ms;
     int max_connections;
+    bool mock_mode = false; // Explicit local simulation; never a connection fallback.
     
     RedisConfig()
         : host("127.0.0.1"), port(6379), db(0)
@@ -66,9 +67,7 @@ public:
     bool is_connected() const;
     
     // 当前是否为内存模拟（非真实 Redis 连接）
-    // 生产环境部署前必须替换为真实实现
-    // true = 内存 mock；false = 已建立 RESP/TCP 真连接
-    bool is_mock() const { return use_mock_; }
+    bool is_mock() const;
     
     // 字符串操作
     bool set(const std::string& key, const std::string& value);
@@ -130,10 +129,12 @@ public:
     const RedisConfig& config() const { return config_; }
     
 private:
+    RedisReply execute_unlocked(const std::vector<std::string>& args);
+    void disconnect_unlocked();
     RedisConfig config_;
     mutable std::mutex mutex_;
     bool connected_{false};  // 连接状态标志
-    bool use_mock_{true};    // true=内存 mock，false=RESP/TCP
+    bool use_mock_{false};   // true=explicit local simulation, false=RESP/TCP
     int fd_{-1};             // RESP 连接 fd
     std::string rbuf_;       // RESP 读缓冲
     
@@ -156,9 +157,14 @@ public:
         return "RedisCacheComponent";
     }
     
-    virtual void on_register(service::Service& svc) override {
-        client_ = std::make_shared<RedisClient>(config_);
-        client_->connect();
+    bool Init() override {
+        if (!client_) client_ = std::make_shared<RedisClient>(config_);
+        return client_->connect();
+    }
+
+    bool Shut() override {
+        if (client_) client_->disconnect();
+        return true;
     }
     
     RedisClient::Ptr client() const { return client_; }

@@ -168,8 +168,10 @@ TEST(NodeHeartbeatTest, NodeDeregistersOnStop) {
 // ============================================
 
 TEST(DistributedLockTest, TryLockSucceeds) {
-    auto redis = std::make_shared<redis::RedisClient>();
-    redis->connect();
+    redis::RedisConfig config;
+    config.mock_mode = true;
+    auto redis = std::make_shared<redis::RedisClient>(config);
+    ASSERT_TRUE(redis->connect());
 
     redis::DistributedLock lock(redis, "test:lock:basic", 30);
     EXPECT_TRUE(lock.try_lock());
@@ -179,8 +181,10 @@ TEST(DistributedLockTest, TryLockSucceeds) {
 }
 
 TEST(DistributedLockTest, SecondLockFails) {
-    auto redis = std::make_shared<redis::RedisClient>();
-    redis->connect();
+    redis::RedisConfig config;
+    config.mock_mode = true;
+    auto redis = std::make_shared<redis::RedisClient>(config);
+    ASSERT_TRUE(redis->connect());
 
     redis::DistributedLock lock1(redis, "test:lock:contention", 30);
     redis::DistributedLock lock2(redis, "test:lock:contention", 30);
@@ -194,8 +198,10 @@ TEST(DistributedLockTest, SecondLockFails) {
 }
 
 TEST(DistributedLockTest, GuardRAII) {
-    auto redis = std::make_shared<redis::RedisClient>();
-    redis->connect();
+    redis::RedisConfig config;
+    config.mock_mode = true;
+    auto redis = std::make_shared<redis::RedisClient>(config);
+    ASSERT_TRUE(redis->connect());
 
     {
         redis::DistributedLockGuard guard(redis, "test:lock:raii", 30, 1000);
@@ -208,8 +214,10 @@ TEST(DistributedLockTest, GuardRAII) {
 }
 
 TEST(DistributedLockTest, FencingTokenIncreases) {
-    auto redis = std::make_shared<redis::RedisClient>();
-    redis->connect();
+    redis::RedisConfig config;
+    config.mock_mode = true;
+    auto redis = std::make_shared<redis::RedisClient>(config);
+    ASSERT_TRUE(redis->connect());
 
     redis::DistributedLock lock(redis, "test:lock:fencing", 30);
 

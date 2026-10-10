@@ -69,12 +69,21 @@ EpollTcpServer::~EpollTcpServer() {
 }
 
 void EpollTcpServer::start() {
+    (void)start_checked();
+}
+
+bool EpollTcpServer::start_checked() {
+    if (accept_thread_.joinable()) return !stopped_;
     if (listen_fd_ < 0 || !accept_demuxer_) {
         CHWELL_LOG_ERROR("EpollTcpServer::start: invalid state");
-        return;
+        return false;
     }
 
-    accept_demuxer_->add(listen_fd_, IoEvent::Read,
+    for (const auto& rt : reactors_) {
+        if (!rt.demuxer || !rt.demuxer->is_valid()) return false;
+    }
+
+    if (!accept_demuxer_->add(listen_fd_, IoEvent::Read,
         [this](int fd, IoEvent events) {
             if (has_event(events, IoEvent::Error)) {
                 CHWELL_LOG_ERROR("EpollTcpServer: listen fd error");
@@ -93,7 +102,7 @@ void EpollTcpServer::start() {
                 }
                 on_new_connection(client_fd);
             }
-        });
+        })) return false;
 
     stopped_ = false;
 
@@ -110,6 +119,7 @@ void EpollTcpServer::start() {
     CHWELL_LOG_INFO("EpollTcpServer listening on 0.0.0.0:" << port_
                     << " (reactors=" << reactors_.size()
                     << ", max_connections=" << max_connections_ << ")");
+    return true;
 }
 
 void EpollTcpServer::stop() {
