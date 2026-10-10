@@ -19,6 +19,7 @@ option(CHWELL_USE_MYSQL "Enable MySQL storage backend" OFF)
 option(CHWELL_USE_MONGODB "Enable MongoDB storage backend" OFF)
 option(CHWELL_USE_OPENSSL "Enable OpenSSL for TLS support" OFF)
 option(CHWELL_BUILD_TESTS "Build unit tests (GoogleTest)" ON)
+option(CHWELL_USE_CONSUL "Build optional Consul discovery (libcurl + nlohmann-json)" OFF)
 
 if(CHWELL_USE_PROTOBUF)
     find_package(Protobuf QUIET)
@@ -111,6 +112,8 @@ add_library(chwell_core
     src/net/tls.cpp
     src/net/connection_pool.cpp
     src/cluster/node.cpp
+    src/cluster/discovery_router.cpp
+    src/cluster/tcp_rpc_transport.cpp
     src/service/service.cpp
     src/service/app_host.cpp
     src/service/plugin.cpp
@@ -268,6 +271,8 @@ if (CHWELL_BUILD_TESTS)
             tests/test_player_move.cpp
             tests/test_sync.cpp
             tests/test_discovery_loadbalance.cpp
+            tests/test_discovery_router.cpp
+            tests/test_tcp_rpc_transport.cpp
             tests/test_circuitbreaker.cpp
             tests/test_ratelimit.cpp
             tests/test_consistent_hash.cpp
@@ -303,6 +308,23 @@ if (CHWELL_BUILD_TESTS)
         add_test(NAME chwell_integration_tests COMMAND chwell_integration_tests)
     else()
         message(WARNING "GoogleTest not found, CHWELL_BUILD_TESTS is ON but tests will not be built")
+    endif()
+endif()
+
+if(CHWELL_USE_CONSUL)
+    find_package(CURL 7.68 REQUIRED)
+    find_package(nlohmann_json 3.11 REQUIRED)
+    add_library(chwell_consul src/discovery/consul_discovery.cpp src/discovery/consul_http.cpp)
+    target_include_directories(chwell_consul PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_link_libraries(chwell_consul PUBLIC chwell_core PRIVATE CURL::libcurl nlohmann_json::nlohmann_json)
+    if(CHWELL_BUILD_TESTS AND CHWELL_GTEST_LIB)
+        add_executable(chwell_discovery_tests tests/test_consul_discovery.cpp)
+        target_link_libraries(chwell_discovery_tests PRIVATE chwell_consul ${CHWELL_GTEST_LIB} nlohmann_json::nlohmann_json)
+        add_test(NAME chwell_discovery_tests COMMAND chwell_discovery_tests)
+    endif()
+    if(CHWELL_BUILD_EXAMPLES)
+        add_executable(example_discovery_cluster examples/discovery_cluster_demo.cpp)
+        target_link_libraries(example_discovery_cluster PRIVATE chwell_consul nlohmann_json::nlohmann_json)
     endif()
 endif()
 
