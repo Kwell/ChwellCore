@@ -24,6 +24,7 @@ public:
     ~EpollTcpServer();
 
     void start();
+    bool start_checked();
     void stop();
 
     bool is_valid() const { return listen_fd_ >= 0; }

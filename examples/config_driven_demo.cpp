@@ -10,6 +10,7 @@
  */
 
 #include "chwell/service/service.h"
+#include "chwell/service/app_host.h"
 #include "chwell/service/component.h"
 #include "chwell/core/config.h"
 #include "chwell/core/logger.h"
@@ -102,23 +103,31 @@ int main() {
                   << ", priority=" << comp.priority << std::endl;
     }
     
-    // 创建 Service
-    Service service(config.listen_port(), config.worker_threads());
+    AppHost host;
     
     std::cout << "\n[注册组件]" << std::endl;
-    service.add_component<ConfigurableComponent>("ProtocolRouter", config);
-    service.add_component<ConfigurableComponent>("SessionManager", config);
-    service.add_component<ConfigurableComponent>("PlayerManager", config);
-    service.add_component<ConfigurableComponent>("BattleManager", config);
-    service.add_component<ConfigurableComponent>("RankManager", config);
-    service.add_component<ConfigurableComponent>("Database", config);
-    service.add_component<ConfigurableComponent>("Redis", config);
+    for (const auto* name : {"ProtocolRouter", "SessionManager", "PlayerManager",
+                             "BattleManager", "RankManager", "Database", "Redis"}) {
+        if (!host.register_component_factory(name, [&config](const ComponentConfig& component) {
+                return std::make_unique<ConfigurableComponent>(component.name, config);
+            })) {
+            std::cerr << host.last_error() << std::endl;
+            return 1;
+        }
+    }
+    if (!host.configure(config)) {
+        std::cerr << host.last_error() << std::endl;
+        return 1;
+    }
     
     std::cout << "\n[启动 Service]" << std::endl;
-    service.start();
+    if (!host.start()) {
+        std::cerr << host.last_error() << std::endl;
+        return 1;
+    }
     
     std::cout << "\n[停止 Service]" << std::endl;
-    service.stop();
+    host.stop();
     
     std::cout << "\n======================================" << std::endl;
     std::cout << "演示完成！" << std::endl;

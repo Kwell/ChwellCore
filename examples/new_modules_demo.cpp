@@ -321,8 +321,10 @@ int main() {
 void demo_redis() {
     std::cout << "\n=== Redis Demo ===\n";
     
-    redis::RedisClient client;
-    client.connect();
+    redis::RedisConfig config;
+    config.mock_mode = true;
+    redis::RedisClient client(config);
+    if (!client.connect()) return;
     
     // 字符串操作
     client.set("player:1:name", "Alice");

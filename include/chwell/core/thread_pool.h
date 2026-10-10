@@ -22,6 +22,9 @@ public:
     void post(const std::function<void()>& task);
     void post(std::function<void()>&& task);
 
+    // Drain queued tasks and join workers. Call from the owning thread.
+    void stop() noexcept;
+
 private:
     void worker_loop();
 
@@ -34,4 +37,3 @@ private:
 
 } // namespace core
 } // namespace chwell
-

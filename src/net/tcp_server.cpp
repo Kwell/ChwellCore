@@ -12,19 +12,25 @@ TcpServer::TcpServer(IoService& io_service, unsigned short port)
 }
 
 void TcpServer::start_accept() {
+    (void)start_accept_checked();
+}
+
+bool TcpServer::start_accept_checked() {
+    if (accept_thread_.joinable()) return !stopped_;
     if (acceptor_.listen_fd() < 0) {
         CHWELL_LOG_ERROR("TcpServer: failed to create acceptor");
-        return;
+        return false;
     }
 
     if (pipe(wake_pipe_) != 0) {
         CHWELL_LOG_ERROR("TcpServer: failed to create wake pipe");
-        return;
+        return false;
     }
 
     CHWELL_LOG_INFO("TcpServer listening on 0.0.0.0:" << port_);
     stopped_ = false;
     accept_thread_ = std::thread([this]() { accept_loop(); });
+    return true;
 }
 
 void TcpServer::stop() {

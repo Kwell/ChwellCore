@@ -3,15 +3,178 @@
 #include "chwell/redis/redis_client.h"
 #include <thread>
 #include <chrono>
+#include <cstdlib>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <unistd.h>
+#include <poll.h>
 
 using namespace chwell;
+
+namespace {
+class RedisEnvironment {
+public:
+    explicit RedisEnvironment(const char* value = nullptr) {
+        const char* previous = std::getenv("CHWELL_REDIS_MOCK");
+        existed_ = previous != nullptr;
+        if (previous) previous_ = previous;
+        assign(value);
+    }
+    ~RedisEnvironment() { assign(existed_ ? previous_.c_str() : nullptr); }
+private:
+    static void assign(const char* value) {
+        if (value) setenv("CHWELL_REDIS_MOCK", value, 1);
+        else unsetenv("CHWELL_REDIS_MOCK");
+    }
+    bool existed_;
+    std::string previous_;
+};
+
+class RedisTestSocket {
+public:
+    RedisTestSocket() {
+        fd = ::socket(AF_INET, SOCK_STREAM, 0);
+        sockaddr_in address{};
+        address.sin_family = AF_INET;
+        address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        if (fd >= 0 && ::bind(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0) {
+            socklen_t size = sizeof(address);
+            if (::getsockname(fd, reinterpret_cast<sockaddr*>(&address), &size) == 0) {
+                port = ntohs(address.sin_port);
+            }
+        }
+    }
+    ~RedisTestSocket() { if (fd >= 0) ::close(fd); }
+    int accept_peer() const {
+        pollfd pending{fd, POLLIN, 0};
+        if (::poll(&pending, 1, 2000) <= 0 || !(pending.revents & POLLIN)) return -1;
+        return ::accept(fd, nullptr, nullptr);
+    }
+    int fd = -1;
+    int port = 0;
+};
+} // namespace
+
+TEST(RedisConnectionTest, RefusedConnectionNeverFallsBackToMemory) {
+    RedisEnvironment environment;
+    RedisTestSocket socket; // Bound but not listening: deterministic refusal.
+    ASSERT_GT(socket.port, 0);
+    redis::RedisConfig config;
+    config.port = socket.port;
+    config.connection_timeout_ms = 100;
+    redis::RedisClient client(config);
+    EXPECT_FALSE(client.connect());
+    EXPECT_FALSE(client.is_connected());
+    EXPECT_FALSE(client.is_mock());
+    EXPECT_FALSE(client.set("key", "value"));
+    EXPECT_TRUE(client.execute({"GET", "key"}).is_error());
+    EXPECT_FALSE(client.set_nx_ex("lock", "token", 10));
+    redis::RedisCacheComponent cache(config);
+    EXPECT_FALSE(cache.Init());
+    EXPECT_TRUE(cache.Shut());
+}
+
+TEST(RedisConnectionTest, ExplicitMockAndDisconnectAreEnforcedForAtomicCommands) {
+    RedisEnvironment environment;
+    redis::RedisConfig config;
+    config.mock_mode = true;
+    redis::RedisClient client(config);
+    EXPECT_FALSE(client.set("key", "value"));
+    ASSERT_TRUE(client.connect());
+    EXPECT_TRUE(client.is_mock());
+    ASSERT_TRUE(client.set_nx_ex("lock", "token", 10));
+    EXPECT_FALSE(client.set_nx_ex("invalid", "token", 0));
+    client.disconnect();
+    EXPECT_FALSE(client.set_nx_ex("other", "token", 10));
+    EXPECT_FALSE(client.compare_and_del("lock", "token"));
+    EXPECT_FALSE(client.compare_and_expire("lock", "token", 10));
+    EXPECT_FALSE(client.set("key", "value"));
+}
+
+TEST(RedisConnectionTest, EnvironmentMockMustBeExactlyOne) {
+    RedisTestSocket socket;
+    ASSERT_GT(socket.port, 0);
+    redis::RedisConfig config;
+    config.port = socket.port;
+    {
+        RedisEnvironment environment("1");
+        redis::RedisClient client(config);
+        ASSERT_TRUE(client.connect());
+        EXPECT_TRUE(client.is_mock());
+    }
+    {
+        RedisEnvironment environment("1garbage");
+        redis::RedisClient client(config);
+        EXPECT_FALSE(client.connect());
+        EXPECT_FALSE(client.is_mock());
+    }
+}
+
+TEST(RedisConnectionTest, AuthenticationAndDatabaseRejectionsFailConnection) {
+    RedisEnvironment environment;
+    for (bool auth : {true, false}) {
+        RedisTestSocket socket;
+        ASSERT_GT(socket.port, 0);
+        ASSERT_EQ(::listen(socket.fd, 1), 0);
+        std::string command;
+        std::thread peer([&] {
+            int fd = socket.accept_peer();
+            if (fd < 0) return;
+            char buffer[1024];
+            pollfd pending{fd, POLLIN, 0};
+            ssize_t count = ::poll(&pending, 1, 2000) > 0
+                ? ::recv(fd, buffer, sizeof(buffer), 0) : -1;
+            if (count > 0) command.assign(buffer, static_cast<std::size_t>(count));
+            const std::string rejection = "-ERR test rejection\r\n";
+            ::send(fd, rejection.data(), rejection.size(), MSG_NOSIGNAL);
+            ::close(fd);
+        });
+        redis::RedisConfig config;
+        config.port = socket.port;
+        config.read_timeout_ms = 500;
+        if (auth) config.password = "test-password";
+        else config.db = 3;
+        redis::RedisClient client(config);
+        EXPECT_FALSE(client.connect());
+        EXPECT_FALSE(client.is_connected());
+        EXPECT_FALSE(client.is_mock());
+        peer.join();
+        EXPECT_NE(command.find(auth ? "AUTH" : "SELECT"), std::string::npos);
+    }
+}
+
+TEST(RedisConnectionTest, ClosedPeerInvalidatesConnection) {
+    RedisEnvironment environment;
+    RedisTestSocket socket;
+    ASSERT_GT(socket.port, 0);
+    ASSERT_EQ(::listen(socket.fd, 1), 0);
+    std::thread peer([&] {
+        int fd = socket.accept_peer();
+        if (fd < 0) return;
+        char buffer[128];
+        pollfd pending{fd, POLLIN, 0};
+        if (::poll(&pending, 1, 2000) > 0) ::recv(fd, buffer, sizeof(buffer), 0);
+        ::close(fd);
+    });
+    redis::RedisConfig config;
+    config.port = socket.port;
+    config.read_timeout_ms = 500;
+    redis::RedisClient client(config);
+    EXPECT_TRUE(client.connect());
+    EXPECT_TRUE(client.execute({"PING"}).is_error());
+    EXPECT_FALSE(client.is_connected());
+    EXPECT_FALSE(client.is_mock());
+    peer.join();
+}
 
 class RedisClientTest : public ::testing::Test {
 protected:
     void SetUp() override {
         redis::RedisConfig config;
+        config.mock_mode = true;
         client_ = std::make_unique<redis::RedisClient>(config);
-        client_->connect();
+        ASSERT_TRUE(client_->connect());
+        ASSERT_TRUE(client_->is_mock());
     }
     
     void TearDown() override {
@@ -212,4 +375,3 @@ TEST_F(RedisClientTest, LazyExpireOnSetAndZset) {
     EXPECT_TRUE(r2.is_integer());
     EXPECT_EQ(0, r2.integer);
 }
-

@@ -3,6 +3,9 @@
 #include <string>
 #include <vector>
 #include <memory>
+#include <cstddef>
+#include <type_traits>
+#include <utility>
 
 namespace chwell {
 namespace service {
@@ -94,20 +97,26 @@ public:
      * @brief 注册插件
      * @param plugin 插件实例
      */
-    void RegisterPlugin(std::unique_ptr<IPlugin> plugin) {
-        if (!plugin) return;
+    bool RegisterPlugin(std::unique_ptr<IPlugin> plugin) {
+        if (!plugin || plugin->GetName().empty() || installed_ || installing_ || uninstalling_) return false;
+        for (const auto& existing : plugins_) {
+            if (existing && existing->GetName() == plugin->GetName()) {
+                return false;
+            }
+        }
         plugins_.push_back(std::move(plugin));
+        return true;
     }
     
     /**
      * @brief 模板方法：创建并注册插件
      */
     template<typename PluginType, typename... Args>
-    void RegisterPlugin(Args&&... args) {
+    bool RegisterPlugin(Args&&... args) {
         static_assert(std::is_base_of<IPlugin, PluginType>::value,
                       "PluginType must derive from IPlugin");
         auto plugin = std::make_unique<PluginType>(std::forward<Args>(args)...);
-        RegisterPlugin(std::move(plugin));
+        return RegisterPlugin(std::move(plugin));
     }
     
     /**
@@ -135,6 +144,10 @@ public:
 private:
     std::vector<std::unique_ptr<IPlugin>> plugins_;
     bool installed_ = false;
+    Service* installed_service_ = nullptr;
+    bool installing_ = false;
+    bool uninstalling_ = false;
+    std::vector<IPlugin*> installed_plugins_;
 };
 
 } // namespace service

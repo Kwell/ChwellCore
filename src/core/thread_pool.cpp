@@ -11,6 +11,10 @@ ThreadPool::ThreadPool(std::size_t thread_count)
 }
 
 ThreadPool::~ThreadPool() noexcept {
+    stop();
+}
+
+void ThreadPool::stop() noexcept {
     {
         std::lock_guard<std::mutex> lock(mutex_);
         stopped_ = true;
@@ -74,4 +78,3 @@ void ThreadPool::worker_loop() {
 
 } // namespace core
 } // namespace chwell
-
