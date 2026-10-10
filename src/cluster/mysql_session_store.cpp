@@ -31,7 +31,11 @@ SessionResult result(SessionStatus status, SessionLease lease = {}, std::string 
 MysqlSessionStore::MysqlSessionStore(const storage::StorageConfig& config) : storage_(config) {}
 bool MysqlSessionStore::execute(const std::string& sql) {
 #if defined(CHWELL_USE_MYSQL)
-    return storage_.conn_ && mysql_query(static_cast<MYSQL*>(storage_.conn_), sql.c_str()) == 0;
+    if (!storage_.conn_) return false;
+    auto* connection = static_cast<MYSQL*>(storage_.conn_);
+    if (mysql_query(connection, sql.c_str()) == 0) return true;
+    CHWELL_LOG_ERROR("MysqlSessionStore: SQL error " + std::to_string(mysql_errno(connection)));
+    return false;
 #else
     (void)sql; return false;
 #endif
@@ -101,8 +105,9 @@ SessionResult MysqlSessionStore::select(const std::string& player, bool lock) {
         auto sizes = mysql_fetch_lengths(rows);
         SessionLease lease{player, std::string(row[0], sizes[0]), std::string(row[1], sizes[1]),
                            std::string(row[2], sizes[2]), std::string(row[3], sizes[3])};
-        selected = result(row[4][0] == '1' && !lease.owner.empty() ? SessionStatus::Ok : SessionStatus::Lost,
-                          std::move(lease));
+        // Compute before moving lease: function argument evaluation order is unspecified.
+        const auto status = row[4][0] == '1' && !lease.owner.empty() ? SessionStatus::Ok : SessionStatus::Lost;
+        selected = result(status, std::move(lease));
     }
     if (mysql_errno(static_cast<MYSQL*>(storage_.conn_)) != 0) selected = result(SessionStatus::Unavailable);
     mysql_free_result(rows);
