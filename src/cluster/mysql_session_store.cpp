@@ -102,7 +102,11 @@ SessionResult MysqlSessionStore::select(const std::string& player, bool lock) {
     if (!rows) return result(SessionStatus::Unavailable);
     SessionResult selected = result(SessionStatus::Lost);
     if (auto row = mysql_fetch_row(rows)) {
-        auto sizes = mysql_fetch_lengths(rows);
+    auto sizes = mysql_fetch_lengths(rows);
+        if (!sizes || !row[0] || !row[1] || !row[2] || !row[3] || !row[4]) {
+            mysql_free_result(rows);
+            return result(SessionStatus::Unavailable);
+        }
         SessionLease lease{player, std::string(row[0], sizes[0]), std::string(row[1], sizes[1]),
                            std::string(row[2], sizes[2]), std::string(row[3], sizes[3])};
         // Compute before moving lease: function argument evaluation order is unspecified.
@@ -135,8 +139,11 @@ SessionResult MysqlSessionStore::acquire(const std::string& player, const std::s
     SessionLease desired{player, owner, node, incarnation, {}};
     if (!valid(desired) || ttl < 1 || ttl > 300) return result(SessionStatus::Invalid);
     return transact([&] {
-        if (!execute("INSERT IGNORE INTO chwell_session_leases VALUES (" + literal(player) +
-            ",X'',X'',X'',0,'1970-01-01 00:00:00')")) return result(SessionStatus::Unavailable);
+        // Duplicate-key UPDATE takes an exclusive lock directly, avoiding the
+        // shared-lock upgrade deadlock of concurrent INSERT IGNORE + FOR UPDATE.
+        if (!execute("INSERT INTO chwell_session_leases (player,owner,node,incarnation,epoch,expires) VALUES (" + literal(player) +
+            ",X'',X'',X'',0,'1970-01-01 00:00:00') ON DUPLICATE KEY UPDATE player=player"))
+            return result(SessionStatus::Unavailable);
         auto old = select(player, true);
         if (old.status == SessionStatus::Unavailable) return old;
         if (old.ok()) return result(SessionStatus::Busy);
@@ -154,7 +161,11 @@ SessionResult MysqlSessionStore::renew(const SessionLease& lease, int ttl) {
         if (current.status == SessionStatus::Unavailable) return current;
         if (!current.ok() || !matches(lease, current.lease)) return result(SessionStatus::Lost);
         if (!execute("UPDATE chwell_session_leases SET expires=DATE_ADD(NOW(6), INTERVAL " +
-            std::to_string(ttl) + " SECOND) WHERE player=" + literal(lease.player))) return result(SessionStatus::Unavailable);
+            std::to_string(ttl) + " SECOND) WHERE player=" + literal(lease.player) + " AND expires > NOW(6)"))
+            return result(SessionStatus::Unavailable);
+#if defined(CHWELL_USE_MYSQL)
+        if (mysql_affected_rows(static_cast<MYSQL*>(storage_.conn_)) != 1) return result(SessionStatus::Lost);
+#endif
         return result(SessionStatus::Ok, lease);
     });
 }

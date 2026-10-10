@@ -95,6 +95,18 @@ int main(int argc, char** argv) {
         auto binary = a.acquire(binary_id, "owner'\\", "node", "inc", 30);
         require(binary.ok() && b.lookup(binary_id).lease.owner == "owner'\\", "Binary SQL literal safety");
         require(a.release(binary.lease).ok(), "Release binary lease");
+        auto upper = a.acquire(id + "A", "case-one", "node", "inc", 30);
+        auto lower = b.acquire(id + "a", "case-two", "node", "inc", 30);
+        require(upper.ok() && lower.ok(), "Case-sensitive lease identities");
+        const auto upper_key = key + "A", lower_key = key + "a";
+        require(a.apply(upper.lease, [&](auto& db) { return db.put(upper_key, "upper"); }).ok(), "Upper document");
+        require(b.apply(lower.lease, [&](auto& db) { return db.put(lower_key, "lower"); }).ok(), "Lower document");
+        require(a.apply(upper.lease, [&](auto& db) {
+            require(db.get(upper_key).value == "upper" && db.get(lower_key).value == "lower", "Case-sensitive documents");
+            return db.remove(upper_key);
+        }).ok(), "Case documents verified");
+        require(b.apply(lower.lease, [&](auto& db) { return db.remove(lower_key); }).ok(), "Remove lower");
+        require(a.release(upper.lease).ok() && b.release(lower.lease).ok(), "Release case leases");
         require(a.acquire("", "owner", "node", "inc", 1).status == SessionStatus::Invalid, "Invalid input");
         std::cout << "PASS: MySQL two-connection fencing, epochs, rollback, expiry and serialized writes\n";
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
