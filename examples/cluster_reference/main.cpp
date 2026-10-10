@@ -5,7 +5,7 @@
 #include "chwell/cluster/discovery_router.h"
 #include "chwell/cluster/tcp_rpc_transport.h"
 #include "chwell/protocol/parser.h"
-#include "chwell/storage/mysql_storage.h"
+#include "chwell/cluster/mysql_session_store.h"
 #include "chwell/storage/orm/repository.h"
 #include "chwell/sync/schema_sync.h"
 #include <nlohmann/json.hpp>
@@ -17,6 +17,7 @@
 #include <deque>
 #include <future>
 #include <iostream>
+#include <random>
 #include <thread>
 #include <unordered_set>
 #include <arpa/inet.h>
@@ -59,6 +60,35 @@ std::string advertised_ipv4() {
     return address;
 }
 Json failure(const char* code) { return {{"ok", false}, {"error", code}}; }
+storage::StorageConfig database_config() {
+    storage::StorageConfig config;
+    config.host = env("CHWELL_DB_HOST", "127.0.0.1");
+    config.port = port_number(env("CHWELL_DB_PORT", "3306"));
+    config.database = env("CHWELL_DB_NAME", "chwell");
+    config.user = env("CHWELL_DB_USER", "chwell"); config.password = env("CHWELL_DB_PASSWORD");
+    config.extra = {{"table", "cluster_kv"}, {"connect_timeout", "2"}, {"read_timeout", "2"}, {"write_timeout", "2"}};
+    return config;
+}
+std::string process_identity() {
+    std::random_device entropy;
+    std::string id;
+    const char* hex = "0123456789abcdef";
+    for (int i = 0; i < 8; ++i) {
+        const auto value = entropy();
+        for (int shift = 28; shift >= 0; shift -= 4) id += hex[(value >> shift) & 15];
+    }
+    return id;
+}
+Json session_failure(const cluster::SessionResult& result) {
+    switch (result.status) {
+    case cluster::SessionStatus::Busy: return failure("already_logged_in");
+    case cluster::SessionStatus::Lost: return failure("session_lost");
+    case cluster::SessionStatus::Unknown: return failure("outcome_unknown");
+    case cluster::SessionStatus::Invalid:
+        return failure(result.error.empty() ? "bad_request" : result.error.c_str());
+    default: return failure("storage_unavailable");
+    }
+}
 Json packet_json(const sync::SchemaPacket& packet) {
     Json fields = Json::object();
     for (const auto& field : packet.fields)
@@ -194,9 +224,10 @@ private:
 class Game final : public Inbox {
 public:
     Game(discovery::ConsulConfig config, std::string id, int port, std::string generation)
-        : discovery_(discovery::make_consul_discovery(config)), key_(env("CHWELL_CLUSTER_TOKEN")) {
+        : discovery_(discovery::make_consul_discovery(config)), key_(env("CHWELL_CLUSTER_TOKEN")),
+          generation_(std::move(generation)) {
         instance_.service_id = "persistent-game"; instance_.instance_id = std::move(id);
-        instance_.port = static_cast<std::uint16_t>(port); instance_.metadata["incarnation"] = std::move(generation);
+        instance_.port = static_cast<std::uint16_t>(port); instance_.metadata["incarnation"] = process_identity();
     }
     ~Game() override { PreShut(); }
     std::string name() const override { return "PersistentGame"; }
@@ -205,13 +236,7 @@ protected:
     bool startup() override {
         if (key_.empty()) return false;
         instance_.host = advertised_ipv4(); // Resolve once; publish a numeric RPC endpoint.
-        storage::StorageConfig config;
-        config.host = env("CHWELL_DB_HOST", "127.0.0.1");
-        config.port = port_number(env("CHWELL_DB_PORT", "3306"));
-        config.database = env("CHWELL_DB_NAME", "chwell");
-        config.user = env("CHWELL_DB_USER", "chwell"); config.password = env("CHWELL_DB_PASSWORD");
-        config.extra = {{"table", "cluster_kv"}, {"connect_timeout", "2"}, {"read_timeout", "2"}, {"write_timeout", "2"}};
-        db_ = std::make_unique<storage::MysqlStorage>(config);
+        db_ = std::make_unique<cluster::MysqlSessionStore>(database_config());
         if (!db_->connect()) return false;
         registered_ = discovery_->register_service(instance_);
         heartbeat_ = Clock::now() + std::chrono::seconds(1);
@@ -233,44 +258,51 @@ protected:
         const auto id = action == "observe" ? command.at("target").get<std::string>() : viewer;
         if (!valid_player(viewer) || !valid_player(id)) return failure("bad_player");
         if (action != "login" && action != "get" && action != "advance" && action != "observe") return failure("bad_action");
-        auto player = std::make_shared<Player>();
-        const auto stored = db_->get("cluster_players:" + id);
-        if (stored.ok) {
-            storage::orm::Document document;
-            if (!document.from_string(stored.value) || !player->load_document(document) || player->id() != id)
-                return failure("corrupt_record");
-        } else if (stored.error_msg == "key not found") {
-            if (action != "login") return failure("not_found");
-            if (!player->set_id(id)) return failure("bad_player");
-            storage::orm::Repository<Player> repo(db_.get(), "cluster_players");
-            if (!repo.save(*player).ok) return failure("outcome_unknown");
-            player->clear_dirty();
-        } else {
-            // Never reinterpret a storage failure as absence or retry a mutation.
-            db_->disconnect(); db_->connect();
-            return failure("storage_unavailable");
-        }
-        sync::SchemaSyncRoom room;
         Json snapshot, delta;
-        room.add_entity(player, id);
-        room.subscribe(id, viewer, [&](const auto& packet) {
-            (packet.snapshot ? snapshot : delta) = packet_json(packet);
+        const auto& fence = command.at("lease");
+        cluster::SessionLease lease{viewer, fence.at("owner").get<std::string>(),
+            fence.at("node").get<std::string>(), fence.at("incarnation").get<std::string>(),
+            fence.at("epoch").get<std::string>()};
+        if (lease.node != instance_.instance_id || lease.incarnation != instance_.metadata.at("incarnation"))
+            return failure("session_lost");
+        const auto guarded = db_->apply(lease, [&](storage::StorageInterface& transaction) {
+            auto player = std::make_shared<Player>();
+            const auto stored = transaction.get("cluster_players:" + id);
+            if (stored.ok) {
+                storage::orm::Document document;
+                if (!document.from_string(stored.value) || !player->load_document(document) || player->id() != id)
+                    return storage::StorageResult::failure("corrupt_record");
+            } else if (stored.error_msg == "key not found") {
+                if (action != "login") return storage::StorageResult::failure("not_found");
+                if (!player->set_id(id)) return storage::StorageResult::failure("bad_player");
+                storage::orm::Repository<Player> repo(&transaction, "cluster_players");
+                if (!repo.save(*player).ok) return storage::StorageResult::failure("storage_unavailable");
+                player->clear_dirty();
+            } else return storage::StorageResult::failure("storage_unavailable");
+            sync::SchemaSyncRoom room;
+            room.add_entity(player, id);
+            room.subscribe(id, viewer, [&](const auto& packet) {
+                // Stage packets locally; they become visible only after COMMIT.
+                (packet.snapshot ? snapshot : delta) = packet_json(packet);
+            });
+            if (action == "advance") {
+                if (!player->set_level(player->get_level() + 1) || !player->set_gold(player->get_gold() + 10))
+                    return storage::StorageResult::failure("limit_reached");
+                storage::orm::Repository<Player> repo(&transaction, "cluster_players");
+                if (!repo.save(*player).ok) return storage::StorageResult::failure("storage_unavailable");
+                room.flush();
+            }
+            return storage::StorageResult::success();
         });
-        if (action == "advance") {
-            if (!player->set_level(player->get_level() + 1) || !player->set_gold(player->get_gold() + 10))
-                return failure("limit_reached");
-            storage::orm::Repository<Player> repo(db_.get(), "cluster_players");
-            if (!repo.save(*player).ok) { db_->disconnect(); db_->connect(); return failure("outcome_unknown"); }
-            room.flush(); // Only committed fields reach the client.
-        }
-        return {{"ok", true}, {"node", instance_.instance_id}, {"generation", instance_.metadata.at("incarnation")},
+        if (!guarded.ok()) return session_failure(guarded);
+        return {{"ok", true}, {"node", instance_.instance_id}, {"generation", generation_}, {"epoch", lease.epoch},
                 {"packet", action == "advance" ? delta : snapshot}};
     }
 private:
     std::shared_ptr<discovery::ConsulServiceDiscovery> discovery_;
     discovery::ServiceInstance instance_;
-    std::unique_ptr<storage::MysqlStorage> db_;
-    std::string key_;
+    std::unique_ptr<cluster::MysqlSessionStore> db_;
+    std::string key_, generation_;
     bool registered_ = false;
     Clock::time_point heartbeat_;
 };
@@ -280,23 +312,35 @@ public:
     explicit Gateway(discovery::ConsulConfig config)
         : discovery_(discovery::make_consul_discovery(config)), registry_(std::make_shared<cluster::NodeRegistry>()),
           router_(registry_), routes_(*discovery_, registry_, router_, sessions_, "persistent-game"),
-          token_(env("CHWELL_DEMO_TOKEN")), key_(env("CHWELL_CLUSTER_TOKEN")) {}
+          authority_(database_config()), token_(env("CHWELL_DEMO_TOKEN")), key_(env("CHWELL_CLUSTER_TOKEN")),
+          identity_(process_identity()) {}
     ~Gateway() override { PreShut(); }
     std::string name() const override { return "PersistentGateway"; }
 protected:
     bool startup() override {
         router_.set_failover_retries(0);
         router_.set_transport_factory([](const auto& node) { return std::make_shared<cluster::TcpRpcTransport>(node); });
-        return !token_.empty() && !key_.empty();
+        return !token_.empty() && !key_.empty() && authority_.connect();
+    }
+    void shutdown() override {
+        while (!players_.empty()) disconnected(players_.begin()->first);
     }
     void tick() override {
         available_ = routes_.refresh();
+        const bool renew = Clock::now() >= renewal_;
         for (auto it = players_.begin(); it != players_.end();) {
-            if (sessions_.node_of(std::to_string(it->first)).empty()) it = players_.erase(it);
-            else ++it;
+            if (sessions_.node_of(std::to_string(it->first)).empty() ||
+                (renew && !authority_.renew(it->second, 8).ok())) {
+                const auto id = it->first; ++it; disconnected(id);
+            } else ++it;
         }
+        if (renew) renewal_ = Clock::now() + std::chrono::seconds(2);
     }
-    void disconnected(std::uint64_t id) override { sessions_.unbind(std::to_string(id)); players_.erase(id); }
+    void disconnected(std::uint64_t id) override {
+        sessions_.unbind(std::to_string(id));
+        const auto found = players_.find(id);
+        if (found != players_.end()) { authority_.release(found->second); players_.erase(found); }
+    }
     Json request(std::uint64_t conn, const Json& command) override {
         const auto action = command.at("action").get<std::string>();
         if (action == "status") {
@@ -309,38 +353,51 @@ protected:
         const auto session = std::to_string(conn);
         Json forwarded = {{"action", action}, {"cluster_token", key_}};
         cluster::NodeInfo node;
+        cluster::SessionLease lease;
         const bool login = action == "login";
         if (login) {
             if (command.value("token", std::string()) != token_) return failure("unauthorized");
             const auto player = command.at("player").get<std::string>();
             if (!valid_player(player)) return failure("bad_player");
-            if (players_.count(conn) || std::any_of(players_.begin(), players_.end(), [&](const auto& entry) {
-                    return entry.second == player;
-                })) return failure("already_logged_in");
+            if (players_.count(conn)) return failure("already_logged_in");
             if (!registry_->select_node_by_hash(player, node, "persistent-game")) return failure("no_game");
+            const auto acquired = authority_.acquire(player, identity_ + ":" + session,
+                node.node_id, node.incarnation, 8);
+            if (!acquired.ok()) return session_failure(acquired);
+            lease = acquired.lease;
             forwarded["player"] = player;
         } else {
             const auto found = players_.find(conn);
             if (found == players_.end()) return failure("login_required");
             if (action != "get" && action != "advance" && action != "observe") return failure("bad_action");
-            forwarded["player"] = found->second; // Never trust client player/viewer fields.
+            lease = found->second;
+            forwarded["player"] = lease.player; // Never trust client player/viewer/fence fields.
             if (action == "observe") {
                 const auto target = command.at("target").get<std::string>();
                 if (!valid_player(target)) return failure("bad_player");
                 forwarded["target"] = target;
             }
         }
+        forwarded["lease"] = {{"owner", lease.owner}, {"node", lease.node},
+            {"incarnation", lease.incarnation}, {"epoch", lease.epoch}};
         const auto text = forwarded.dump();
         const std::vector<char> request(text.begin(), text.end());
         std::vector<char> response;
         const bool delivered = login ? router_.forward_to_node(node, 1, request, response, 5000)
             : routes_.forward_session(session, 1, request, response, 5000);
-        if (!delivered) { disconnected(conn); return failure("outcome_unknown"); }
+        if (!delivered) {
+            if (login) authority_.release(lease);
+            disconnected(conn); return failure("outcome_unknown");
+        }
         auto result = Json::parse(response.begin(), response.end());
         if (login && result.value("ok", false)) {
             sessions_.bind(session, node.node_id, "persistent-game");
-            players_[conn] = forwarded.at("player").get<std::string>();
-        }
+            players_[conn] = lease;
+        } else if (login) authority_.release(lease);
+        else if (!result.value("ok", false) &&
+            (result.value("error", std::string()) == "session_lost" ||
+             result.value("error", std::string()) == "storage_unavailable" ||
+             result.value("error", std::string()) == "outcome_unknown")) disconnected(conn);
         return result;
     }
 private:
@@ -349,9 +406,11 @@ private:
     cluster::RpcRouter router_;
     cluster::SessionLocator sessions_;
     cluster::DiscoveryRouter routes_;
-    std::unordered_map<std::uint64_t, std::string> players_;
-    std::string token_, key_;
+    std::unordered_map<std::uint64_t, cluster::SessionLease> players_;
+    cluster::MysqlSessionStore authority_;
+    std::string token_, key_, identity_;
     bool available_ = false;
+    Clock::time_point renewal_{};
 };
 } // namespace
 

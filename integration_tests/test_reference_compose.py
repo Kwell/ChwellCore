@@ -27,7 +27,10 @@ def main():
             assert result['ok'] and result['packet']['fields']['20'] == 0, result
             result = client.ask('advance')
             assert result['ok'] and result['packet']['fields'] == {'10': 2, '20': 10}, result
-        compose('restart', 'game-one', 'game-two', 'gateway')
+            with eventually(lambda: Client('127.0.0.1', 9101), 'Second Compose gateway') as other:
+                eventually(lambda: len(other.ask('status')['nodes']) == 2, 'Second gateway routes')
+                assert other.ask('login', player='compose-player', token='local-demo-token')['error'] == 'already_logged_in'
+        compose('restart', 'game-one', 'game-two', 'gateway', 'gateway-two')
         with eventually(connect, 'Compose gateway restarted', timeout=60) as client:
             eventually(lambda: set(client.ask('status')['nodes']) == {'game-one', 'game-two'}, 'Compose routes recovered')
             result = client.ask('login', player='compose-player', token='local-demo-token')

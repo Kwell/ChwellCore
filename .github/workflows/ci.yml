@@ -38,6 +38,10 @@ jobs:
             -DCMAKE_PREFIX_PATH="$RUNNER_TEMP/relocated-package" -DCMAKE_BUILD_TYPE=Debug \
             -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
           cmake --build build-reference --parallel 4
+          cmake -S tests/mysql_session -B build-session \
+            -DCMAKE_PREFIX_PATH="$RUNNER_TEMP/relocated-package" -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
+          cmake --build build-session --parallel 4
       - name: Start isolated real dependencies
         run: |
           docker run -d --name chwell-persistent-consul -p 127.0.0.1:8500:8500 \
@@ -51,10 +55,18 @@ jobs:
             sleep 1
           done
           exit 1
+      - name: Verify MySQL two-connection fencing and rollback under ASan/UBSan
+        run: |
+          docker exec -e MYSQL_PWD chwell-persistent-mysql mysql -uchwell chwell -e \
+            'CREATE TABLE legacy_session_kv (k VARCHAR(512) PRIMARY KEY,v MEDIUMTEXT NOT NULL,expire_at BIGINT DEFAULT 0) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci'
+          CHWELL_SESSION_TEST_TABLE=legacy_session_kv build-session/mysql_session_contract --expect-incompatible
+          build-session/mysql_session_contract
       - name: Verify TCP, durable commit and dependency/process failures under ASan/UBSan
         run: >-
           python3 integration_tests/test_persistent_cluster.py build-reference/cluster_reference
           --consul-container chwell-persistent-consul --mysql-container chwell-persistent-mysql
+      - name: Verify two gateways, stopped owners and stale RPC fencing
+        run: python3 integration_tests/test_session_ownership.py build-reference/cluster_reference --mysql-container chwell-persistent-mysql
       - name: Verify documented Compose build and volume recovery
         run: python3 integration_tests/test_reference_compose.py
       - name: External dependency diagnostics

@@ -154,7 +154,7 @@ def main():
         # Real DB outage reports failure, never acknowledges an uncommitted change.
         docker('stop', '-t', '1', args.mysql_container)
         result = status.ask('advance')
-        assert not result['ok'] and result['error'] in ('storage_unavailable', 'outcome_unknown'), result
+        assert not result['ok'] and result['error'] in ('storage_unavailable', 'outcome_unknown', 'login_required'), result
         fresh = connect()
         result = fresh.ask('login', player='outage-player', token=token)
         assert not result['ok'], result
@@ -167,7 +167,7 @@ def main():
         eventually(mysql_ready, 'MySQL restarted', timeout=60)
         assert stored(player) == persisted, 'Failed request changed committed player data'
         assert not stored('outage-player'), 'Outage was treated as a missing player'
-        eventually(lambda: status.ask('get').get('ok'), 'Game storage connection recovered')
+        eventually(lambda: status.ask('login', player=player, token=token).get('ok'), 'Authoritative session recovered')
         assert status.ask('get')['packet']['fields']['20'] == 10
         assert status.ask('advance')['packet']['fields'] == {'10': 3, '20': 20}
         assert stored(player) != persisted

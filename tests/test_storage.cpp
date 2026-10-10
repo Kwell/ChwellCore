@@ -17,9 +17,25 @@
 #include "chwell/storage/storage_factory.h"
 #include "chwell/storage/storage_interface.h"
 #include "chwell/storage/storage_types.h"
+#include "chwell/cluster/mysql_session_store.h"
 
 using namespace chwell;
 using namespace std::chrono_literals;
+
+#if !defined(CHWELL_USE_MYSQL)
+TEST(MysqlSessionStoreTest, DisabledBackendCannotGrantAuthority) {
+    cluster::MysqlSessionStore store(storage::StorageConfig{});
+    EXPECT_FALSE(store.connect());
+    EXPECT_EQ(store.acquire("player", "owner", "game", "inc", 8).status, cluster::SessionStatus::Unavailable);
+    EXPECT_EQ(store.lookup("player").status, cluster::SessionStatus::Unavailable);
+    cluster::SessionLease lease{"player", "owner", "game", "inc", "1"};
+    bool called = false;
+    EXPECT_EQ(store.apply(lease, [&](auto&) {
+        called = true; return storage::StorageResult::success();
+    }).status, cluster::SessionStatus::Unavailable);
+    EXPECT_FALSE(called);
+}
+#endif
 
 namespace {
 
