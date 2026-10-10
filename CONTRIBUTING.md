@@ -16,12 +16,15 @@ ctest --test-dir build --output-on-failure --timeout 600
 
 ```bash
 python3 tests/test_entity_schema_tool.py
+# Excel/C# 扩展检查需要可选依赖和 .NET 8 SDK
+python3 -m pip install -r tools/requirements-excel.txt
+python3 tests/test_content_clients.py --require-dotnet
 cmake -S tests/schema -B build-schema
 cmake --build build-schema --config Debug --parallel 4
 ctest --test-dir build-schema -C Debug --output-on-failure
 ```
 
-涉及导出目标、依赖、安装布局或参考工程时，按 [PACKAGING.md](docs/PACKAGING.md) 构建安装包，再运行 `python3 integration_tests/test_installed_package.py build-package`。该测试会在临时目录安装和移动包，验证独立链接、真实 TCP 回显、停止与生成依赖。
+涉及导出目标、依赖、安装布局或参考工程时，按 [PACKAGING.md](docs/PACKAGING.md) 构建安装包，安装上述 Excel 依赖和 .NET 8 SDK，再运行 `python3 integration_tests/test_installed_package.py build-package`。该测试会在临时目录安装和移动包，验证独立链接、真实 TCP 回显、停止、Excel/C# 生成与重建依赖；CMake 显式使用启动测试的 Python 解释器。
 
 组件依赖改动可在任一平台用 `cmake -S tests/service_order -B build-order` 构建规划器回归；真实 Service/AppHost 的生命周期与插件回滚在 Linux 核心测试验证。无依赖声明时保留稳定 priority 顺序；新增前置依赖需覆盖初始化失败、重试与逆序关闭行为。
 
