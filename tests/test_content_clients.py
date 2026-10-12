@@ -123,6 +123,23 @@ class ContentClientTests(unittest.TestCase):
         self.assertNotEqual(self.run_tool('--sheet', 'players', '--output', header).returncode, 0)
         self.assertNotEqual(self.run_tool('--output', header, '--csharp-output', header).returncode, 0)
 
+    def test_excel_catalog_runtime_package(self):
+        self.workbook([['id', 'level'], ['hero', 5]], second=True)
+        catalog = self.directory / 'catalog.json'
+        catalog.write_text(json.dumps({'tables': [{'schema': 'player.json', 'xlsx': 'data.xlsx', 'sheet': 'players'}]}))
+        bundle = self.directory / 'content.chct'
+        result = subprocess.run([sys.executable, str(OPTIONS.tool), '--catalog', str(catalog),
+                                 '--bundle-output', str(bundle), '--content-version', '1'],
+                                capture_output=True, text=True, encoding='utf-8')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        previous = bundle.read_bytes(); self.assertEqual(previous[:4], b'CHCT')
+        self.workbook([['id', 'level'], ['hero', '=1+1']], second=True)
+        result = subprocess.run([sys.executable, str(OPTIONS.tool), '--catalog', str(catalog),
+                                 '--bundle-output', str(bundle), '--content-version', '2'],
+                                capture_output=True, text=True, encoding='utf-8')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(bundle.read_bytes(), previous)
+
     def test_compiled_csharp_contract(self):
         if not shutil.which('dotnet'):
             if OPTIONS.require_dotnet: self.fail('dotnet SDK is required')

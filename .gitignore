@@ -22,6 +22,7 @@ cmake_install.cmake
 CTestTestfile.cmake
 compile_commands.json
 /generated/
+*.chct
 /examples/game_ws_server_json
 
 # IDE

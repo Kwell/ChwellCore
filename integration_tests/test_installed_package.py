@@ -157,6 +157,8 @@ endif()
             run([args.cmake, '--build', cluster_build, '--parallel', '2'])
         run([consumer / 'package_probe'])
         executable = consumer / 'reference_service'
+        run([sys.executable, pathlib.Path(__file__).resolve().parents[1] / 'tests/test_runtime_content.py',
+             '--tool', relocated / 'share/ChwellCore/tools/entity_schema.py', '--reference', executable])
         output = run([executable, '--smoke'])
         if 'PASS:' not in output or 'power=10' not in output: raise RuntimeError(output)
         verify_server(executable, root / 'runtime.conf')
@@ -164,11 +166,14 @@ endif()
         # Existing target CSV must trigger validation, leaving both generated headers intact.
         content = source / 'content'
         headers = {path: path.read_bytes() for path in (consumer / 'generated').glob('*.h')}
+        bundles = {path: path.read_bytes() for path in (consumer / 'generated').glob('*.chct')}
         changed(content / 'items.csv', 'id,power\ndagger,11\n')
         failure = run(compile_command, success=False)
         if 'unresolved reference' not in failure: raise RuntimeError(failure)
         if any(path.read_bytes() != value for path, value in headers.items()):
             raise RuntimeError('Failed catalog validation replaced an artifact')
+        if any(path.read_bytes() != value for path, value in bundles.items()):
+            raise RuntimeError('Failed catalog validation replaced a runtime package')
         changed(content / 'items.csv', 'id,power\nsword,11\nstaff,8\n')
         run(compile_command)
         if 'power=11' not in run([executable, '--smoke']): raise RuntimeError('Stale generated content')

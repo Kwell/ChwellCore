@@ -18,6 +18,7 @@ ctest --test-dir build --output-on-failure --timeout 600
 
 ```bash
 python3 tests/test_entity_schema_tool.py
+python3 tests/test_runtime_content.py
 # Excel/C# 扩展检查需要可选依赖和 .NET 8 SDK
 python3 -m pip install -r tools/requirements-excel.txt
 python3 tests/test_content_clients.py --require-dotnet

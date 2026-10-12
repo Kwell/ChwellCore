@@ -39,9 +39,13 @@ target_link_libraries(my_service PRIVATE Chwell::schema)
 # find_package 自动提供此函数，Python 只在生成内容时需要
 chwell_generate_entity_schema(content_header content/entity.schema.json generated/entity.h
     CATALOG content/catalog.json PREVIOUS content/released.schema.json)
+chwell_generate_content_bundle(content_bundle content/catalog.json generated/content.chct VERSION 1)
 add_dependencies(my_service content_header)
+add_dependencies(my_service content_bundle)
 target_include_directories(my_service PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 ```
+
+运行时内容包加载与发布通过 `Chwell::schema` 的 ContentStore，安装包附带 [版本契约](CONTENT_VERSIONS.md)。安装消费测试还验证原文件保留、包重建及同一进程中的切换/回滚。
 
 完整网络框架仍需要 Linux/POSIX。本机 Windows 可以验证可移植模块，不能据此宣称 Windows 整包运行。Linux CI 分别构建最小包、全部可选依赖包和 FetchContent YAML 包，再安装、移动目录、构建独立消费者并执行 TCP/关闭测试；另验证引用和 Excel 错误不会覆盖产物，以及工作簿/CSV/目录增删表会触发重新构建，删除 C# 输出会重新生成。
 
