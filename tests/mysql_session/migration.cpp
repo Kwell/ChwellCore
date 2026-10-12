@@ -67,7 +67,8 @@ int main(int argc, char** argv) {
             std::cout << "PASS: lease expiry after real UPDATE rolls migration back without partial version or value\n";
             return 0;
         }
-        require(lost_commit ? applied.status == SessionStatus::Unknown : applied.ok(), "Atomic migration or explicit Unknown");
+        if (!(lost_commit ? applied.status == SessionStatus::Unknown : applied.ok()))
+            throw std::runtime_error("Unexpected migration status: " + std::to_string(static_cast<int>(applied.status)));
         require(b.read_document(lease.lease, key, current).ok() && current.value == change.after.value && current.expire_at == ttl, "Value, version and TTL committed together");
         if (lost_commit) {
             // Reconnect the failed connection and reconcile the receipt, without
