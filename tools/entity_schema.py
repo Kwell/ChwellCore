@@ -439,7 +439,7 @@ def generate(schema, rows):
         if 'max_bytes' in field: lines.append(f'                field.max_bytes = {field["max_bytes"]}u;')
         lines += ['                fields.push_back(::std::move(field));', '            }']
     reserved = ', '.join(str(field_id) + 'u' for field_id in schema['reserved_ids'])
-    lines += [f'            return ::std::make_shared<const ::chwell::schema::EntitySchema>({cpp_string(name)}, {cpp_string(schema["table"])}, {schema["key"]}u, ::std::move(fields), ::std::vector<::chwell::schema::FieldId>{{{reserved}}});',
+    lines += [f'            return ::std::make_shared<const ::chwell::schema::EntitySchema>({cpp_string(name)}, {cpp_string(schema["table"])}, {schema["key"]}u, ::std::move(fields), ::std::vector<::chwell::schema::FieldId>{{{reserved}}}, {schema["version"]}u);',
               '        }();', '        return definition;', '    }', f'    static constexpr ::std::uint32_t schema_version = {schema["version"]}u;']
     for field in schema['fields']:
         key, cpp_type = field['name'], TYPE_MAP[field['type']][0]

@@ -202,4 +202,75 @@ SessionResult MysqlSessionStore::apply(const SessionLease& lease,
     });
 }
 
+SessionResult MysqlSessionStore::select_document(const std::string& key, storage::StorageDocument& out) {
+#if defined(CHWELL_USE_MYSQL)
+    if (!execute("SELECT k FROM `" + storage_.table_ + "` WHERE k=" + literal(key) + " FOR UPDATE"))
+        return result(SessionStatus::Unavailable);
+    auto* connection = static_cast<MYSQL*>(storage_.conn_);
+    auto* locked = mysql_store_result(connection);
+    if (!locked) return result(SessionStatus::Unavailable);
+    mysql_free_result(locked);
+    // Evaluate TTL after any lock wait, using the database clock.
+    if (!execute("SELECT k,v,CAST(expire_at AS CHAR) FROM `" + storage_.table_ + "` WHERE k=" + literal(key) +
+        " AND (expire_at=0 OR expire_at>UNIX_TIMESTAMP()) FOR UPDATE")) return result(SessionStatus::Unavailable);
+    auto* rows = mysql_store_result(connection);
+    if (!rows) return result(SessionStatus::Unavailable);
+    auto selected = result(SessionStatus::Missing);
+    if (auto row = mysql_fetch_row(rows)) {
+        auto sizes = mysql_fetch_lengths(rows);
+        if (!sizes || !row[0] || !row[1] || !row[2]) selected = result(SessionStatus::Unavailable);
+        else if (std::string(row[0], sizes[0]) == key) {
+            try {
+                out = {key, std::string(row[1], sizes[1]), std::stoll(std::string(row[2], sizes[2]))};
+                selected = result(SessionStatus::Ok);
+            } catch (...) { selected = result(SessionStatus::Invalid, {}, "Invalid stored TTL"); }
+        }
+    }
+    if (mysql_errno(connection) != 0) selected = result(SessionStatus::Unavailable);
+    mysql_free_result(rows);
+    return selected;
+#else
+    (void)key; (void)out; return result(SessionStatus::Unavailable);
+#endif
+}
+
+SessionResult MysqlSessionStore::read_document(const SessionLease& lease, const std::string& key,
+    storage::StorageDocument& out) {
+    if (!valid(lease) || key.empty() || key.size() > 512) return result(SessionStatus::Invalid);
+    storage::StorageDocument pending;
+    auto completed = transact([&] {
+        auto current = select(lease.player, true);
+        if (current.status == SessionStatus::Unavailable) return current;
+        if (!current.ok() || !matches(lease, current.lease)) return result(SessionStatus::Lost);
+        auto found = select_document(key, pending);
+        if (!found.ok()) return found;
+        return select(lease.player, true);
+    });
+    if (completed.ok()) out = std::move(pending);
+    return completed;
+}
+
+SessionResult MysqlSessionStore::compare_exchange(const SessionLease& lease,
+    const storage::StorageDocument& expected, const std::string& replacement) {
+    if (!valid(lease) || expected.key.empty() || expected.key.size() > 512 ||
+        expected.value == replacement) return result(SessionStatus::Invalid);
+    return transact([&] {
+        auto current = select(lease.player, true);
+        if (current.status == SessionStatus::Unavailable) return current;
+        if (!current.ok() || !matches(lease, current.lease)) return result(SessionStatus::Lost);
+        storage::StorageDocument actual;
+        auto found = select_document(expected.key, actual);
+        if (!found.ok()) return found;
+        if (actual.value != expected.value || actual.expire_at != expected.expire_at)
+            return result(SessionStatus::Conflict);
+        if (!execute("UPDATE `" + storage_.table_ + "` SET v=" + literal(replacement) +
+            " WHERE k=" + literal(expected.key) + " AND (expire_at=0 OR expire_at>UNIX_TIMESTAMP())"))
+            return result(SessionStatus::Unavailable);
+#if defined(CHWELL_USE_MYSQL)
+        if (mysql_affected_rows(static_cast<MYSQL*>(storage_.conn_)) != 1) return result(SessionStatus::Missing);
+#endif
+        return select(lease.player, true); // Expired work rolls back both value and version.
+    });
+}
+
 } }

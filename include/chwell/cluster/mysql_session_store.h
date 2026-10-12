@@ -11,7 +11,7 @@ namespace chwell { namespace cluster {
 struct SessionLease {
     std::string player, owner, node, incarnation, epoch;
 };
-enum class SessionStatus { Ok, Busy, Lost, Unavailable, Unknown, Invalid };
+enum class SessionStatus { Ok, Busy, Lost, Unavailable, Unknown, Invalid, Conflict, Missing };
 struct SessionResult {
     SessionStatus status = SessionStatus::Unavailable;
     SessionLease lease;
@@ -35,7 +35,16 @@ public:
     // Unknown means a COMMIT response was lost; never automatically replay work.
     SessionResult apply(const SessionLease& lease,
         const std::function<storage::StorageResult(storage::StorageInterface&)>& work);
+    // Read full bytes and TTL under the lease; out changes only after commit.
+    SessionResult read_document(const SessionLease& lease, const std::string& key,
+                                storage::StorageDocument& out);
+    // Same lease transaction, row lock, exact bytes AND TTL match. Preserves TTL.
+    // Conflict/Missing do not write. Unknown: reconnect and read to reconcile;
+    // never replay automatically. All writers must obey the same player lease.
+    SessionResult compare_exchange(const SessionLease& lease,
+        const storage::StorageDocument& expected, const std::string& replacement);
 private:
+    SessionResult select_document(const std::string& key, storage::StorageDocument& out);
     SessionResult transact(const std::function<SessionResult()>& work);
     SessionResult select(const std::string& player, bool lock);
     bool execute(const std::string& sql);
