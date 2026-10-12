@@ -80,6 +80,9 @@ jobs:
             'CREATE TABLE legacy_session_kv (k VARCHAR(512) PRIMARY KEY,v MEDIUMTEXT NOT NULL,expire_at BIGINT DEFAULT 0) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci'
           CHWELL_SESSION_TEST_TABLE=legacy_session_kv build-session/mysql_session_contract --expect-incompatible
           build-session/mysql_session_contract
+          build-session/mysql_migration_contract
+          python3 integration_tests/test_mysql_migration_unknown.py build-session/mysql_migration_contract
+          python3 integration_tests/test_mysql_migration_unknown.py build-session/mysql_migration_contract --expired-work
       - name: Verify TCP, durable commit and dependency/process failures under ASan/UBSan
         run: >-
           python3 integration_tests/test_persistent_cluster.py build-reference/cluster_reference

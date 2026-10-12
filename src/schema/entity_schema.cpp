@@ -67,8 +67,8 @@ bool decode(FieldType type, const std::string& text, Value& out) {
 } // namespace
 
 EntitySchema::EntitySchema(std::string name, std::string table, FieldId key,
-    std::vector<FieldDefinition> fields, std::vector<FieldId> reserved)
-    : name_(std::move(name)), table_(std::move(table)), key_(key), fields_(std::move(fields)) {
+    std::vector<FieldDefinition> fields, std::vector<FieldId> reserved, std::uint32_t version)
+    : name_(std::move(name)), table_(std::move(table)), key_(key), version_(version), fields_(std::move(fields)) {
     if (name_.empty() || table_.empty()) throw std::invalid_argument("Schema name/table is empty");
     std::unordered_set<FieldId> ids;
     std::unordered_set<std::string> names;
@@ -76,7 +76,8 @@ EntitySchema::EntitySchema(std::string name, std::string table, FieldId key,
         if (!id || !ids.insert(id).second) throw std::invalid_argument("Invalid reserved field ID");
     }
     for (const auto& field : fields_) {
-        if (!field.id || field.name.empty() || !ids.insert(field.id).second || !names.insert(field.name).second) {
+        if (!field.id || field.name.empty() || field.name == storage_version_field ||
+            !ids.insert(field.id).second || !names.insert(field.name).second) {
             throw std::invalid_argument("Duplicate, reserved or empty schema field");
         }
         if ((field.int_min || field.int_max) && field.type != FieldType::Int64) throw std::invalid_argument("Integer constraint type mismatch");
@@ -136,12 +137,21 @@ bool SchemaEntity::set_value(FieldId id, Value value, std::string* error) {
 std::string SchemaEntity::id() const { return std::get<std::string>(value(schema_->key())); }
 storage::orm::Document SchemaEntity::to_document() const {
     storage::orm::Document document;
+    if (schema_->version()) document.set_string(storage_version_field, std::to_string(schema_->version()));
     for (const auto& field : schema_->fields()) {
         if (field.stored) document.set_string(field.name, encode(value(field.id)));
     }
     return document;
 }
 bool SchemaEntity::load_document(const storage::orm::Document& doc, std::string* error) {
+    // Unstamped historical documents belong only to version 1. Unversioned
+    // handwritten metadata cannot silently consume a versioned document.
+    if (doc.has(storage_version_field)) {
+        if (!schema_->version() || doc.get_string(storage_version_field) != std::to_string(schema_->version()))
+            return fail(error, "Stored schema version mismatch; explicit migration required");
+    } else if (schema_->version() > 1) {
+        return fail(error, "Unversioned document requires migration from version 1");
+    }
     std::map<FieldId, Value> pending;
     for (const auto& field : schema_->fields()) {
         Value value = field.default_value;

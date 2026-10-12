@@ -56,7 +56,7 @@ if (!p->set_level(101, &error)) { /* 超出 1..100，原值不变 */ }
 
 `load_document()` 严格检查全部已知持久化字段的类型与约束，成功后一次替换状态并清除 dirty。未知字段忽略，缺少普通字段采用默认值，瞬态字段恢复默认值。失败保留原值与 dirty；`from_document()` 在失败时抛出 invalid_argument。已有 Repository 的 find 会传播此异常，应用需要在存储读取边界处理。
 
-数字映射使用完整 int64 和可往返的 double 精度，禁止 NaN/Inf。Document 字符串序列化沿用现有 YAML 或 key=value 后端，没有新增存储格式或自动数据库迁移。
+数字映射使用完整 int64 和可往返的 double 精度，禁止 NaN/Inf。Document 字符串序列化沿用现有 YAML 或 key=value 后端。生成实体保存 schema 版本戳，拒绝跨版本加载；升级需显式执行 [存储 schema 迁移](STORAGE_MIGRATIONS.md)。
 
 ## 同步与 AOI 接线
 
@@ -176,4 +176,4 @@ C# 输出位于 `Chwell.Generated.<schema name>` 命名空间，`ClientEntity` �
 
 该 C# 类型是数据契约，属性赋值不执行服务器约束，也不包含 CHWS 解码器；客户端仍需按 [同步协议](SYNC_PROTOCOL.md) 处理快照/差量及权限。所有内容验证完成后才写产物，每个文件单独原子替换；磁盘写入失败时多个产物不是一组事务。
 
-已支持独立二进制内容包、全目录运行时校验、快照发布和单步回滚，见 [内容版本与热切换](CONTENT_VERSIONS.md)。在线存储迁移仍待实现。
+已支持独立二进制内容包、全目录运行时校验、快照发布和单步回滚，见 [内容版本与热切换](CONTENT_VERSIONS.md)。实体存储支持显式预演、MySQL 租约保护的条件迁移与回滚，见 [存储 schema 迁移](STORAGE_MIGRATIONS.md)。

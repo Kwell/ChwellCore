@@ -36,6 +36,7 @@ public:
 
     // 原始访问
     bool has(const std::string& key) const;
+    bool erase(const std::string& key) { return data_.erase(key) != 0; }
     void clear() { data_.clear(); }
     const std::map<std::string, std::string>& data() const { return data_; }
 

@@ -13,6 +13,7 @@
 namespace chwell { namespace schema {
 
 using FieldId = std::uint32_t;
+inline constexpr const char* storage_version_field = "__chwell_schema_version";
 using Value = std::variant<std::int64_t, double, bool, std::string>;
 enum class FieldType { Int64, Double, Bool, String };
 enum class Visibility { Server, Owner, Public };
@@ -41,7 +42,9 @@ struct FieldValue {
 class EntitySchema {
 public:
     EntitySchema(std::string name, std::string table, FieldId key,
-                 std::vector<FieldDefinition> fields, std::vector<FieldId> reserved = {});
+                 std::vector<FieldDefinition> fields, std::vector<FieldId> reserved = {},
+                 std::uint32_t version = 0);
+    std::uint32_t version() const { return version_; }
     const std::string& name() const { return name_; }
     const std::string& table() const { return table_; }
     FieldId key() const { return key_; }
@@ -52,6 +55,7 @@ public:
 private:
     std::string name_, table_;
     FieldId key_;
+    std::uint32_t version_;
     std::vector<FieldDefinition> fields_;
 };
 

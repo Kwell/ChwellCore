@@ -27,11 +27,11 @@ chwell_generate_entity_schema(reference_item ../../examples/reference_service/co
     generated/reference_item.h CATALOG ../../examples/reference_service/content/catalog.json)
 find_package(Threads REQUIRED)
 add_library(chwell_schema_portable
-    ../../src/schema/entity_schema.cpp ../../src/schema/content_store.cpp ../../src/sync/schema_sync.cpp ../../src/sync/sync_wire.cpp
+    ../../src/schema/entity_schema.cpp ../../src/schema/content_store.cpp ../../src/schema/storage_migration.cpp ../../src/sync/schema_sync.cpp ../../src/sync/sync_wire.cpp
     ../../src/storage/orm/document.cpp ../../src/storage/memory_storage.cpp ../../src/core/logger.cpp)
 target_include_directories(chwell_schema_portable PUBLIC ../../include)
 target_link_libraries(chwell_schema_portable PUBLIC Threads::Threads)
-add_executable(chwell_schema_tests ../test_entity_schema.cpp ../test_sync_wire.cpp ../test_content_store.cpp)
+add_executable(chwell_schema_tests ../test_entity_schema.cpp ../test_sync_wire.cpp ../test_content_store.cpp ../test_storage_migration.cpp)
 target_compile_definitions(chwell_schema_tests PRIVATE SYNC_WIRE_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../fixtures")
 target_compile_definitions(chwell_schema_tests PRIVATE CONTENT_BUNDLE_FILE="${CMAKE_CURRENT_BINARY_DIR}/generated/content.chct")
 add_dependencies(chwell_schema_tests player_schema edge_schema reference_player reference_item runtime_content)
