@@ -57,15 +57,10 @@ def main():
                             lower = payload.index(b'\0', 1) + 1 + 4 + 8 + 1
                             caps = int.from_bytes(payload[lower:lower + 2], 'little') & ~0x0800
                             payload = payload[:lower] + caps.to_bytes(2, 'little') + payload[lower + 2:]
-                            # MySQL 8 CLIENT_QUERY_ATTRIBUTES adds a prefix to
-                            # COM_QUERY. Negotiate ordinary SQL packets instead.
-                            upper = lower + 5
-                            caps = int.from_bytes(payload[upper:upper + 2], 'little') & ~0x0800
-                            payload = payload[:upper] + caps.to_bytes(2, 'little') + payload[upper + 2:]
                     if not from_server and payload[:1] == b'\x03':
                         query = payload[1:].strip().upper()
-                        # Some connectors retain their empty attribute header
-                        # even without negotiation; these tests bind no attributes.
+                        # MySQL 8 CLIENT_QUERY_ATTRIBUTES prepends parameter_count
+                        # and parameter_set_count; these tests bind no attributes.
                         if query.startswith(b'\x00\x01'):
                             query = query[2:].strip()
                         state['commit'] = query == b'COMMIT'
