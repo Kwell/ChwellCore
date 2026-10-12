@@ -12,6 +12,7 @@ import math
 import os
 import pathlib
 import re
+import struct
 import tempfile
 
 KEYWORDS = set('alignas alignof and and_eq asm atomic_cancel atomic_commit atomic_noexcept auto bitand bitor bool break case catch char char16_t char32_t class compl concept const constexpr const_cast continue co_await co_return co_yield decltype default delete do double dynamic_cast else enum explicit export extern false float for friend goto if inline int long mutable namespace new noexcept not not_eq nullptr operator or or_eq private protected public register reinterpret_cast requires return short signed sizeof static static_assert static_cast struct switch synchronized template this thread_local throw true try typedef typeid typename union unsigned using virtual void volatile wchar_t while xor xor_eq'.split())
@@ -131,7 +132,7 @@ def load_schema(path):
     if identity.get('max_bytes') == 0: error(path, 'key must allow a nonempty identity')
     data['fields'].sort(key=lambda field: field['id'])
     data['reserved_ids'].sort()
-    symbols = {'entity_schema', 'schema_version', 'client_schema', 'content'}
+    symbols = {'entity_schema', 'schema_version', 'client_schema', 'content', 'content_definition', 'from_content'}
     for field in data['fields']:
         symbols.update(prefix + field['name'] for prefix in ('get_', 'set_', 'field_'))
     if data['name'] in symbols: error(path, 'class name conflicts with generated member')
@@ -297,22 +298,16 @@ def catalog_inputs(path):
     return [entry[:2] for entry in catalog_entries(path)]
 
 
-def load_content(schema_path, schema, csv_path=None, catalog_path=None, xlsx_path=None, sheet=None):
-    if sum(bool(p) for p in (csv_path, catalog_path, xlsx_path)) > 1:
-        error('content', '--catalog, --csv and --xlsx are mutually exclusive')
-    if sheet is not None and not xlsx_path: error('content', '--sheet requires --xlsx')
-    inputs = catalog_entries(catalog_path) if catalog_path else [(pathlib.Path(schema_path).resolve(), csv_path or xlsx_path, bool(xlsx_path), sheet)]
-    tables, selected = {}, None
+def load_tables(inputs, selected_schema=None, selected_definition=None):
+    tables = {}
     # Load all tables first, so self-references and cycles need no recursion.
     for definition, content, excel, worksheet in inputs:
-        current = schema if definition == pathlib.Path(schema_path).resolve() else load_schema(definition)
+        current = selected_definition if definition == selected_schema else load_schema(definition)
         table = current['table']
         if table in tables: error(definition, f'duplicate catalog table {table}')
         locations = []
         rows = (load_xlsx(content, current, locations, worksheet) if excel else load_csv(content, current, locations)) if content else []
         tables[table] = (current, rows, locations, definition, {row['id'] for row in rows})
-        if definition == pathlib.Path(schema_path).resolve(): selected = rows
-    if selected is None: error(catalog_path, 'requested schema is not in catalog')
     for current, rows, locations, definition, _ in tables.values():
         for field in current['fields']:
             if 'reference' not in field: continue
@@ -326,7 +321,50 @@ def load_content(schema_path, schema, csv_path=None, catalog_path=None, xlsx_pat
                 if value == '' and reference['allow_empty']: continue
                 if value not in ids:
                     error(location[field['name']], f'unresolved reference {target}.id = {value!r}')
-    return selected
+    return tables
+
+
+def load_content(schema_path, schema, csv_path=None, catalog_path=None, xlsx_path=None, sheet=None):
+    if sum(bool(p) for p in (csv_path, catalog_path, xlsx_path)) > 1:
+        error('content', '--catalog, --csv and --xlsx are mutually exclusive')
+    if sheet is not None and not xlsx_path: error('content', '--sheet requires --xlsx')
+    selected = pathlib.Path(schema_path).resolve()
+    inputs = catalog_entries(catalog_path) if catalog_path else [(selected, csv_path or xlsx_path, bool(xlsx_path), sheet)]
+    if selected not in [entry[0] for entry in inputs]: error(catalog_path, 'requested schema is not in catalog')
+    tables = load_tables(inputs, selected, schema)
+    return tables[schema['table']][1]
+
+
+def content_contract(schema):
+    return json.dumps(schema, ensure_ascii=True, sort_keys=True, separators=(',', ':'))
+
+
+def generate_bundle(tables, version):
+    integer(version, 1, 2**64 - 1, 'content-version')
+    if not 1 <= len(tables) <= 64: error('content', 'expected 1..64 tables')
+    out = bytearray(struct.pack('>4sHHQI', b'CHCT', 1, 0, version, len(tables)))
+    def text(value):
+        raw = value.encode('utf-8')
+        if len(raw) > 1024 * 1024: error('content', 'string exceeds content format limit')
+        out.extend(struct.pack('>I', len(raw))); out.extend(raw)
+    total = 0
+    for name, (schema, rows, _, _, _) in sorted(tables.items()):
+        if len(schema['fields']) > 1024: error(name, 'field count exceeds content format limit')
+        total += len(rows)
+        if total > 100000: error('content', 'row count exceeds content format limit')
+        text(name); text(content_contract(schema)); out.extend(struct.pack('>I', len(rows)))
+        for row in sorted(rows, key=lambda row: row['id']):
+            out.extend(struct.pack('>I', len(schema['fields'])))
+            for field in schema['fields']:
+                out.extend(struct.pack('>I', field['id']))
+                kind, value = field['type'], row[field['name']]
+                if kind == 'int64': out.extend(struct.pack('>Bq', 1, value))
+                elif kind == 'double': out.extend(struct.pack('>Bd', 2, value))
+                elif kind == 'bool': out.extend(struct.pack('>BB', 3, int(value)))
+                else: out.append(4); text(value)
+            if len(out) > 16 * 1024 * 1024: error('content', 'package exceeds 16 MiB limit')
+    if len(out) > 16 * 1024 * 1024: error('content', 'package exceeds 16 MiB limit')
+    return bytes(out)
 
 
 def cpp_string(value):
@@ -381,7 +419,7 @@ def generate_csharp(schema):
 def generate(schema, rows):
     name = schema['name']
     lines = ['// Generated by tools/entity_schema.py; do not edit.', '#pragma once',
-             '#include "chwell/schema/entity_schema.h"', '#include <limits>', '#include <stdexcept>',
+             '#include "chwell/schema/content_store.h"', '#include <limits>', '#include <stdexcept>',
              'namespace chwell { namespace generated {',
              f'class {name} : public ::chwell::schema::SchemaEntity {{', 'public:',
              f'    {name}() : ::chwell::schema::SchemaEntity(entity_schema()) {{}}',
@@ -409,6 +447,21 @@ def generate(schema, rows):
         lines += [f'    static constexpr ::chwell::schema::FieldId field_{key} = {field["id"]}u;',
                   f'    const {cpp_type}& get_{key}() const {{ return ::std::get<{cpp_type}>(::chwell::schema::SchemaEntity::value(field_{key})); }}',
                   f'    bool set_{key}({cpp_type} input, ::std::string* error = nullptr) {{ return ::chwell::schema::SchemaEntity::set_value(field_{key}, ::std::move(input), error); }}']
+    lines += ['    static ::chwell::schema::ContentTableDefinition content_definition() {',
+              f'        return {{entity_schema(), {cpp_string(content_contract(schema))}, {{']
+    for field in schema['fields']:
+        if 'reference' in field:
+            ref = field['reference']
+            lines.append(f'            {{{field["id"]}u, {cpp_string(ref["table"])}, {str(ref["allow_empty"]).lower()}}},')
+    lines += ['        }};', '    }',
+              f'    static {name} from_content(const ::chwell::schema::ContentRow& source) {{',
+              '        if (&source.definition() != entity_schema().get()) throw ::std::invalid_argument("Content row schema mismatch");',
+              f'        ::chwell::generated::{name} row;']
+    for field in schema['fields']:
+        cpp_type = TYPE_MAP[field['type']][0]
+        if cpp_type.startswith('std::'): cpp_type = '::' + cpp_type
+        lines.append(f'        if (!row.set_{field["name"]}(::std::get<{cpp_type}>(source.value(field_{field["name"]})))) throw ::std::invalid_argument("Invalid typed content row");')
+    lines += ['        row.clear_dirty();', '        return row;', '    }']
     client = client_schema(schema)
     client_text = json.dumps(client, ensure_ascii=True, sort_keys=True, separators=(',', ':'))
     lines += [f'    static ::std::string client_schema() {{ return {cpp_string(client_text)}; }}',
@@ -427,7 +480,9 @@ def atomic_write(path, content):
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = None
     try:
-        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', newline='\n', dir=path.parent, delete=False) as target:
+        binary = isinstance(content, bytes)
+        options = {} if binary else {'encoding': 'utf-8', 'newline': '\n'}
+        with tempfile.NamedTemporaryFile(mode='wb' if binary else 'w', dir=path.parent, delete=False, **options) as target:
             temporary = pathlib.Path(target.name)
             target.write(content)
             target.flush()
@@ -448,23 +503,41 @@ def main():
     parser.add_argument('--list-inputs', action='store_true', help='list catalog dependencies for build systems')
     parser.add_argument('--output')
     parser.add_argument('--csharp-output', help='client contract only; excludes server fields and content rows')
+    parser.add_argument('--bundle-output', help='server-only runtime content package; requires --catalog and --content-version')
+    parser.add_argument('--content-version', type=int, help='nonzero uint64 release version, independent of schema version')
     args = parser.parse_args()
     try:
         if args.list_inputs:
-            if not args.catalog or args.schema or args.output or args.csv or args.previous or args.xlsx or args.sheet or args.csharp_output:
+            if not args.catalog or args.schema or args.output or args.csv or args.previous or args.xlsx or args.sheet or args.csharp_output or args.bundle_output or args.content_version is not None:
                 error('arguments', '--list-inputs requires only --catalog')
             for pair in catalog_inputs(args.catalog):
                 for path in pair: print(path.as_posix())
             return
-        if not args.schema or not (args.output or args.csharp_output): error('arguments', 'schema and --output or --csharp-output are required')
-        if args.output and args.csharp_output and pathlib.Path(args.output).resolve() == pathlib.Path(args.csharp_output).resolve():
-            error('arguments', 'C++ and C# outputs must have different paths')
-        schema = load_schema(args.schema)
+        if sum(bool(p) for p in (args.csv, args.xlsx, args.catalog)) > 1:
+            error('arguments', '--catalog, --csv and --xlsx are mutually exclusive')
+        if args.sheet is not None and not args.xlsx: error('arguments', '--sheet requires --xlsx')
+        if args.bundle_output:
+            if not args.catalog or args.content_version is None or args.csv or args.xlsx or args.sheet:
+                error('arguments', '--bundle-output requires --catalog and --content-version; no direct CSV/XLSX')
+        elif args.content_version is not None: error('arguments', '--content-version requires --bundle-output')
+        if not (args.output or args.csharp_output or args.bundle_output): error('arguments', 'at least one output is required')
+        if not args.schema and (args.output or args.csharp_output or args.previous): error('arguments', 'schema is required for code generation/evolution')
+        paths = [pathlib.Path(p).resolve() for p in (args.output, args.csharp_output, args.bundle_output) if p]
+        if len(paths) != len(set(paths)): error('arguments', 'outputs must have different paths')
+        schema = load_schema(args.schema) if args.schema else None
         if args.previous: check_evolution(schema, load_schema(args.previous), args.schema)
-        rows = load_content(args.schema, schema, args.csv, args.catalog, args.xlsx, args.sheet)
+        if args.catalog:
+            entries = catalog_entries(args.catalog)
+            selected = pathlib.Path(args.schema).resolve() if args.schema else None
+            if selected and selected not in [entry[0] for entry in entries]: error(args.catalog, 'requested schema is not in catalog')
+            tables = load_tables(entries, selected, schema)
+            rows = tables[schema['table']][1] if schema else []
+        else:
+            rows = load_content(args.schema, schema, args.csv, None, args.xlsx, args.sheet)
         outputs = []
         if args.output: outputs.append((args.output, generate(schema, rows)))
         if args.csharp_output: outputs.append((args.csharp_output, generate_csharp(schema)))
+        if args.bundle_output: outputs.append((args.bundle_output, generate_bundle(tables, args.content_version)))
         for path, content in outputs: atomic_write(path, content)
     except (ValueError, OSError, csv.Error) as exc:
         parser.exit(1, str(exc) + '\n')

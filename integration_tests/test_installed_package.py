@@ -13,6 +13,7 @@ import subprocess
 import tempfile
 import time
 import sys
+import struct
 
 import openpyxl
 
@@ -128,6 +129,15 @@ endif()
         client_contract.unlink()
         run(compile_command)
         if not client_contract.exists(): raise RuntimeError('C# output was not regenerated')
+        # VERSION is an input even if table files have not changed.
+        runtime_bundle = consumer / 'generated/content.chct'
+        if struct.unpack('>Q', runtime_bundle.read_bytes()[8:16])[0] != 1:
+            raise RuntimeError('Wrong initial content version')
+        project = source / 'CMakeLists.txt'
+        changed(project, project.read_text().replace('generated/content.chct VERSION 1', 'generated/content.chct VERSION 2'))
+        run(compile_command)
+        if struct.unpack('>Q', runtime_bundle.read_bytes()[8:16])[0] != 2:
+            raise RuntimeError('Content version changed without package regeneration')
         # XLSX is a real build dependency, and invalid cells preserve both outputs.
         excel_header = consumer / 'generated/excel_item.h'
         previous_outputs = {path: path.read_bytes() for path in (excel_header, client_contract)}
@@ -157,6 +167,8 @@ endif()
             run([args.cmake, '--build', cluster_build, '--parallel', '2'])
         run([consumer / 'package_probe'])
         executable = consumer / 'reference_service'
+        run([sys.executable, pathlib.Path(__file__).resolve().parents[1] / 'tests/test_runtime_content.py',
+             '--tool', relocated / 'share/ChwellCore/tools/entity_schema.py', '--reference', executable])
         output = run([executable, '--smoke'])
         if 'PASS:' not in output or 'power=10' not in output: raise RuntimeError(output)
         verify_server(executable, root / 'runtime.conf')
@@ -164,11 +176,14 @@ endif()
         # Existing target CSV must trigger validation, leaving both generated headers intact.
         content = source / 'content'
         headers = {path: path.read_bytes() for path in (consumer / 'generated').glob('*.h')}
+        bundles = {path: path.read_bytes() for path in (consumer / 'generated').glob('*.chct')}
         changed(content / 'items.csv', 'id,power\ndagger,11\n')
         failure = run(compile_command, success=False)
         if 'unresolved reference' not in failure: raise RuntimeError(failure)
         if any(path.read_bytes() != value for path, value in headers.items()):
             raise RuntimeError('Failed catalog validation replaced an artifact')
+        if any(path.read_bytes() != value for path, value in bundles.items()):
+            raise RuntimeError('Failed catalog validation replaced a runtime package')
         changed(content / 'items.csv', 'id,power\nsword,11\nstaff,8\n')
         run(compile_command)
         if 'power=11' not in run([executable, '--smoke']): raise RuntimeError('Stale generated content')

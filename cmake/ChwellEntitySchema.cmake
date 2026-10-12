@@ -51,3 +51,34 @@ function(chwell_generate_entity_schema target schema output)
         DEPENDS ${dependencies} VERBATIM COMMENT "Generating validated entity schema")
     add_custom_target(${target} DEPENDS ${outputs})
 endfunction()
+
+# One package contains the entire validated table graph. Content version is
+# independent of each compiled schema version.
+function(chwell_generate_content_bundle target catalog output)
+    cmake_parse_arguments(CONTENT "" "VERSION" "" ${ARGN})
+    if(CONTENT_UNPARSED_ARGUMENTS OR CONTENT_KEYWORDS_MISSING_VALUES OR NOT CONTENT_VERSION)
+        message(FATAL_ERROR "Content bundle generation requires VERSION")
+    endif()
+    find_package(Python3 3.8 REQUIRED COMPONENTS Interpreter)
+    get_filename_component(catalog "${catalog}" ABSOLUTE BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+    get_filename_component(output "${output}" ABSOLUTE BASE_DIR "${CMAKE_CURRENT_BINARY_DIR}")
+    execute_process(COMMAND "${Python3_EXECUTABLE}" "${CHWELL_ENTITY_SCHEMA_TOOL}"
+        --catalog "${catalog}" --list-inputs
+        RESULT_VARIABLE result OUTPUT_VARIABLE inputs ERROR_VARIABLE diagnostic
+        OUTPUT_STRIP_TRAILING_WHITESPACE)
+    if(NOT result EQUAL 0)
+        message(FATAL_ERROR "Invalid content catalog: ${diagnostic}")
+    endif()
+    string(REPLACE "\r\n" "\n" inputs "${inputs}")
+    string(REPLACE "\n" ";" inputs "${inputs}")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+        "${catalog}" "${CHWELL_ENTITY_SCHEMA_TOOL}")
+    # Make/Ninja must rebuild even when only VERSION changes during configure.
+    file(GENERATE OUTPUT "${output}.version" CONTENT "${CONTENT_VERSION}\n")
+    add_custom_command(OUTPUT "${output}"
+        COMMAND "${Python3_EXECUTABLE}" "${CHWELL_ENTITY_SCHEMA_TOOL}"
+            --catalog "${catalog}" --bundle-output "${output}" --content-version "${CONTENT_VERSION}"
+        DEPENDS "${catalog}" "${CHWELL_ENTITY_SCHEMA_TOOL}" "${output}.version" ${inputs}
+        VERBATIM COMMENT "Generating versioned runtime content package")
+    add_custom_target(${target} DEPENDS "${output}")
+endfunction()

@@ -15,6 +15,43 @@ namespace {
 volatile std::sig_atomic_t stopping = 0;
 void stop_signal(int) { stopping = 1; }
 using Player = chwell::generated::ReferencePlayer;
+using Item = chwell::generated::ReferenceItem;
+
+// Explicit administrative entry: one running process retains views while it
+// validates, publishes and rolls back whole content versions. No rebuild needed.
+int content_check(const char* first, const char* second, const char* rejected) {
+    chwell::schema::ContentStore store({Player::content_definition(), Item::content_definition()});
+    std::string error;
+    if (!store.publish_file(first, 0, &error)) throw std::runtime_error(error);
+    const auto original = store.snapshot();
+    if (original->rows("players").empty()) throw std::runtime_error("Content has no players");
+    const auto id = original->rows("players").begin()->first;
+    auto power = [&](const auto& snapshot) {
+        const auto* row = snapshot->find("players", id);
+        if (!row) throw std::runtime_error("Missing content player");
+        const auto player = Player::from_content(*row);
+        const auto* item = snapshot->find("items", player.get_weapon());
+        if (!item) throw std::runtime_error("Missing content item");
+        return Item::from_content(*item).get_power();
+    };
+    const auto old_power = power(original);
+    if (store.publish_file(rejected, original->generation(), &error) || store.snapshot() != original)
+        throw std::runtime_error("Invalid candidate replaced content");
+    std::cout << "rejected=" << error << '\n';
+    if (!store.publish_file(second, original->generation(), &error)) throw std::runtime_error(error);
+    const auto newer = store.snapshot();
+    const auto new_power = power(newer);
+    if (power(original) != old_power || !store.rollback(newer->generation(), &error))
+        throw std::runtime_error("Pinned view or rollback failed: " + error);
+    const auto restored = store.snapshot();
+    if (restored->version() != original->version() || power(restored) != old_power ||
+        newer->version() == original->version() || power(newer) != new_power)
+        throw std::runtime_error("Content snapshot changed unexpectedly");
+    std::cout << "PASS: runtime content versions=" << original->version() << ',' << newer->version() << ','
+              << restored->version() << " powers=" << old_power << ',' << new_power << ',' << power(restored)
+              << " generation=" << restored->generation() << '\n';
+    return 0;
+}
 
 struct ContentReader {
     virtual ~ContentReader() = default;
@@ -133,9 +170,13 @@ private:
 } // namespace
 
 int main(int argc, char** argv) {
+    if (argc == 5 && std::string(argv[1]) == "--content-check") {
+        try { return content_check(argv[2], argv[3], argv[4]); }
+        catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
+    }
     const bool smoke = argc == 2 && std::string(argv[1]) == "--smoke";
     if (!smoke && !(argc == 3 && std::string(argv[1]) == "--serve")) {
-        std::cerr << "Usage: reference_service --smoke | --serve service.conf\n";
+        std::cerr << "Usage: reference_service --smoke | --serve service.conf | --content-check old.chct new.chct invalid.chct\n";
         return 2;
     }
     try {

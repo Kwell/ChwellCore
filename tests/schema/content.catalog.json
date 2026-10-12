@@ -1,0 +1,6 @@
+{
+  "tables": [
+    {"schema": "../../schemas/player.schema.json", "csv": "../../schemas/player_defaults.csv"},
+    {"schema": "edge.schema.json", "csv": "edge_defaults.csv"}
+  ]
+}

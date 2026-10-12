@@ -6,8 +6,9 @@ chwell_generate_entity_schema(reference_player content/player.schema.json genera
     CATALOG content/catalog.json CSHARP_OUTPUT generated/ReferencePlayer.cs)
 chwell_generate_entity_schema(reference_item content/item.schema.json generated/item.h
     CATALOG content/catalog.json)
+chwell_generate_content_bundle(reference_bundle content/catalog.json generated/content.chct VERSION 1)
 add_executable(reference_service main.cpp)
-add_dependencies(reference_service reference_player reference_item)
+add_dependencies(reference_service reference_player reference_item reference_bundle)
 target_include_directories(reference_service PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_link_libraries(reference_service PRIVATE Chwell::schema)
 if(MSVC)

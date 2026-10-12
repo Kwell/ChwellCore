@@ -30,6 +30,8 @@ smoke 使用系统分配端口，只执行一轮更新后退出；验证成功�
 
 构建同时生成 `generated/ReferencePlayer.cs` 客户端契约，只包含 owner/public 字段，不含内容行。内容源也可替换为 Excel，安装可选依赖后在目录条目中使用 xlsx/sheet；规则见 [Excel/C# 工具](../../docs/ENTITY_SCHEMA.md)。
 
+另生成 `generated/content.chct`（内容版本 1）。服务提供显式运行时验证入口 `reference_service --content-check old.chct new.chct invalid.chct`：同一进程拒绝坏候选、切换全目录、保留旧读者并回滚。无需重新编译即可替换内容；包的 schema 必须匹配当前程序，内容版本递增。生成命令、API、线程和版本边界见 [内容热切换](../../docs/CONTENT_VERSIONS.md)。
+
 ReferenceContent 显式注册 ContentReader 接口，ReferenceGame 通过接口读取内容。Game 在 Init 中订阅更新事件并交给 Service 管理；smoke 同时检查 PreShut 前订阅已经注销、内容接口在消费者 Shut 期间仍可使用。接口和注册令牌契约见 [REGISTRATIONS.md](../../docs/REGISTRATIONS.md)。
 
 持续运行：
