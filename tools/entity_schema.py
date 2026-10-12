@@ -456,7 +456,7 @@ def generate(schema, rows):
     lines += ['        }};', '    }',
               f'    static {name} from_content(const ::chwell::schema::ContentRow& source) {{',
               '        if (&source.definition() != entity_schema().get()) throw ::std::invalid_argument("Content row schema mismatch");',
-              f'        {name} row;']
+              f'        ::chwell::generated::{name} row;']
     for field in schema['fields']:
         cpp_type = TYPE_MAP[field['type']][0]
         if cpp_type.startswith('std::'): cpp_type = '::' + cpp_type

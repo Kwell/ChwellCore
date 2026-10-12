@@ -31,7 +31,7 @@ using Player = chwell::generated::ReferencePlayer;
 using Item = chwell::generated::ReferenceItem;
 chwell::schema::ContentStore content({Player::content_definition(), Item::content_definition()});
 std::string error;
-if (!content.publish_file("content-v1.chct", 0, &error)) { /* 启动失败 */ }
+if (!content.publish_file("content-v1.chct", 0, &error)) throw std::runtime_error(error);
 
 auto view = content.snapshot(); // 初次加载前为 nullptr
 const auto* source = view->find("players", "hero");
