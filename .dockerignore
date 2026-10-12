@@ -3,3 +3,10 @@ build*
 **/__pycache__
 *.pyc
 _*.py
+ARCHITECTURE_FIX.md
+BENCHMARK_REPORT.md
+docs/ARK_COMPARISON.md
+docs/MAINTENANCE.md
+docs/REFACTOR_PLAN.md
+generated
+examples/game_ws_server_json
