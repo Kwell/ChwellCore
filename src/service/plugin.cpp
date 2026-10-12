@@ -10,6 +10,11 @@ bool PluginManager::InstallAll(Service& service) {
     if (installed_) return installed_service_ == &service;
     if (installing_ || uninstalling_ || service.running_ || !service.initialized_components_.empty() ||
         service.registration_owner_) return false;
+    for (const auto& plugin : plugins_) {
+        for (const auto& dynamic : service.dynamic_plugins_) {
+            if (plugin->GetName() == dynamic->GetName()) return false;
+        }
+    }
     std::stable_sort(plugins_.begin(), plugins_.end(),
         [](const std::unique_ptr<IPlugin>& a, const std::unique_ptr<IPlugin>& b) {
             return a->GetPriority() < b->GetPriority();

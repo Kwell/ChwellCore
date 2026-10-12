@@ -166,6 +166,16 @@ endif()
                  '-DCMAKE_FIND_USE_PACKAGE_REGISTRY=OFF'])
             run([args.cmake, '--build', cluster_build, '--parallel', '2'])
         run([consumer / 'package_probe'])
+        plugin_source = root / 'independent plugin source'
+        shutil.copytree(relocated / 'share/ChwellCore/examples/runtime_plugin', plugin_source)
+        plugin_build = root / 'plugin consumer build'
+        run([args.cmake, '-S', plugin_source, '-B', plugin_build,
+             f'-DCMAKE_PREFIX_PATH={relocated}', f'-DCMAKE_BUILD_TYPE={args.config}',
+             '-DCMAKE_FIND_USE_PACKAGE_REGISTRY=OFF'])
+        run([args.cmake, '--build', plugin_build, '--parallel', '2'])
+        output = run([plugin_build / 'runtime_plugin_demo', plugin_build / 'libdamage_v1.so',
+                      plugin_build / 'libdamage_v2.so'])
+        if 'PASS:' not in output: raise RuntimeError(output)
         executable = consumer / 'reference_service'
         run([sys.executable, pathlib.Path(__file__).resolve().parents[1] / 'tests/test_runtime_content.py',
              '--tool', relocated / 'share/ChwellCore/tools/entity_schema.py', '--reference', executable])

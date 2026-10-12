@@ -85,4 +85,75 @@ TEST(HotReloadTest, MultiPluginIsolation) {
     EXPECT_TRUE(hot.unload(TEST_HOT_PLUGIN_PATH));
 }
 
+class RejectHotComponent : public service::Component {
+public:
+    explicit RejectHotComponent(std::string name) : name_(std::move(name)) {}
+    std::string name() const override { return name_; }
+private:
+    std::string name_;
+};
+
+TEST(HotReloadTest, InactiveUnloadCancelsOwnedCallbacksAndDestroysComponentsBeforeImage) {
+    service::Service service(0, 1);
+    service::HotReloadManager hot(&service.plugin_manager(), &service);
+    ASSERT_TRUE(hot.load(TEST_HOT_PLUGIN_PATH));
+    EXPECT_EQ(service.component_count(), 1u);
+    EXPECT_TRUE(hot.unload(TEST_HOT_PLUGIN_PATH)); // Fixture rejects Uninstall if callback was not cancelled.
+    EXPECT_EQ(service.component_count(), 0u);
+    EXPECT_TRUE(hot.load(TEST_HOT_PLUGIN_PATH));
+    EXPECT_TRUE(hot.unload(TEST_HOT_PLUGIN_PATH));
+}
+
+TEST(HotReloadTest, ServiceOwnsRegistrationsAndRejectsLiveComponentReplacement) {
+    service::Service service(0, 1);
+    service::HotReloadManager hot(&service.plugin_manager(), &service);
+    ASSERT_TRUE(hot.load(TEST_HOT_PLUGIN_PATH));
+    auto* component = service.get_component("hot-owned");
+    ASSERT_NE(component, nullptr);
+    EXPECT_EQ(service.component_owner(component), "TestHotPlugin");
+    EXPECT_FALSE(hot.reload(TEST_HOT_PLUGIN_PATH));
+    ASSERT_TRUE(service.start_checked());
+    EXPECT_FALSE(hot.unload(TEST_HOT_PLUGIN_PATH));
+    EXPECT_FALSE(hot.reload(TEST_HOT_PLUGIN_PATH));
+    EXPECT_EQ(service.get_component("hot-owned"), component);
+    service.stop();
+    EXPECT_EQ(service.component_count(), 0u);
+    EXPECT_TRUE(hot.unload(TEST_HOT_PLUGIN_PATH));
+}
+
+TEST(HotReloadTest, PartialInstallFailureAndExceptionRemoveOwnedComponents) {
+    for (const auto* marker : {"reject-hot-install", "throw-hot-install"}) {
+        service::Service service(0, 1);
+        ASSERT_NE(service.add_component<RejectHotComponent>(marker), nullptr);
+        service::HotReloadManager hot(&service.plugin_manager(), &service);
+        EXPECT_FALSE(hot.load(TEST_HOT_PLUGIN_PATH));
+        EXPECT_FALSE(hot.is_loaded(TEST_HOT_PLUGIN_PATH));
+        EXPECT_EQ(service.get_component("hot-owned"), nullptr);
+        EXPECT_EQ(service.component_count(), 1u);
+    }
+}
+
+TEST(HotReloadTest, DestroyingManagerWhileRunningKeepsImagePinnedUntilServiceStop) {
+    service::Service service(0, 1);
+    {
+        service::HotReloadManager hot(&service.plugin_manager(), &service);
+        ASSERT_TRUE(hot.load(TEST_HOT_PLUGIN_PATH));
+        ASSERT_TRUE(service.start_checked());
+    }
+    auto* component = service.get_component("hot-owned");
+    ASSERT_NE(component, nullptr);
+    EXPECT_TRUE(component->Update(1)); // Calls a vtable in the retained shared library.
+    service.stop();
+    EXPECT_EQ(service.get_component("hot-owned"), nullptr);
+}
+
+TEST(HotReloadTest, ServiceDestructionBeforeManagerLeavesNoDanglingServiceAccess) {
+    auto service = std::make_unique<service::Service>(0, 1);
+    service::HotReloadManager hot(&service->plugin_manager(), service.get());
+    ASSERT_TRUE(hot.load(TEST_HOT_PLUGIN_PATH));
+    service.reset();
+    EXPECT_FALSE(hot.load(TEST_HOT_PLUGIN_PATH));
+    EXPECT_TRUE(hot.unload(TEST_HOT_PLUGIN_PATH));
+}
+
 }  // namespace

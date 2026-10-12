@@ -321,7 +321,7 @@ public:
 
     bool start_checked() {
         if (running_) return true;
-        if (starting_ || stopped_after_run_ || !initialized_components_.empty())
+        if (starting_ || dynamic_plugin_busy_ || stopped_after_run_ || !initialized_components_.empty())
             return startup_failed("Service cannot start in its current lifecycle state");
         last_error_.clear();
         starting_ = true;
@@ -383,6 +383,7 @@ public:
                 callback_registration_blocked_ = true;
                 release_all_registrations();
                 plugin_manager_.UninstallAll(*this);
+                uninstall_dynamic_plugins();
             }
             return;
         }
@@ -447,6 +448,7 @@ public:
         CHWELL_LOG_INFO("Step 7: Shut - releasing resources");
         Shut();
         plugin_manager_.UninstallAll(*this);
+        uninstall_dynamic_plugins();
 
         {
             std::lock_guard<std::mutex> lock(bridge_mutex_);
@@ -505,6 +507,63 @@ public:
 
 private:
     friend class PluginManager;
+    friend class HotReloadManager;
+    bool dynamic_plugin_mutation_allowed() const {
+        return !running_ && !starting_ && initialized_components_.empty() &&
+            !registration_owner_ && !registration_blocked_ && !dynamic_plugin_busy_;
+    }
+    bool install_dynamic_plugin(const std::shared_ptr<IPlugin>& plugin) {
+        if (!dynamic_plugin_mutation_allowed()) return false;
+        for (const auto& existing : dynamic_plugins_) {
+            if (existing->GetName() == plugin->GetName()) return false;
+        }
+        for (const auto& existing : plugin_manager_.GetPlugins()) {
+            if (existing->GetName() == plugin->GetName()) return false;
+        }
+        // Pin the object and its image before any component/callback registration.
+        dynamic_plugins_.push_back(plugin);
+        registration_owner_ = plugin.get();
+        registration_error_ = false;
+        dynamic_plugin_busy_ = true;
+        bool installed = false;
+        try { installed = plugin->Install(*this) && !registration_error_; }
+        catch (...) { CHWELL_LOG_ERROR("Dynamic plugin Install threw"); }
+        registration_owner_ = nullptr;
+        dynamic_plugin_busy_ = false;
+        if (!installed) uninstall_dynamic_plugin(plugin.get());
+        return installed;
+    }
+    bool uninstall_dynamic_plugin(IPlugin* plugin) {
+        if (running_ || starting_ || !initialized_components_.empty() || registration_owner_ || dynamic_plugin_busy_) return false;
+        auto found = std::find_if(dynamic_plugins_.begin(), dynamic_plugins_.end(),
+            [plugin](const auto& p) { return p.get() == plugin; });
+        if (found == dynamic_plugins_.end()) return true; // Already unwound by Service::stop.
+        const bool blocked = registration_blocked_;
+        registration_blocked_ = true;
+        dynamic_plugin_busy_ = true;
+        shutdown_owned_components(plugin);
+        bool ok = true;
+        try { ok = plugin->Uninstall(*this); }
+        catch (...) { ok = false; CHWELL_LOG_ERROR("Dynamic plugin Uninstall threw"); }
+        remove_owned_components(plugin); // Includes callbacks, bindings and component destructors.
+        // A plugin reporting failed cleanup may still own external resources.
+        // Keep failed cleanup code resident for process lifetime. We cannot prove
+        // that plugin-owned external work is drained after a failed Uninstall.
+        if (!ok) {
+            static auto* pins = new std::vector<std::shared_ptr<IPlugin>>;
+            static auto* mutex = new std::mutex;
+            std::lock_guard<std::mutex> lock(*mutex);
+            pins->push_back(*found);
+        }
+        dynamic_plugins_.erase(found);
+        registration_blocked_ = blocked;
+        dynamic_plugin_busy_ = false;
+        return ok;
+    }
+    void uninstall_dynamic_plugins() {
+        if (dynamic_plugin_busy_) return;
+        while (!dynamic_plugins_.empty()) uninstall_dynamic_plugin(dynamic_plugins_.back().get());
+    }
     struct ComponentRecord {
         const IPlugin* owner;
         std::optional<int> priority;
@@ -650,6 +709,7 @@ private:
         Shut();
         plugin_manager_.UninstallAll(*this);
         starting_ = false;
+        uninstall_dynamic_plugins();
         last_error_ = std::move(startup_error);
     }
 
@@ -714,6 +774,10 @@ private:
     std::vector<std::pair<const void*, std::unique_ptr<core::RegistrationGroup>>> registration_groups_;
 
     PluginManager plugin_manager_;
+    // Keep library code alive even if the external hot-loader is destroyed first.
+    std::vector<std::shared_ptr<IPlugin>> dynamic_plugins_;
+    std::shared_ptr<int> dynamic_plugin_lifetime_ = std::make_shared<int>(0);
+    bool dynamic_plugin_busy_ = false;
     std::atomic<bool> running_;
     std::chrono::steady_clock::time_point last_update_time_;
     int shutdown_drain_timeout_ms_ = 5000;  // 🆕 默认 5 秒排空超时

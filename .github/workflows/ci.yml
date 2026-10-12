@@ -137,6 +137,12 @@ jobs:
         run: cmake --build build-order --config Debug --parallel 4
       - name: Run component dependency tests
         run: ctest --test-dir build-order -C Debug --output-on-failure --timeout 30
+      - name: Configure portable runtime plugin tests
+        run: cmake -S tests/runtime_plugin -B build-runtime-plugin
+      - name: Build runtime plugin tests and real shared libraries
+        run: cmake --build build-runtime-plugin --config Debug --parallel 4
+      - name: Verify runtime version replacement and retained calls
+        run: ctest --test-dir build-runtime-plugin -C Debug --output-on-failure --timeout 30
       - name: Configure portable registration tests
         run: cmake -S tests/registrations -B build-registrations
       - name: Build portable registration tests

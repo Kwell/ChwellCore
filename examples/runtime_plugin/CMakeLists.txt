@@ -1,0 +1,16 @@
+cmake_minimum_required(VERSION 3.14)
+project(ChwellRuntimePluginExample LANGUAGES C CXX)
+find_package(ChwellCore 0.1 CONFIG REQUIRED COMPONENTS core)
+foreach(version 1 2)
+    add_library(damage_v${version} SHARED rule.c)
+    # Imported target's headers only: the C plugin has no framework/runtime dependency.
+    target_include_directories(damage_v${version} PRIVATE "$<TARGET_PROPERTY:Chwell::core,INTERFACE_INCLUDE_DIRECTORIES>")
+    if(version EQUAL 2)
+        target_compile_definitions(damage_v${version} PRIVATE RULE_VERSION=2 RULE_MULTIPLIER=3)
+    endif()
+endforeach()
+add_executable(runtime_plugin_demo main.cpp)
+target_link_libraries(runtime_plugin_demo PRIVATE Chwell::core)
+enable_testing()
+add_test(NAME runtime_plugin_demo COMMAND runtime_plugin_demo
+    "$<TARGET_FILE:damage_v1>" "$<TARGET_FILE:damage_v2>")
