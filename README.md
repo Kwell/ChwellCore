@@ -1218,7 +1218,7 @@ TcpServer（传统）                EpollTcpServer（高性能）
 | deserialize 10KB | 100 | 0.370 ms | **≈0.27 M/s** |
 | parser 10×1KB | 1000 批/次 | 3.38 ms | **≈296 K 批/s（≈2.96 M msg/s）** |
 
-> 历史文档 `BENCHMARK_REPORT.md` 中的绝对值口径错误，已作废，请以本节数字为准。
+> 历史性能报告中的绝对值口径错误，已作废，请以本节数字为准。
 
 
 ---
