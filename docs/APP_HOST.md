@@ -1,8 +1,7 @@
 # AppHost and Startup Contracts
 
 AppHost assembles an application from ChwellCore's existing Config format or a
-typed AppManifest. It is an independent implementation of the design discussed
-in ARK_COMPARISON.md; no ARK source is used.
+typed AppManifest.
 
 ```cpp
 chwell::core::Config config;

@@ -1163,7 +1163,7 @@ TcpServer (legacy)               EpollTcpServer (high performance)
 | deserialize 10KB | 100 | 0.370 ms | **≈0.27 M/s** |
 | parser 10×1KB | 1000 batches/call | 3.38 ms | **≈296 K batches/s (≈2.96 M msg/s)** |
 
-> Absolute values in `BENCHMARK_REPORT.md` used the wrong units and are deprecated; trust this table.
+> Absolute values in the historical benchmark report used the wrong units and are deprecated; trust this table.
 
 
 ---

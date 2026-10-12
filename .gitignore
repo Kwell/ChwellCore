@@ -7,6 +7,22 @@ build/
 *.o
 *.a
 *.so
+*.so.*
+*.obj
+*.lib
+*.dll
+*.exe
+*.pdb
+*.ilk
+*.exp
+*.dylib
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+compile_commands.json
+/generated/
+/examples/game_ws_server_json
 
 # IDE
 .idea/
@@ -18,3 +34,13 @@ build/
 dummy
 *.pyc
 __pycache__/
+
+# Local research, implementation plans and maintenance notes
+/docs/ARK_COMPARISON.md
+/docs/MAINTENANCE.md
+/docs/REFACTOR_PLAN.md
+/ARCHITECTURE_FIX.md
+/BENCHMARK_REPORT.md
+
+# Local repository administration scripts
+/_*.py
