@@ -13,6 +13,7 @@ import subprocess
 import tempfile
 import time
 import sys
+import struct
 
 import openpyxl
 
@@ -128,6 +129,15 @@ endif()
         client_contract.unlink()
         run(compile_command)
         if not client_contract.exists(): raise RuntimeError('C# output was not regenerated')
+        # VERSION is an input even if table files have not changed.
+        runtime_bundle = consumer / 'generated/content.chct'
+        if struct.unpack('>Q', runtime_bundle.read_bytes()[8:16])[0] != 1:
+            raise RuntimeError('Wrong initial content version')
+        project = source / 'CMakeLists.txt'
+        changed(project, project.read_text().replace('generated/content.chct VERSION 1', 'generated/content.chct VERSION 2'))
+        run(compile_command)
+        if struct.unpack('>Q', runtime_bundle.read_bytes()[8:16])[0] != 2:
+            raise RuntimeError('Content version changed without package regeneration')
         # XLSX is a real build dependency, and invalid cells preserve both outputs.
         excel_header = consumer / 'generated/excel_item.h'
         previous_outputs = {path: path.read_bytes() for path in (excel_header, client_contract)}

@@ -73,10 +73,12 @@ function(chwell_generate_content_bundle target catalog output)
     string(REPLACE "\n" ";" inputs "${inputs}")
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
         "${catalog}" "${CHWELL_ENTITY_SCHEMA_TOOL}")
+    # Make/Ninja must rebuild even when only VERSION changes during configure.
+    file(GENERATE OUTPUT "${output}.version" CONTENT "${CONTENT_VERSION}\n")
     add_custom_command(OUTPUT "${output}"
         COMMAND "${Python3_EXECUTABLE}" "${CHWELL_ENTITY_SCHEMA_TOOL}"
             --catalog "${catalog}" --bundle-output "${output}" --content-version "${CONTENT_VERSION}"
-        DEPENDS "${catalog}" "${CHWELL_ENTITY_SCHEMA_TOOL}" ${inputs}
+        DEPENDS "${catalog}" "${CHWELL_ENTITY_SCHEMA_TOOL}" "${output}.version" ${inputs}
         VERBATIM COMMENT "Generating versioned runtime content package")
     add_custom_target(${target} DEPENDS "${output}")
 endfunction()
