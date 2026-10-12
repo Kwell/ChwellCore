@@ -50,7 +50,7 @@
 | **可靠性** | 熔断器（计数 / 失败率 / 混合 + HALF_OPEN 探测名额）；令牌桶 / 漏桶 / 固定窗口限流；Prometheus 指标 |
 | **可观测** | 结构化日志（分类过滤 / JSON / 文件）；`TraceContext` / `ScopedSpan`；QPS / 延迟直方图 / 连接数；GM 运维指令（token 鉴权） |
 | **事务** | TCC 两阶段（Try→Confirm / Cancel 全量回滚）；Saga 正向补偿（失败步骤可选补偿） |
-| **热加载** | `dlopen`/`LoadLibrary` 动态插件，安全切换 + mtime 自动检测 + 前缀白名单 |
+| **插件版本** | C ABI 无状态规则插件，独立镜像 + 调用快照 + 版本检查 + 回滚；Service 组件插件停机卸载 |
 | **配置** | key=value + 扁平 JSON；环境 profile 叠加；热加载（mtime 基线 + 变更回调）；快照回滚；必填键校验 |
 | **灰度** | `TrafficSplitter` 加权版本路由（会话粘滞 + 随机）；`ConfigVersionStore` 多版本配置原子切换 |
 | **GM / 分析** | `GmConsole` 指令注册 + 权限等级 + 审计日志；`GmAdminApi` HTTP/JSON 管理接口；`AnalyticsPipeline` 埋点聚合 / 漏斗 / top 事件；`AnalyticsStore` 落盘快照 |
@@ -513,17 +513,20 @@ std::string prom = metrics::get_prometheus_registry().export_metrics();
 service::OpsComponent ops(/*token=*/"secret");
 ```
 
-### 热加载插件 (`chwell/service/hot_reload.h`)
+### 运行时插件版本 (`chwell/service/runtime_plugin.h`)
 
 ```cpp
-#include "chwell/service/hot_reload.h"
+#include "chwell/service/runtime_plugin.h"
 
-service::HotReloadManager mgr;
-mgr.set_allowed_prefix("myplugin");          // 限制可加载路径前缀
-mgr.load("./plugins/myplugin.so");           // dlopen + chwell_create_plugin
-mgr.check_updates();                         // mtime 变化则安全切换（失败自动回滚）
-// ABI：extern "C" Plugin* chwell_create_plugin(); void chwell_destroy_plugin(Plugin*);
+service::RuntimePluginStore plugins("example.damage", "./plugins");
+std::string error;
+plugins.publish("./plugins/damage-v1.so", 0, &error);
+auto rules = plugins.acquire();              // 持有快照，整个调用期间保留这一版镜像
+plugins.publish("./plugins/damage-v2.so", 1, &error);
+plugins.rollback(2, &error);                 // 恢复前一版，拒绝旧 generation 的管理操作
 ```
+
+完整 C ABI、调用示例、安装包独立构建和传统组件插件限制见 [运行时插件版本替换](docs/RUNTIME_PLUGINS.md)。
 
 ### 分布式事务 (`chwell/transaction`)
 
@@ -1245,7 +1248,7 @@ TcpServer（传统）                EpollTcpServer（高性能）
 - 熔断器（含 HALF_OPEN 探测名额）+ 限流器（三种策略）+ Prometheus 指标
 - **可观测性**：结构化日志 / Trace / 延迟直方图 / GM 运维指令
 - **分布式事务**：TCC 两阶段 + Saga 补偿
-- **插件热加载**（dlopen 安全切换 + mtime 检测）
+- **运行时规则插件**（独立镜像、保留调用快照、版本检查与单步回滚）
 - **配置中心能力**：JSON / 环境 profile / 热加载 / 快照回滚
 - Redis RESP 客户端（显式 Mock，真实连接失败返回失败）+ 分布式锁（SET NX EX / CAS）
 - AOI（回调锁外派发）+ SLG 地图 / 战斗

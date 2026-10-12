@@ -69,14 +69,15 @@ jobs:
             -e MYSQL_ROOT_PASSWORD=ci-root-password -e MYSQL_DATABASE=chwell \
             -e MYSQL_USER=chwell -e MYSQL_PASSWORD=ci-db-password mysql:8.0
           for attempt in $(seq 1 90); do
+            # The image's initialization server only exposes a socket; wait for the final TCP server.
             if curl --fail --silent http://127.0.0.1:8500/v1/status/leader | grep -q ':8300' \
-              && docker exec -e MYSQL_PWD chwell-persistent-mysql mysql -uchwell -e 'SELECT 1' chwell; then exit 0; fi
+              && docker exec -e MYSQL_PWD chwell-persistent-mysql mysql --protocol=TCP -h127.0.0.1 -uchwell -e 'SELECT 1' chwell; then exit 0; fi
             sleep 1
           done
           exit 1
       - name: Verify MySQL two-connection fencing and rollback under ASan/UBSan
         run: |
-          docker exec -e MYSQL_PWD chwell-persistent-mysql mysql -uchwell chwell -e \
+          docker exec -e MYSQL_PWD chwell-persistent-mysql mysql --protocol=TCP -h127.0.0.1 -uchwell chwell -e \
             'CREATE TABLE legacy_session_kv (k VARCHAR(512) PRIMARY KEY,v MEDIUMTEXT NOT NULL,expire_at BIGINT DEFAULT 0) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci'
           CHWELL_SESSION_TEST_TABLE=legacy_session_kv build-session/mysql_session_contract --expect-incompatible
           build-session/mysql_session_contract
@@ -137,6 +138,12 @@ jobs:
         run: cmake --build build-order --config Debug --parallel 4
       - name: Run component dependency tests
         run: ctest --test-dir build-order -C Debug --output-on-failure --timeout 30
+      - name: Configure portable runtime plugin tests
+        run: cmake -S tests/runtime_plugin -B build-runtime-plugin
+      - name: Build runtime plugin tests and real shared libraries
+        run: cmake --build build-runtime-plugin --config Debug --parallel 4
+      - name: Verify runtime version replacement and retained calls
+        run: ctest --test-dir build-runtime-plugin -C Debug --output-on-failure --timeout 30
       - name: Configure portable registration tests
         run: cmake -S tests/registrations -B build-registrations
       - name: Build portable registration tests

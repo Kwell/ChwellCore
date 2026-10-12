@@ -16,6 +16,7 @@ build/
 *.ilk
 *.exp
 *.dylib
+.chwell-plugin-*
 CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake

@@ -9,4 +9,5 @@ docs/ARK_COMPARISON.md
 docs/MAINTENANCE.md
 docs/REFACTOR_PLAN.md
 generated
+.chwell-plugin-*
 examples/game_ws_server_json

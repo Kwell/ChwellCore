@@ -109,6 +109,7 @@ add_library(chwell_core
     src/service/app_host.cpp
     src/service/component_order.cpp
     src/service/plugin.cpp
+    src/service/runtime_plugin.cpp
     src/service/hot_reload.cpp
     src/protocol/message.cpp
     src/protocol/parser.cpp
@@ -259,6 +260,10 @@ if (CHWELL_BUILD_TESTS)
             tests/test_udp_socket.cpp
         )
         target_link_libraries(chwell_core_tests PRIVATE chwell_core ${CHWELL_GTEST_LIB})
+        target_sources(chwell_core_tests PRIVATE tests/test_runtime_plugin.cpp)
+        include(tests/runtime_plugin/fixtures.cmake)
+        chwell_runtime_plugin_fixtures(chwell_core_tests)
+        set_target_properties(chwell_core_tests PROPERTIES ENABLE_EXPORTS ON)
 
         # 热加载测试插件（SHARED），供 test_hot_reload 加载
         add_library(test_hot_plugin SHARED tests/test_hot_plugin.cpp)

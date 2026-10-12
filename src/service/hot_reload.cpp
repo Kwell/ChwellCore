@@ -5,6 +5,7 @@
 
 #include <sys/stat.h>
 #include <algorithm>
+#include <filesystem>
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -57,7 +58,7 @@ using DestroyFn = void (*)(IPlugin*);
 } // namespace
 
 HotReloadManager::HotReloadManager(PluginManager* plugins, Service* service)
-    : plugins_(plugins), service_(service) {}
+    : service_(service), service_lifetime_(service ? service->dynamic_plugin_lifetime_ : std::weak_ptr<int>{}) { (void)plugins; }
 
 HotReloadManager::~HotReloadManager() {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -75,7 +76,20 @@ std::int64_t HotReloadManager::file_mtime(const std::string& path) {
 
 bool HotReloadManager::path_allowed(const std::string& path) const {
     if (allowed_prefix_.empty()) return true;
-    return path.rfind(allowed_prefix_, 0) == 0;
+    try {
+        const auto root = std::filesystem::canonical(std::filesystem::u8path(allowed_prefix_));
+        const auto candidate = std::filesystem::canonical(std::filesystem::u8path(path));
+        auto part = candidate.begin();
+        for (const auto& component : root) {
+            if (part == candidate.end() || *part++ != component) return false;
+        }
+        return part != candidate.end();
+    } catch (...) { return false; }
+}
+
+void HotReloadManager::set_allowed_prefix(std::string prefix) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    allowed_prefix_ = std::move(prefix);
 }
 
 bool HotReloadManager::load_internal(const std::string& path, Loaded& out) {
@@ -98,7 +112,8 @@ bool HotReloadManager::load_internal(const std::string& path, Loaded& out) {
         return false;
     }
 
-    IPlugin* plugin = create();
+    IPlugin* plugin = nullptr;
+    try { plugin = create(); } catch (...) { dl_close(handle); return false; }
     if (!plugin) {
         CHWELL_LOG_ERROR("HotReload: create_plugin returned null for " << path);
         dl_close(handle);
@@ -106,31 +121,33 @@ bool HotReloadManager::load_internal(const std::string& path, Loaded& out) {
     }
 
     out.path = path;
-    out.handle = handle;
-    out.plugin = plugin;
-    out.destroy_fn = destroy;
+    out.plugin = std::shared_ptr<IPlugin>(plugin, [destroy, handle](IPlugin* value) {
+        try { destroy(value); }
+        catch (...) { CHWELL_LOG_ERROR("HotReload: destroy threw; image stays resident"); return; }
+        dl_close(handle);
+    });
+    try {
+        out.name = plugin->GetName();
+        out.version = plugin->GetVersion();
+        if (out.name.empty() || out.version <= 0) return false;
+    } catch (...) { return false; }
     out.mtime = file_mtime(path);
     out.installed = false;
     return true;
 }
 
-void HotReloadManager::unload_internal(Loaded& item) {
-    if (item.plugin && item.installed && service_ && plugins_) {
-        item.plugin->Uninstall(*service_);
-        item.installed = false;
+bool HotReloadManager::unload_internal(Loaded& item) {
+    if (item.plugin && item.installed && service_ && !service_lifetime_.expired()) {
+        if (!service_->uninstall_dynamic_plugin(item.plugin.get())) return false;
     }
-    if (item.plugin && item.destroy_fn) {
-        item.destroy_fn(item.plugin);
-        item.plugin = nullptr;
-    }
-    if (item.handle) {
-        dl_close(item.handle);
-        item.handle = nullptr;
-    }
+    item.installed = false;
+    item.plugin.reset();
+    return true;
 }
 
 bool HotReloadManager::load(const std::string& path) {
     std::lock_guard<std::mutex> lock(mutex_);
+    if (service_ && (service_lifetime_.expired() || !service_->dynamic_plugin_mutation_allowed())) return false;
     for (auto& item : items_) {
         if (item.path == path) {
             CHWELL_LOG_WARN("HotReload: already loaded " << path);
@@ -141,15 +158,15 @@ bool HotReloadManager::load(const std::string& path) {
     Loaded item;
     if (!load_internal(path, item)) return false;
 
-    if (service_ && !item.plugin->Install(*service_)) {
+    if (service_ && !service_->install_dynamic_plugin(item.plugin)) {
         CHWELL_LOG_ERROR("HotReload: Install failed for " << path);
         unload_internal(item);
         return false;
     }
-    item.installed = true;
+    item.installed = service_ != nullptr;
 
-    CHWELL_LOG_INFO("HotReload: loaded " << path << " (" << item.plugin->GetName()
-                    << " v" << item.plugin->GetVersion() << ")");
+    CHWELL_LOG_INFO("HotReload: loaded " << path << " (" << item.name
+                    << " v" << item.version << ")");
     items_.push_back(std::move(item));
     return true;
 }
@@ -162,7 +179,7 @@ bool HotReloadManager::unload(const std::string& path) {
         CHWELL_LOG_WARN("HotReload: not loaded " << path);
         return false;
     }
-    unload_internal(*it);
+    if (!unload_internal(*it)) return false;
     items_.erase(it);
     CHWELL_LOG_INFO("HotReload: unloaded " << path);
     return true;
@@ -170,6 +187,9 @@ bool HotReloadManager::unload(const std::string& path) {
 
 bool HotReloadManager::reload(const std::string& path) {
     std::lock_guard<std::mutex> lock(mutex_);
+    // The Service component graph has no staging/commit or retained call handles.
+    // Do not overlap two generations of C++ components or promise atomic rollback.
+    if (service_) return false;
 
     auto it = std::find_if(items_.begin(), items_.end(),
         [&](const Loaded& x) { return x.path == path; });
@@ -178,25 +198,16 @@ bool HotReloadManager::reload(const std::string& path) {
         return false;
     }
 
-    // 1) 先加载新库（旧库保持驻留）
+    // Headless legacy object recreation only. The OS may reuse this library;
+    // live release switching belongs to RuntimePluginStore's isolated images.
     Loaded fresh;
     if (!load_internal(path, fresh)) {
         CHWELL_LOG_ERROR("HotReload: reload failed to open new image of " << path << ", keeping old");
         return false;
     }
 
-    // 2) 安装新插件
-    if (service_ && !fresh.plugin->Install(*service_)) {
-        CHWELL_LOG_ERROR("HotReload: reload Install failed, rolling back " << path);
-        unload_internal(fresh);
-        return false;
-    }
-    fresh.installed = true;
-
-    // 3) 卸载并销毁旧插件
     unload_internal(*it);
 
-    // 4) 替换记录
     *it = std::move(fresh);
     CHWELL_LOG_INFO("HotReload: reloaded " << path);
     return true;
@@ -204,6 +215,7 @@ bool HotReloadManager::reload(const std::string& path) {
 
 int HotReloadManager::check_updates() {
     std::lock_guard<std::mutex> lock(mutex_);
+    if (service_) return 0;
     int reloaded = 0;
     for (auto& item : items_) {
         std::int64_t now = file_mtime(item.path);
@@ -213,11 +225,6 @@ int HotReloadManager::check_updates() {
             // unlock-safe: reload takes the same lock, so inline the logic
             Loaded fresh;
             if (!load_internal(item.path, fresh)) continue;
-            if (service_ && !fresh.plugin->Install(*service_)) {
-                unload_internal(fresh);
-                continue;
-            }
-            fresh.installed = true;
             unload_internal(item);
             item = std::move(fresh);
             ++reloaded;
