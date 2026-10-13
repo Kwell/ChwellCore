@@ -23,6 +23,9 @@ bool matches(const SessionLease& a, const SessionLease& b) {
     return a.player == b.player && a.owner == b.owner && a.node == b.node &&
         a.incarnation == b.incarnation && a.epoch == b.epoch;
 }
+bool valid_request(const std::string& id, const std::string& command) {
+    return !id.empty() && id.size() <= 128 && !command.empty() && command.size() <= 8192;
+}
 SessionResult result(SessionStatus status, SessionLease lease = {}, std::string error = {}) {
     return {status, std::move(lease), std::move(error)};
 }
@@ -51,17 +54,47 @@ bool MysqlSessionStore::connect() {
         "player VARBINARY(64) PRIMARY KEY, owner VARBINARY(128) NOT NULL, "
         "node VARBINARY(128) NOT NULL, incarnation VARBINARY(128) NOT NULL, "
         "epoch BIGINT UNSIGNED NOT NULL, expires DATETIME(6) NOT NULL) ENGINE=InnoDB");
-    bool compatible = ok;
+    bool compatible = ok && execute("CREATE TABLE IF NOT EXISTS chwell_request_results ("
+        "document_table VARBINARY(64) NOT NULL, player VARBINARY(64) NOT NULL, "
+        "request_id VARBINARY(128) NOT NULL, command MEDIUMBLOB NOT NULL, "
+        "result MEDIUMBLOB NOT NULL, format INT UNSIGNED NOT NULL, "
+        "PRIMARY KEY(document_table,player,request_id)) ENGINE=InnoDB");
 #if defined(CHWELL_USE_MYSQL)
     if (compatible) {
         compatible = execute("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() "
-            "AND table_name IN (" + literal(storage_.table_) + ",X'636877656c6c5f73657373696f6e5f6c6561736573') "
+            "AND table_name IN (" + literal(storage_.table_) + ",X'636877656c6c5f73657373696f6e5f6c6561736573',"
+            "X'636877656c6c5f726571756573745f726573756c7473') "
             "AND engine='InnoDB'");
         if (compatible) {
             auto* rows = mysql_store_result(static_cast<MYSQL*>(storage_.conn_));
             const auto row = rows ? mysql_fetch_row(rows) : nullptr;
-            compatible = row && std::string(row[0]) == "2";
+            compatible = row && std::string(row[0]) == "3";
             if (rows) mysql_free_result(rows);
+        }
+        if (compatible) {
+            // Reject an existing lossy/case-insensitive or non-transactional journal.
+            compatible = execute("SELECT COUNT(*), SUM(is_nullable='NO' AND ("
+                "(column_name='document_table' AND column_type='varbinary(64)') OR "
+                "(column_name='player' AND column_type='varbinary(64)') OR "
+                "(column_name='request_id' AND column_type='varbinary(128)') OR "
+                "(column_name IN ('command','result') AND column_type='mediumblob') OR "
+                "(column_name='format' AND column_type='int unsigned'))) "
+                "FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='chwell_request_results'");
+            if (compatible) {
+                auto* rows = mysql_store_result(static_cast<MYSQL*>(storage_.conn_));
+                const auto row = rows ? mysql_fetch_row(rows) : nullptr;
+                compatible = row && row[0] && row[1] && std::string(row[0]) == "6" && std::string(row[1]) == "6";
+                if (rows) mysql_free_result(rows);
+            }
+            compatible = compatible && execute("SELECT GROUP_CONCAT(column_name ORDER BY seq_in_index) "
+                "FROM information_schema.statistics WHERE table_schema=DATABASE() AND table_name='chwell_request_results' "
+                "AND index_name='PRIMARY' AND non_unique=0 AND sub_part IS NULL");
+            if (compatible) {
+                auto* rows = mysql_store_result(static_cast<MYSQL*>(storage_.conn_));
+                const auto row = rows ? mysql_fetch_row(rows) : nullptr;
+                compatible = row && row[0] && std::string(row[0]) == "document_table,player,request_id";
+                if (rows) mysql_free_result(rows);
+            }
         }
         if (compatible) {
             compatible = execute("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() "
@@ -79,7 +112,7 @@ bool MysqlSessionStore::connect() {
     }
 #endif
     if (!compatible) {
-        CHWELL_LOG_ERROR("MysqlSessionStore: requires InnoDB tables and utf8mb4_bin document keys; see SESSION_OWNERSHIP.md");
+        CHWELL_LOG_ERROR("MysqlSessionStore: requires InnoDB, binary journal keys and utf8mb4_bin document keys; see SESSION_OWNERSHIP.md");
         storage_.disconnect();
     }
     return compatible;
@@ -214,6 +247,79 @@ SessionResult MysqlSessionStore::apply(const SessionLease& lease,
         if (!current.ok()) return current;
         return result(SessionStatus::Ok, lease);
     });
+}
+
+SessionResult MysqlSessionStore::select_request(const SessionLease& lease, const std::string& id,
+    const std::string& command, DurableRequestResult& out) {
+#if defined(CHWELL_USE_MYSQL)
+    // The caller first acquired the player's lease using only locking reads.
+    // This FIRST consistent read creates its snapshot after that lock wait, so
+    // it sees the prior owner's commit under REPEATABLE READ. Avoid a gap lock
+    // on a missing journal row: unrelated players may insert in the same gap.
+    if (!execute("SELECT command,result,format FROM chwell_request_results WHERE document_table=" +
+        literal(storage_.table_) + " AND player=" + literal(lease.player) + " AND request_id=" + literal(id)))
+        return result(SessionStatus::Unavailable);
+    auto* connection = static_cast<MYSQL*>(storage_.conn_);
+    auto* rows = mysql_store_result(connection);
+    if (!rows) return result(SessionStatus::Unavailable);
+    auto found = result(SessionStatus::Missing);
+    if (auto row = mysql_fetch_row(rows)) {
+        const auto sizes = mysql_fetch_lengths(rows);
+        if (!sizes || !row[0] || !row[1] || !row[2] || sizes[0] > 8192 || sizes[1] > 1024 * 1024 ||
+            std::string(row[2]) != "1") found = result(SessionStatus::Invalid, {}, "invalid_request_record");
+        else if (std::string(row[0], sizes[0]) != command)
+            found = result(SessionStatus::Conflict, {}, "request_id_conflict");
+        else {
+            out = {std::string(row[1], sizes[1]), true};
+            found = result(SessionStatus::Ok, lease);
+        }
+    }
+    if (mysql_errno(connection) != 0) found = result(SessionStatus::Unavailable);
+    mysql_free_result(rows);
+    return found;
+#else
+    (void)lease; (void)id; (void)command; (void)out;
+    return result(SessionStatus::Unavailable);
+#endif
+}
+SessionResult MysqlSessionStore::apply_once(const SessionLease& lease, const std::string& id,
+    const std::string& command, DurableRequestResult& out,
+    const std::function<storage::StorageResult(storage::StorageInterface&, std::string&)>& work) {
+    if (!valid(lease) || !valid_request(id, command) || !work) return result(SessionStatus::Invalid);
+    DurableRequestResult pending;
+    auto completed = transact([&] {
+        auto current = select(lease.player, true);
+        if (current.status == SessionStatus::Unavailable) return current;
+        if (!current.ok() || !matches(lease, current.lease)) return result(SessionStatus::Lost);
+        const auto existing = select_request(lease, id, command, pending);
+        if (existing.status == SessionStatus::Missing) {
+            const auto changed = work(storage_, pending.value);
+            if (!changed.ok) return result(SessionStatus::Invalid, {}, changed.error_msg);
+            if (pending.value.size() > 1024 * 1024) return result(SessionStatus::Invalid, {}, "request_result_too_large");
+            if (!execute("INSERT INTO chwell_request_results (document_table,player,request_id,command,result,format) VALUES (" +
+                literal(storage_.table_) + "," + literal(lease.player) + "," + literal(id) + "," + literal(command) + "," +
+                literal(pending.value) + ",1)")) return result(SessionStatus::Unavailable);
+        } else if (!existing.ok()) return existing;
+        // A long callback or journal lock wait cannot commit after lease expiry.
+        return select(lease.player, true);
+    });
+    if (completed.ok()) out = std::move(pending);
+    return completed;
+}
+SessionResult MysqlSessionStore::request_result(const SessionLease& lease, const std::string& id,
+    const std::string& command, DurableRequestResult& out) {
+    if (!valid(lease) || !valid_request(id, command)) return result(SessionStatus::Invalid);
+    DurableRequestResult pending;
+    auto completed = transact([&] {
+        auto current = select(lease.player, true);
+        if (current.status == SessionStatus::Unavailable) return current;
+        if (!current.ok() || !matches(lease, current.lease)) return result(SessionStatus::Lost);
+        const auto found = select_request(lease, id, command, pending);
+        if (!found.ok()) return found;
+        return select(lease.player, true);
+    });
+    if (completed.ok()) out = std::move(pending);
+    return completed;
 }
 
 SessionResult MysqlSessionStore::select_document(const std::string& key, storage::StorageDocument& out) {

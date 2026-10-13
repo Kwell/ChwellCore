@@ -84,12 +84,22 @@ jobs:
           build-session/mysql_migration_contract
           python3 integration_tests/test_mysql_migration_unknown.py build-session/mysql_migration_contract
           python3 integration_tests/test_mysql_migration_unknown.py build-session/mysql_migration_contract --expired-work
+          build-session/mysql_idempotency_contract
+          python3 integration_tests/test_mysql_migration_unknown.py build-session/mysql_idempotency_contract --request-journal
+          python3 integration_tests/test_mysql_migration_unknown.py build-session/mysql_idempotency_contract --request-journal --before-commit
+          docker exec -e MYSQL_PWD chwell-persistent-mysql mysql --protocol=TCP -h127.0.0.1 -uchwell chwell -e \
+            'ALTER TABLE chwell_request_results ENGINE=MyISAM'
+          build-session/mysql_idempotency_contract --expect-incompatible-journal
+          docker exec -e MYSQL_PWD chwell-persistent-mysql mysql --protocol=TCP -h127.0.0.1 -uchwell chwell -e \
+            'ALTER TABLE chwell_request_results ENGINE=InnoDB'
       - name: Verify TCP, durable commit and dependency/process failures under ASan/UBSan
         run: >-
           python3 integration_tests/test_persistent_cluster.py build-reference/cluster_reference
           --consul-container chwell-persistent-consul --mysql-container chwell-persistent-mysql
       - name: Verify two gateways, stopped owners and stale RPC fencing
         run: python3 integration_tests/test_session_ownership.py build-reference/cluster_reference --mysql-container chwell-persistent-mysql
+      - name: Verify durable request recovery after losing a committed client response
+        run: python3 integration_tests/test_request_idempotency.py build-reference/cluster_reference --mysql-container chwell-persistent-mysql
       - name: Verify documented Compose build and volume recovery
         run: python3 integration_tests/test_reference_compose.py
       - name: Verify independent operations probes, dependency readiness and accepted-work drain

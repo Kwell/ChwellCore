@@ -66,6 +66,22 @@ std::string advertised_ipv4() {
     return address;
 }
 Json failure(const char* code) { return {{"ok", false}, {"error", code}}; }
+bool valid_request_id(const std::string& id) {
+    return !id.empty() && id.size() <= 128 && std::all_of(id.begin(), id.end(), [](unsigned char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9') || c == '_' || c == '-';
+    });
+}
+int advance_steps(const Json& command) {
+    const auto found = command.find("steps");
+    if (found == command.end()) return 1;
+    if (!found->is_number_integer() || *found < 1 || *found > 100) return 0;
+    return found->get<int>();
+}
+std::string advance_command(int steps) {
+    // Stable business semantics; exclude stream, sequence, credentials and lease epoch.
+    return Json{{"action", "advance"}, {"version", 1}, {"steps", steps}}.dump();
+}
 storage::StorageConfig database_config() {
     storage::StorageConfig config;
     config.host = env("CHWELL_DB_HOST", "127.0.0.1");
@@ -90,6 +106,8 @@ Json session_failure(const cluster::SessionResult& result) {
     case cluster::SessionStatus::Busy: return failure("already_logged_in");
     case cluster::SessionStatus::Lost: return failure("session_lost");
     case cluster::SessionStatus::Unknown: return failure("outcome_unknown");
+    case cluster::SessionStatus::Conflict: return failure("request_id_conflict");
+    case cluster::SessionStatus::Missing: return failure("request_not_found");
     case cluster::SessionStatus::Invalid:
         return failure(result.error.empty() ? "bad_request" : result.error.c_str());
     default: return failure("storage_unavailable");
@@ -319,7 +337,8 @@ protected:
         const auto viewer = command.at("player").get<std::string>();
         const auto id = action == "observe" ? command.at("target").get<std::string>() : viewer;
         if (!valid_player(viewer) || !valid_player(id)) return failure("bad_player");
-        if (action != "login" && action != "get" && action != "advance" && action != "observe") return failure("bad_action");
+        if (action != "login" && action != "get" && action != "advance" && action != "observe" && action != "request_result")
+            return failure("bad_action");
         sync::SchemaPacket snapshot, delta;
         const auto& fence = command.at("lease");
         cluster::SessionLease lease{viewer, fence.at("owner").get<std::string>(),
@@ -327,6 +346,18 @@ protected:
             fence.at("epoch").get<std::string>()};
         if (lease.node != instance_.instance_id || lease.incarnation != instance_.metadata.at("incarnation"))
             return failure("session_lost");
+        const bool journaled = action == "advance" || action == "request_result";
+        const auto request_id = journaled ? command.value("request_id", std::string()) : std::string();
+        const int steps = journaled ? advance_steps(command) : 1;
+        if (journaled && (!valid_request_id(request_id) || !steps)) return failure("bad_request_id_or_steps");
+        cluster::DurableRequestResult receipt;
+        if (action == "request_result") {
+            const auto found = db_->request_result(lease, request_id, advance_command(steps), receipt);
+            if (!found.ok()) return session_failure(found);
+            const auto durable = Json::parse(receipt.value, nullptr, false);
+            if (durable.is_discarded()) return failure("invalid_request_record");
+            return {{"ok", true}, {"request_id", request_id}, {"result", durable}};
+        }
         sync::SyncWirePacket wire;
         wire.schema_name = Player::entity_schema()->name(); wire.schema_version = Player::schema_version;
         wire.stream = command.at("stream").get<std::string>(); wire.sequence = counter(command, "sequence");
@@ -334,7 +365,7 @@ protected:
         auto initial = Player(); initial.set_id(id);
         wire.packet = {id, action != "advance", action == "advance" ? std::vector<schema::FieldValue>{} : initial.snapshot(viewer == id)};
         if (packet_json(wire, viewer == id).is_null()) return failure("bad_request");
-        const auto guarded = db_->apply(lease, [&](storage::StorageInterface& transaction) {
+        const auto work = [&](storage::StorageInterface& transaction, bool mutate, std::string* durable) {
             auto player = std::make_shared<Player>();
             const auto stored = transaction.get("cluster_players:" + id);
             if (stored.ok) {
@@ -354,21 +385,39 @@ protected:
                 // Stage packets locally; they become visible only after COMMIT.
                 (packet.snapshot ? snapshot : delta) = packet;
             });
-            if (action == "advance") {
-                if (!player->set_level(player->get_level() + 1) || !player->set_gold(player->get_gold() + 10))
+            if (mutate) {
+                if (!player->set_level(player->get_level() + steps) || !player->set_gold(player->get_gold() + 10 * steps))
                     return storage::StorageResult::failure("limit_reached");
                 storage::orm::Repository<Player> repo(&transaction, "cluster_players");
                 if (!repo.save(*player).ok) return storage::StorageResult::failure("storage_unavailable");
                 room.flush();
+                if (durable) *durable = Json{{"schema_version", Player::schema_version},
+                    {"level", player->get_level()}, {"gold", player->get_gold()}}.dump();
             }
             return storage::StorageResult::success();
-        });
+        };
+        const auto guarded = action == "advance" ? db_->apply_once(lease, request_id, advance_command(steps), receipt,
+            [&](auto& transaction, auto& durable) { return work(transaction, true, &durable); }) :
+            db_->apply(lease, [&](auto& transaction) { return work(transaction, false, nullptr); });
         if (!guarded.ok()) return session_failure(guarded);
-        wire.packet = action == "advance" ? delta : snapshot;
+        if (action == "advance" && receipt.replayed) {
+            // The durable outcome is historical. A new stream needs CURRENT
+            // state, never an old delta/sequence rewrapped as a new response.
+            const auto refreshed = db_->apply(lease, [&](auto& transaction) { return work(transaction, false, nullptr); });
+            if (!refreshed.ok()) return failure("outcome_unknown");
+            wire.base_sequence = 0;
+        }
+        wire.packet = action == "advance" && !receipt.replayed ? delta : snapshot;
         const auto encoded = packet_json(wire, viewer == id);
         if (encoded.is_null()) return failure("outcome_unknown"); // Commit succeeded, no mutation replay.
-        return {{"ok", true}, {"node", instance_.instance_id}, {"generation", generation_}, {"epoch", lease.epoch},
+        Json response = {{"ok", true}, {"node", instance_.instance_id}, {"generation", generation_}, {"epoch", lease.epoch},
                 {"packet", encoded}};
+        if (action == "advance") {
+            const auto durable = Json::parse(receipt.value, nullptr, false);
+            if (durable.is_discarded()) return failure("invalid_request_record");
+            response["request"] = {{"id", request_id}, {"replayed", receipt.replayed}, {"result", durable}};
+        }
+        return response;
     }
 private:
     std::shared_ptr<discovery::ConsulServiceDiscovery> discovery_;
@@ -457,7 +506,8 @@ protected:
         } else {
             const auto found = players_.find(conn);
             if (found == players_.end()) return failure("login_required");
-            if (action != "get" && action != "advance" && action != "observe") return failure("bad_action");
+            if (action != "get" && action != "advance" && action != "observe" && action != "request_result")
+                return failure("bad_action");
             lease = found->second;
             forwarded["player"] = lease.player; // Never trust client player/viewer/fence fields.
             if (action == "observe") {
@@ -466,6 +516,12 @@ protected:
                 forwarded["target"] = target;
             }
         }
+        if (action == "advance" || action == "request_result") {
+            const auto request_id = command.value("request_id", std::string());
+            const auto steps = advance_steps(command);
+            if (!valid_request_id(request_id) || !steps) return failure("bad_request_id_or_steps");
+            forwarded["request_id"] = request_id; forwarded["steps"] = steps;
+        }
         forwarded["lease"] = {{"owner", lease.owner}, {"node", lease.node},
             {"incarnation", lease.incarnation}, {"epoch", lease.epoch}};
         const auto entity = action == "observe" ? forwarded.at("target").get<std::string>() : lease.player;
@@ -473,12 +529,12 @@ protected:
         const auto found_sequence = history.find(entity);
         if (!login && found_sequence == history.end() && history.size() >= 128) return failure("sync_entity_limit");
         const auto previous = login || found_sequence == history.end() ? 0 : found_sequence->second;
-        if (previous == std::numeric_limits<std::uint64_t>::max()) {
+        if (action != "request_result" && previous == std::numeric_limits<std::uint64_t>::max()) {
             if (login) authority_.release(lease);
             disconnected(conn); return failure("sync_sequence_exhausted");
         }
         forwarded["stream"] = identity_ + ":" + session + ":" + lease.epoch;
-        forwarded["sequence"] = std::to_string(previous + 1);
+        forwarded["sequence"] = std::to_string(action == "request_result" ? 0 : previous + 1);
         forwarded["base_sequence"] = std::to_string(previous);
         const auto text = forwarded.dump();
         const std::vector<char> request(text.begin(), text.end());
@@ -490,7 +546,7 @@ protected:
             disconnected(conn); return failure("outcome_unknown");
         }
         auto result = Json::parse(response.begin(), response.end());
-        if (result.value("ok", false)) sequences_[conn][entity] = previous + 1;
+        if (result.value("ok", false) && action != "request_result") sequences_[conn][entity] = previous + 1;
         if (login && result.value("ok", false)) {
             sessions_.bind(session, node.node_id, "persistent-game");
             players_[conn] = lease;

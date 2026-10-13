@@ -1235,6 +1235,8 @@ TcpServer（传统）                EpollTcpServer（高性能）
 [SYNC_PROTOCOL.md](docs/SYNC_PROTOCOL.md)。
 参考集群的独立探针、Prometheus 指标、排空替换和停写备份恢复见
 [部署操作契约](docs/DEPLOYMENT_OPERATIONS.md)。
+新增 [持久化请求幂等与结果恢复](docs/REQUEST_IDEMPOTENCY.md)：业务修改与结果日志原子提交，
+断线后按原请求 ID 查询或显式重发，跨网关与进程重启避免重复修改。
 
 ### 已完成
 

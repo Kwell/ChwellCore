@@ -19,6 +19,11 @@ struct SessionResult {
     bool ok() const { return status == SessionStatus::Ok; }
 };
 
+struct DurableRequestResult {
+    std::string value; // Opaque business result, never a transport/sync packet.
+    bool replayed = false;
+};
+
 class MysqlSessionStore {
 public:
     explicit MysqlSessionStore(const storage::StorageConfig& config);
@@ -37,6 +42,20 @@ public:
     // Unknown means a COMMIT response was lost; never automatically replay work.
     SessionResult apply(const SessionLease& lease,
         const std::function<storage::StorageResult(storage::StorageInterface&)>& work);
+    // Scope is (document table, player, request_id), independent of lease epoch.
+    // Exact canonical command bytes bind an ID to its versioned business meaning.
+    // Work and its result journal commit together. Duplicate work is NOT called.
+    // Only current lease owners can execute or recover results. Output changes
+    // only after confirmed commit; Unknown must be reconciled using the SAME ID.
+    // IDs: 1..128 bytes; command: 1..8192 bytes; result: <=1 MiB. No automatic
+    // journal expiry/deletion. Work has the same transaction restrictions as apply.
+    SessionResult apply_once(const SessionLease& lease, const std::string& request_id,
+        const std::string& command, DurableRequestResult& out,
+        const std::function<storage::StorageResult(storage::StorageInterface&, std::string&)>& work);
+    // Missing means no committed result at this fenced read, not proof that an
+    // older network request cannot still arrive. Does not execute work.
+    SessionResult request_result(const SessionLease& lease, const std::string& request_id,
+        const std::string& command, DurableRequestResult& out);
     // Read full bytes and TTL under the lease; out changes only after commit.
     SessionResult read_document(const SessionLease& lease, const std::string& key,
                                 storage::StorageDocument& out);
@@ -46,6 +65,8 @@ public:
     SessionResult compare_exchange(const SessionLease& lease,
         const storage::StorageDocument& expected, const std::string& replacement);
 private:
+    SessionResult select_request(const SessionLease& lease, const std::string& request_id,
+        const std::string& command, DurableRequestResult& out);
     SessionResult select_document(const std::string& key, storage::StorageDocument& out);
     SessionResult transact(const std::function<SessionResult()>& work);
     SessionResult select(const std::string& player, bool lock);

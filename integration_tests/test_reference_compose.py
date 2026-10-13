@@ -82,8 +82,11 @@ def main():
                             "SELECT COUNT(*) FROM chwell.cluster_kv a JOIN restore_check.cluster_kv b ON a.k=b.k "
                             "WHERE a.k='cluster_players:compose-player' AND BINARY a.v=BINARY b.v; "
                             "SELECT COUNT(*) FROM chwell.chwell_session_leases a JOIN restore_check.chwell_session_leases b "
-                            "ON a.player=b.player WHERE a.player='compose-player' AND a.epoch=b.epoch;")
-        assert verified.splitlines() == [b'1', b'1'], verified
+                            "ON a.player=b.player WHERE a.player='compose-player' AND a.epoch=b.epoch; "
+                            "SELECT COUNT(*) FROM chwell.chwell_request_results a JOIN restore_check.chwell_request_results b "
+                            "ON a.document_table=b.document_table AND a.player=b.player AND a.request_id=b.request_id "
+                            "WHERE a.player='compose-player' AND a.command=b.command AND a.result=b.result AND a.format=b.format;")
+        assert verified.splitlines() == [b'1', b'1', b'1'], verified
         database('mysql', '--protocol=TCP', '-h127.0.0.1', '-uroot', '-e', 'DROP DATABASE restore_check')
         print('PASS: role healthchecks, monitoring config, gateway drain/restart, volume recovery and isolated logical restore')
     finally:

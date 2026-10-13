@@ -29,7 +29,7 @@ install(FILES tools/entity_schema.py tools/requirements-excel.txt DESTINATION "$
 install(DIRECTORY examples/reference_service/ DESTINATION "${CMAKE_INSTALL_DATADIR}/ChwellCore/examples/reference_service")
 install(DIRECTORY examples/cluster_reference/ DESTINATION "${CMAKE_INSTALL_DATADIR}/ChwellCore/examples/cluster_reference")
 install(DIRECTORY examples/runtime_plugin/ DESTINATION "${CMAKE_INSTALL_DATADIR}/ChwellCore/examples/runtime_plugin")
-install(FILES docs/RUNTIME_PLUGINS.md docs/STORAGE_MIGRATIONS.md docs/DEPLOYMENT_OPERATIONS.md DESTINATION "${CMAKE_INSTALL_DATADIR}/ChwellCore/docs")
+install(FILES docs/RUNTIME_PLUGINS.md docs/STORAGE_MIGRATIONS.md docs/DEPLOYMENT_OPERATIONS.md docs/REQUEST_IDEMPOTENCY.md DESTINATION "${CMAKE_INSTALL_DATADIR}/ChwellCore/docs")
 install(FILES docs/PACKAGING.md docs/ENTITY_SCHEMA.md docs/CONTENT_VERSIONS.md docs/APP_HOST.md docs/REGISTRATIONS.md docs/SESSION_OWNERSHIP.md docs/SYNC_PROTOCOL.md
     DESTINATION "${CMAKE_INSTALL_DATADIR}/ChwellCore/docs")
 install(FILES LICENSE DESTINATION "${CMAKE_INSTALL_DATADIR}/ChwellCore")
