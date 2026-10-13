@@ -84,6 +84,20 @@ bool MysqlSessionStore::connect() {
     }
     return compatible;
 }
+bool MysqlSessionStore::health_check() {
+    std::lock_guard<std::recursive_mutex> lock(storage_.conn_mutex_);
+    if (!storage_.conn_ && !connect()) return false;
+#if defined(CHWELL_USE_MYSQL)
+    if (execute("SELECT 1")) {
+        auto* rows = mysql_store_result(static_cast<MYSQL*>(storage_.conn_));
+        const bool ok = rows && mysql_num_rows(rows) == 1;
+        if (rows) mysql_free_result(rows);
+        if (ok) return true;
+    }
+#endif
+    storage_.disconnect();
+    return false;
+}
 SessionResult MysqlSessionStore::select(const std::string& player, bool lock) {
 #if defined(CHWELL_USE_MYSQL)
     if (lock) {

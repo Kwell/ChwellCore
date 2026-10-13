@@ -92,6 +92,10 @@ jobs:
         run: python3 integration_tests/test_session_ownership.py build-reference/cluster_reference --mysql-container chwell-persistent-mysql
       - name: Verify documented Compose build and volume recovery
         run: python3 integration_tests/test_reference_compose.py
+      - name: Verify independent operations probes, dependency readiness and accepted-work drain
+        run: >-
+          python3 integration_tests/test_deployment_operations.py build-reference/cluster_reference
+          --consul-container chwell-persistent-consul --mysql-container chwell-persistent-mysql
       - name: External dependency diagnostics
         if: failure()
         run: |

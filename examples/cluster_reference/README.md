@@ -20,6 +20,8 @@ docker compose -f examples/cluster_reference/compose.yml down
 两个网关端口只映射到宿主机 127.0.0.1:9100/9101；Consul、Game 与 MySQL 不映射到宿主机。
 MySQL 数据保存在 `player-data` 卷，重新启动保留；`down -v` 会删除数据。
 Compose 中的密码与 token 仅供本地示例。容器使用非 root 用户运行参考服务。
+四个角色提供独立就绪 healthcheck；可选 Prometheus 抓取、存活探针、SIGUSR1/SIGTERM 排空、
+网关替换和停写备份恢复见 [部署操作契约](../../docs/DEPLOYMENT_OPERATIONS.md)。
 Game 在启动时将 `CHWELL_ADVERTISE_HOST` 解析为数字 IPv4，注册实际 TCP RPC 端点；
 每次启动自动生成新的 Game incarnation，网关据此辨识同 ID 的新进程；generation 参数仅为显示标签。
 
@@ -109,4 +111,5 @@ CI `persistent-reference` 从移动后的安装包独立构建该工程，ASan/U
 Consul、MySQL、两个 Game 和 TCP 网关，测试落库、可见性、鉴权、错误请求、重复登录、断连、
 TTL 失联、新 incarnation、网关/注册中心/数据库重启，并通过独立 SQL 查询核对持久记录。
 同一 job 还执行双连接事务契约、双网关同时登录/暂停/崩溃接管与旧 RPC fencing，构建运行
-上述 Compose，验证双网关全局冲突、容器数值端点与卷数据恢复；full 安装包 job 也独立构建该参考工程。
+上述 Compose，验证双网关全局冲突、容器数值端点、角色健康、排空替换、卷恢复和隔离逻辑还原。
+另在真实行锁阻塞下验证业务排空、依赖感知探针与独立指标；full 安装包 job 也独立构建该参考工程。

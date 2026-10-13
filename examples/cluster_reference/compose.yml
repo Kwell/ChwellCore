@@ -5,7 +5,13 @@ x-role: &role
     context: ../..
     dockerfile: examples/cluster_reference/Dockerfile
   init: true
-  stop_grace_period: 20s
+  stop_grace_period: 30s
+  healthcheck:
+    test: ["CMD", "cluster_reference", "probe", "9300", "ready"]
+    interval: 2s
+    timeout: 3s
+    retries: 5
+    start_period: 15s
   environment: &environment
     CHWELL_DEMO_TOKEN: local-demo-token
     CHWELL_CLUSTER_TOKEN: local-internal-token
@@ -13,6 +19,9 @@ x-role: &role
     CHWELL_DB_NAME: chwell
     CHWELL_DB_USER: chwell
     CHWELL_DB_PASSWORD: local-db-password
+    CHWELL_OPS_PORT: "9300"
+    CHWELL_OPS_BIND: "0.0.0.0"
+    CHWELL_DRAIN_SECONDS: "15"
   depends_on:
     consul:
       condition: service_healthy
@@ -37,7 +46,7 @@ services:
     volumes:
       - player-data:/var/lib/mysql
     healthcheck:
-      test: ["CMD-SHELL", "MYSQL_PWD=$$MYSQL_PASSWORD mysql -u$$MYSQL_USER -e 'SELECT 1' $$MYSQL_DATABASE"]
+      test: ["CMD-SHELL", "MYSQL_PWD=$$MYSQL_PASSWORD mysql --protocol=TCP -h127.0.0.1 -u$$MYSQL_USER -e 'SELECT 1' $$MYSQL_DATABASE"]
       interval: 2s
       timeout: 3s
       retries: 60
@@ -63,5 +72,13 @@ services:
     command: ["gateway", "http://consul:8500", "9100"]
     ports:
       - "127.0.0.1:9101:9100"
+  prometheus:
+    image: prom/prometheus:v3.2.1
+    profiles: ["monitoring"]
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./alerts.yml:/etc/prometheus/alerts.yml:ro
+    ports:
+      - "127.0.0.1:9090:9090"
 volumes:
   player-data:

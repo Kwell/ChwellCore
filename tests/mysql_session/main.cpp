@@ -28,6 +28,7 @@ int main(int argc, char** argv) {
             return 0;
         }
         require(a.connect() && b.connect(), "Two real connections required");
+        require(a.health_check() && b.health_check(), "Connectivity probes consume their result sets");
         const auto id = "contract-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
         const auto key = "player:" + id;
         auto lease = a.acquire(id, "owner-one", "game", "incarnation", 30);
