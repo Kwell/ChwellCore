@@ -2,6 +2,8 @@
 build*
 **/__pycache__
 *.pyc
+clients/csharp/bin
+clients/csharp/obj
 _*.py
 ARCHITECTURE_FIX.md
 BENCHMARK_REPORT.md
