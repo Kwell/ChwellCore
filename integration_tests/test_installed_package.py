@@ -96,9 +96,18 @@ def main():
         workbook.save(source / 'content/items.xlsx')
         workbook.close()
         shutil.copyfile(pathlib.Path(__file__).with_name('package_probe.cpp'), source / 'package_probe.cpp')
+        shutil.copyfile(pathlib.Path(__file__).resolve().parents[1] / 'tests/http_client/main.cpp',
+                        source / 'http_client_contract.cpp')
         with (source / 'CMakeLists.txt').open('a', encoding='utf-8') as cmake:
             cmake.write('''
 add_executable(package_probe package_probe.cpp)
+if(ChwellCore_WITH_HTTP_CLIENT)
+    find_package(ChwellCore 0.1 CONFIG REQUIRED COMPONENTS http_client)
+    add_executable(http_client_contract http_client_contract.cpp)
+    target_link_libraries(http_client_contract PRIVATE Chwell::http_client Threads::Threads)
+elseif(TARGET Chwell::http_client OR ChwellCore_http_client_FOUND)
+    message(FATAL_ERROR "Unexpected HTTP client in disabled package")
+endif()
 chwell_generate_entity_schema(excel_content content/item.schema.json generated/excel_item.h
     XLSX content/items.xlsx SHEET Items CSHARP_OUTPUT generated/ReferenceItem.cs)
 add_dependencies(package_probe excel_content)
@@ -169,6 +178,19 @@ endif()
                  '-DCMAKE_FIND_USE_PACKAGE_REGISTRY=OFF'])
             run([args.cmake, '--build', cluster_build, '--parallel', '2'])
         run([consumer / 'package_probe'])
+        if (consumer / 'http_client_contract').exists():
+            run([sys.executable, pathlib.Path(__file__).with_name('test_http_client.py'),
+                 consumer / 'http_client_contract'])
+        else:
+            missing = root / 'missing http component'
+            missing.mkdir()
+            (missing / 'CMakeLists.txt').write_text(
+                'cmake_minimum_required(VERSION 3.18)\nproject(MissingHttp LANGUAGES CXX)\n'
+                'find_package(ChwellCore 0.1 CONFIG REQUIRED COMPONENTS http_client)\n')
+            failure = run([args.cmake, '-S', missing, '-B', root / 'missing build',
+                           f'-DCMAKE_PREFIX_PATH={relocated}'], success=False)
+            if 'ChwellCore' not in failure:
+                raise RuntimeError('Missing component failed for an unrelated reason: ' + failure)
         plugin_source = root / 'independent plugin source'
         shutil.copytree(relocated / 'share/ChwellCore/examples/runtime_plugin', plugin_source)
         plugin_build = root / 'plugin consumer build'

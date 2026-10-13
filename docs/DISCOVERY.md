@@ -45,7 +45,7 @@ auto discovery = chwell::discovery::make_consul_discovery(config);
 
 心跳间隔应显著短于 TTL。TTL 失效后，节点从 passing 查询中消失；Consul 的定期检查和 catalog 传播意味着下线不是瞬时发生。`deregister_after_seconds` 至少为 60，控制进入 critical 后清理注册记录的时间，不决定 passing 查询的失效时间。
 
-libcurl 使用连接和总请求超时，限制响应为 4 MiB，默认校验 HTTPS 证书，支持 `ca_file`，不跟随重定向。ACL token 放在请求头，错误只记录传输失败或 HTTP 状态，不记录 token 和原始远端响应。后端没有内存 fallback。
+HTTP 传输复用 [有期限的 HTTP 客户端](HTTP_CLIENT.md)，连接、DNS、上传与接收共用总调用期限；请求默认限 1 MiB、响应 4 MiB、响应头 64 KiB。要求 libcurl 支持异步 DNS，默认校验 HTTPS 证书，支持 `ca_file`，不跟随重定向、不重试且忽略环境代理变量（需要直连 agent）。ACL token 放在请求头，错误只记录传输失败或 HTTP 状态，不记录 token 和原始远端响应。后端没有内存 fallback。
 
 监听器不是后台 watch。健康查询成功时按前后快照发布加入、变化和下线，回调在锁外、查询线程上执行；监听器异常不会使有效快照失效。应用应串行执行健康查询与监听器增删，避免把并发请求的完成顺序当成注册中心事件顺序。当前轮询不使用阻塞索引，不能宣称全局严格事件顺序。
 
