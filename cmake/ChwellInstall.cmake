@@ -26,6 +26,8 @@ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/ChwellCoreConfig.cmake"
     cmake/ChwellEntitySchema.cmake cmake/FindChwellMySQL.cmake cmake/FindChwellMongoDB.cmake
     DESTINATION "${CHWELL_PACKAGE_DIR}")
 install(FILES tools/entity_schema.py tools/requirements-excel.txt DESTINATION "${CHWELL_TOOL_DIR}")
+install(DIRECTORY clients/csharp/ DESTINATION "${CMAKE_INSTALL_DATADIR}/ChwellCore/clients/csharp"
+    PATTERN "bin" EXCLUDE PATTERN "obj" EXCLUDE)
 install(DIRECTORY examples/reference_service/ DESTINATION "${CMAKE_INSTALL_DATADIR}/ChwellCore/examples/reference_service")
 install(DIRECTORY examples/cluster_reference/ DESTINATION "${CMAKE_INSTALL_DATADIR}/ChwellCore/examples/cluster_reference")
 install(DIRECTORY examples/runtime_plugin/ DESTINATION "${CMAKE_INSTALL_DATADIR}/ChwellCore/examples/runtime_plugin")

@@ -36,6 +36,8 @@ compile_commands.json
 dummy
 *.pyc
 __pycache__/
+/clients/csharp/bin/
+/clients/csharp/obj/
 
 # Local research, implementation plans and maintenance notes
 /docs/*COMPARISON.md

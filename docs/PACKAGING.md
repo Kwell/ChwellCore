@@ -50,3 +50,5 @@ target_include_directories(my_service PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/gener
 完整网络框架仍需要 Linux/POSIX。本机 Windows 可以验证可移植模块，不能据此宣称 Windows 整包运行。Linux CI 分别构建最小包、全部可选依赖包和 FetchContent YAML 包，再安装、移动目录、构建独立消费者并执行 TCP/关闭测试；另验证引用和 Excel 错误不会覆盖产物，以及工作簿/CSV/目录增删表会触发重新构建，删除 C# 输出会重新生成。
 
 运行 `python3 integration_tests/test_installed_package.py build-package` 前，需用同一 Python 安装 `tools/requirements-excel.txt`，并准备 .NET 8 SDK。测试把该解释器传给消费者 CMake，实际编译运行 C++ 内容和 C# 客户端契约；普通 CSV 内容构建不需要 Excel 依赖或 .NET SDK。
+
+安装包还包含 `share/ChwellCore/clients/csharp/Chwell.Sync.csproj` 与源码，用于 .NET 8 的二进制同步解码和副本应用。它不依赖 NuGet 包，也不会使原生框架构建依赖 .NET；需要时由客户端通过 ProjectReference 引入。三种可移动安装包都使用安装后的生成器和 C# 库编译执行共享协议用例，详见 [C# 同步库](../clients/csharp/README.md)。

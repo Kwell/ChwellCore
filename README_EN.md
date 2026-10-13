@@ -1170,6 +1170,11 @@ TcpServer (legacy)               EpollTcpServer (high performance)
 
 ## Roadmap
 
+The [.NET 8 C# synchronization library](clients/csharp/README.md) consumes generated
+entity contracts, validates binary snapshots/deltas and atomically updates client
+replicas. Linux and Windows CI verify shared C++ payloads, Python differential
+cases and relocated package consumption.
+
 ### Done
 
 - Network: TCP / UDP / WebSocket / HTTP / TLS, Epoll multi-Reactor

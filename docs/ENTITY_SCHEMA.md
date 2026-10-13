@@ -174,6 +174,6 @@ CMake 也可将 XLSX/SHEET 换为 CATALOG，生成的 C# 文件是受追踪的�
 
 C# 输出位于 `Chwell.Generated.<schema name>` 命名空间，`ClientEntity` 提供 `value_<field name>` 类型化属性及默认值；`Contract` 提供 `field_<field name>` 常量、SchemaVersion、KeyFieldId 和 SchemaJson，字段 ID 与 C++ 完全一致。类型对应 long/double/bool/string，字符串按 UTF-16 转义，支持 Unicode 与 NUL。字段前缀避免 C# 关键字与生成成员冲突。SchemaJson 与 C++ `client_schema()` 使用同一可见性筛选逻辑，排除 server 字段和 reference 元数据；不输出内容行、服务器表名或服务器默认值。
 
-该 C# 类型是数据契约，属性赋值不执行服务器约束，也不包含 CHWS 解码器；客户端仍需按 [同步协议](SYNC_PROTOCOL.md) 处理快照/差量及权限。所有内容验证完成后才写产物，每个文件单独原子替换；磁盘写入失败时多个产物不是一组事务。
+该 C# 类型是独立数据契约，属性赋值不执行服务器约束。可配合 [.NET 8 同步库](../clients/csharp/README.md)，由 SchemaContract 读取 SchemaJson/KeyFieldId，按 [同步协议](SYNC_PROTOCOL.md) 校验快照/增量、约束和权限后原子更新副本。所有内容验证完成后才写产物，每个文件单独原子替换；磁盘写入失败时多个产物不是一组事务。
 
 已支持独立二进制内容包、全目录运行时校验、快照发布和单步回滚，见 [内容版本与热切换](CONTENT_VERSIONS.md)。实体存储支持显式预演、MySQL 租约保护的条件迁移与回滚，见 [存储 schema 迁移](STORAGE_MIGRATIONS.md)。

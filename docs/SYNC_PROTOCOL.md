@@ -67,3 +67,15 @@ The C++ encoder/decoder is in `include/chwell/sync/sync_wire.h` and
 replica are in `examples/cluster_reference/sync_wire.py`. The reference service
 returns an `encoding=chwell-sync-v1-hex` JSON envelope. The hex wrapper is only
 a convenience; production transports should carry the binary payload directly.
+
+The .NET 8 C# decoder and replica are in [clients/csharp](../clients/csharp/README.md).
+`SchemaContract.Parse(Contract.SchemaJson, Contract.KeyFieldId)` consumes the
+generated client metadata without adding dependencies to generated entities.
+`SchemaReplica.Apply` takes binary bytes, validates the schema and viewer, then
+returns `Applied`, `Stale` or `NeedsSnapshot`; invalid input throws `SyncException`.
+Rejected packets never change its values, sequence or readiness. C# sequences
+use `ulong`, integers use `long`, and read-only packet/replica values retain
+their exact types. Authentication must precede `ResetStream`. Linux/Windows CI
+executes shared golden payloads and Python differential cases, including against
+the relocated CMake package's C# sources. The library provides payload processing;
+socket transport and the reference service's outer hex envelope are application concerns.

@@ -153,6 +153,9 @@ endif()
         run(compile_command)
         run([sys.executable, pathlib.Path(__file__).resolve().parents[1] / 'tests/test_content_clients.py',
              '--tool', relocated / 'share/ChwellCore/tools/entity_schema.py', '--require-dotnet'])
+        run([sys.executable, pathlib.Path(__file__).resolve().parents[1] / 'tests/test_sync_wire_csharp.py',
+             '--tool', relocated / 'share/ChwellCore/tools/entity_schema.py',
+             '--client-directory', relocated / 'share/ChwellCore/clients/csharp', '--require-dotnet'])
         # The full package must also consume the multi-service reference without
         # access to this repository's build targets or source include paths.
         config_text = next(relocated.rglob('ChwellCoreConfig.cmake')).read_text()
