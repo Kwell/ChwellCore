@@ -1,0 +1,30 @@
+groups:
+  - name: chwell-reference
+    rules:
+      - alert: ChwellOperationsUnreachable
+        expr: up{job="chwell-reference"} == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Operations endpoint {{ $labels.instance }} is unreachable"
+      - alert: ChwellWorkerStalled
+        expr: chwell_live{job="chwell-reference"} == 0
+        for: 15s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Control or business worker progress stopped on {{ $labels.instance }}"
+      - alert: ChwellDependenciesUnavailable
+        expr: chwell_ready{job="chwell-reference"} == 0 and on(instance, job) chwell_draining{job="chwell-reference"} == 0
+        for: 30s
+        labels:
+          severity: warning
+        annotations:
+          summary: "Instance {{ $labels.instance }} cannot serve new work"
+      - alert: ChwellDrainDroppedInputs
+        expr: increase(chwell_drain_dropped_inputs_total{job="chwell-reference"}[5m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "Drain deadline discarded accepted inputs on {{ $labels.instance }}"

@@ -1,5 +1,6 @@
 // Independent reference built from ChwellCore APIs. See README for scope.
 #include "cluster_player.h"
+#include "operations.h"
 #include "chwell/service/app_host.h"
 #include "chwell/discovery/consul_discovery.h"
 #include "chwell/cluster/discovery_router.h"
@@ -32,7 +33,9 @@ using Clock = std::chrono::steady_clock;
 using Player = generated::ClusterPlayer;
 namespace {
 volatile std::sig_atomic_t stopping = 0;
-void stop_signal(int) { stopping = 1; }
+volatile std::sig_atomic_t draining = 0;
+void stop_signal(int) { draining = 1; stopping = 1; }
+void drain_signal(int) { draining = 1; }
 std::string env(const char* key, std::string fallback = {}) {
     const auto* value = std::getenv(key);
     return value ? value : fallback;
@@ -114,6 +117,16 @@ Json packet_json(const sync::SyncWirePacket& wire, bool owner) {
 // and blocking DB/RPC belong to one dedicated worker, never an IO reactor.
 class Inbox : public service::Component {
 public:
+    explicit Inbox(reference::OperationsState& operations) : operations_(operations) {}
+    void begin_drain(int seconds) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (draining_) return;
+        accepting_ = false;
+        drain_deadline_ = Clock::now() + std::chrono::seconds(seconds);
+        draining_ = true;
+        operations_.drain();
+        wake_.notify_one();
+    }
     ~Inbox() override { stop(); }
     bool Init() override {
         std::promise<bool> initialized;
@@ -124,6 +137,7 @@ public:
             ready.set_value(started);
             if (started) run();
             shutdown();
+            operations_.finished();
         });
         const bool ok = result.get();
         { std::lock_guard<std::mutex> lock(mutex_); accepting_ = ok; }
@@ -135,7 +149,7 @@ public:
         bool rejected = false;
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            if (!accepting_) return;
+            if (!accepting_) { operations_.rejected.inc(); return; }
             const auto id = conn->conn_id();
             if ((!admitted_.count(id) && admitted_.size() >= 128) ||
                 queue_.size() >= 1024 || queued_bytes_ + bytes.size() > 1024 * 1024) {
@@ -144,9 +158,10 @@ public:
                 admitted_.insert(id);
                 queued_bytes_ += bytes.size();
                 queue_.push_back({conn, std::string(bytes), false});
+                operations_.queued.set(queue_.size());
             }
         }
-        if (rejected) conn->close();
+        if (rejected) { operations_.rejected.inc(); conn->close(); }
         wake_.notify_one();
     }
     void on_disconnect(const net::TcpConnectionPtr& conn) override {
@@ -156,12 +171,16 @@ public:
             // At most one disconnect per admitted connection; reserve independent
             // of the data limit so overload cannot leak parser/session state.
             queue_.push_back({conn, {}, true});
+            operations_.queued.set(queue_.size());
         }
         wake_.notify_one();
     }
 protected:
+    reference::OperationsState& operations_;
+    bool drain_expired() const { return draining_ && Clock::now() >= drain_deadline_; }
     virtual bool startup() { return true; }
     virtual void shutdown() {}
+    virtual void withdraw() {}
     virtual void tick() {}
     virtual Json request(std::uint64_t, const Json&) = 0;
     virtual void disconnected(std::uint64_t) {}
@@ -170,24 +189,34 @@ private:
     struct Input { net::TcpConnectionPtr conn; std::string bytes; bool closed; };
     struct Stream { protocol::Parser parser; net::TcpConnectionPtr conn; Clock::time_point active; };
     void stop() {
-        { std::lock_guard<std::mutex> lock(mutex_); accepting_ = false; stopping_ = true; queue_.clear(); }
+        begin_drain(15);
         wake_.notify_one();
         if (worker_.joinable()) worker_.join();
     }
     void run() {
         auto next_tick = Clock::now();
+        bool withdrawn = false;
         while (true) {
             Input input;
+            bool drain = false;
             {
                 std::unique_lock<std::mutex> lock(mutex_);
-                wake_.wait_until(lock, next_tick, [&] { return stopping_ || !queue_.empty(); });
-                if (stopping_) break;
+                wake_.wait_until(lock, next_tick, [&] { return draining_ || !queue_.empty(); });
+                drain = draining_;
+                if (drain_expired()) {
+                    operations_.dropped.inc(queue_.size()); queue_.clear(); queued_bytes_ = 0;
+                    operations_.queued.set(0);
+                }
                 if (!queue_.empty()) {
                     input = std::move(queue_.front()); queue_.pop_front();
                     queued_bytes_ -= input.bytes.size();
+                    operations_.queued.set(queue_.size());
                 }
             }
-            if (Clock::now() >= next_tick) {
+            operations_.worker_progress();
+            if (drain && !withdrawn) { withdraw(); withdrawn = true; }
+            if (drain && !input.conn) break;
+            if (!drain && Clock::now() >= next_tick) {
                 tick();
                 for (auto it = streams_.begin(); it != streams_.end();) {
                     if (Clock::now() - it->second.active > std::chrono::seconds(30)) {
@@ -207,15 +236,22 @@ private:
             auto& stream = streams_[id];
             stream.conn = input.conn; stream.active = Clock::now();
             for (const auto& message : stream.parser.feed(std::string_view(input.bytes))) {
+                // An already executing transaction is never interrupted or replayed.
+                if (drain_expired()) { operations_.dropped.inc(); break; }
                 const std::size_t prefix = rpc_peer() ? 4 : 0;
                 if (message.cmd != 1 || message.body.size() < prefix || message.body.size() > 8192) {
                     input.conn->close(); break;
                 }
                 Json response;
+                operations_.inflight.set(1);
                 try {
                     auto command = Json::parse(message.body.begin() + prefix, message.body.end());
                     response = command.is_object() ? request(id, command) : failure("bad_request");
                 } catch (const Json::exception&) { response = failure("bad_request"); }
+                operations_.inflight.set(0);
+                operations_.requests.inc();
+                if (!response.value("ok", false)) operations_.errors.inc();
+                operations_.worker_progress();
                 const auto text = response.dump();
                 std::vector<char> body(message.body.begin(), message.body.begin() + prefix);
                 body.insert(body.end(), text.begin(), text.end());
@@ -226,7 +262,9 @@ private:
     }
     std::mutex mutex_;
     std::condition_variable wake_;
-    bool accepting_ = false, stopping_ = false;
+    bool accepting_ = false;
+    std::atomic<bool> draining_{false};
+    Clock::time_point drain_deadline_{}; // Written before draining_ is published.
     std::size_t queued_bytes_ = 0;
     std::deque<Input> queue_;
     std::unordered_set<std::uint64_t> admitted_;
@@ -237,8 +275,8 @@ private:
 
 class Game final : public Inbox {
 public:
-    Game(discovery::ConsulConfig config, std::string id, int port, std::string generation)
-        : discovery_(discovery::make_consul_discovery(config)), key_(env("CHWELL_CLUSTER_TOKEN")),
+    Game(reference::OperationsState& operations, discovery::ConsulConfig config, std::string id, int port, std::string generation)
+        : Inbox(operations), discovery_(discovery::make_consul_discovery(config)), key_(env("CHWELL_CLUSTER_TOKEN")),
           generation_(std::move(generation)) {
         instance_.service_id = "persistent-game"; instance_.instance_id = std::move(id);
         instance_.port = static_cast<std::uint16_t>(port); instance_.metadata["incarnation"] = process_identity();
@@ -257,12 +295,20 @@ protected:
         return registered_;
     }
     void shutdown() override {
-        if (registered_) discovery_->deregister_service(instance_.instance_id);
+        withdraw();
         db_.reset();
+    }
+    void withdraw() override {
+        if (registered_) discovery_->deregister_service(instance_.instance_id);
+        registered_ = false;
     }
     void tick() override {
         if (Clock::now() < heartbeat_) return;
-        if (!discovery_->heartbeat(instance_.instance_id)) discovery_->register_service(instance_);
+        const bool database = db_->health_check();
+        if (!database) withdraw();
+        else if (!registered_ || !discovery_->heartbeat(instance_.instance_id))
+            registered_ = discovery_->register_service(instance_);
+        operations_.dependencies(database, registered_, registered_ ? 1 : 0);
         heartbeat_ = Clock::now() + std::chrono::seconds(1);
     }
     Json request(std::uint64_t, const Json& command) override {
@@ -335,8 +381,8 @@ private:
 
 class Gateway final : public Inbox {
 public:
-    explicit Gateway(discovery::ConsulConfig config)
-        : discovery_(discovery::make_consul_discovery(config)), registry_(std::make_shared<cluster::NodeRegistry>()),
+    Gateway(reference::OperationsState& operations, discovery::ConsulConfig config)
+        : Inbox(operations), discovery_(discovery::make_consul_discovery(config)), registry_(std::make_shared<cluster::NodeRegistry>()),
           router_(registry_), routes_(*discovery_, registry_, router_, sessions_, "persistent-game"),
           authority_(database_config()), token_(env("CHWELL_DEMO_TOKEN")), key_(env("CHWELL_CLUSTER_TOKEN")),
           identity_(process_identity()) {}
@@ -349,10 +395,19 @@ protected:
         return !token_.empty() && !key_.empty() && authority_.connect();
     }
     void shutdown() override {
-        while (!players_.empty()) disconnected(players_.begin()->first);
+        while (!players_.empty() && !drain_expired()) {
+            disconnected(players_.begin()->first); operations_.worker_progress();
+        }
+        // Remaining leases expire in the database; never extend the shutdown budget per player.
+        players_.clear(); operations_.sessions.set(0);
     }
     void tick() override {
         available_ = routes_.refresh();
+        if (Clock::now() >= database_probe_) {
+            database_available_ = authority_.health_check();
+            database_probe_ = Clock::now() + std::chrono::seconds(1);
+        }
+        operations_.dependencies(database_available_, available_, registry_->get_all_nodes().size());
         const bool renew = Clock::now() >= renewal_;
         for (auto it = players_.begin(); it != players_.end();) {
             if (sessions_.node_of(std::to_string(it->first)).empty() ||
@@ -361,12 +416,14 @@ protected:
             } else ++it;
         }
         if (renew) renewal_ = Clock::now() + std::chrono::seconds(2);
+        operations_.sessions.set(players_.size());
     }
     void disconnected(std::uint64_t id) override {
         sessions_.unbind(std::to_string(id));
         sequences_.erase(id);
         const auto found = players_.find(id);
         if (found != players_.end()) { authority_.release(found->second); players_.erase(found); }
+        operations_.sessions.set(players_.size());
     }
     Json request(std::uint64_t conn, const Json& command) override {
         if (!command.contains("sync_version") || !command.at("sync_version").is_number_integer() ||
@@ -437,6 +494,7 @@ protected:
         if (login && result.value("ok", false)) {
             sessions_.bind(session, node.node_id, "persistent-game");
             players_[conn] = lease;
+            operations_.sessions.set(players_.size());
         } else if (login) authority_.release(lease);
         else if (!result.value("ok", false) &&
             (result.value("error", std::string()) == "session_lost" ||
@@ -455,12 +513,18 @@ private:
     cluster::MysqlSessionStore authority_;
     std::string token_, key_, identity_;
     bool available_ = false;
+    bool database_available_ = false;
+    Clock::time_point database_probe_{};
     Clock::time_point renewal_{};
 };
 } // namespace
 
 int main(int argc, char** argv) {
     core::Logger::instance().set_level(core::LogLevel::Error);
+    if (argc == 4 && std::string(argv[1]) == "probe") {
+        try { return reference::probe(port_number(argv[2]), argv[3]); }
+        catch (const std::exception&) { return 2; }
+    }
     if (argc != 4 && argc != 6) {
         std::cerr << "Usage: cluster_reference gateway CONSUL PORT | game CONSUL ID PORT GENERATION\n"; return 2;
     }
@@ -471,18 +535,42 @@ int main(int argc, char** argv) {
         discovery::ConsulConfig config;
         config.endpoint = argv[2]; config.ttl_seconds = 4;
         config.token = env("CONSUL_HTTP_TOKEN"); config.request_timeout_ms = 1000;
+        const int drain_seconds = port_number(env("CHWELL_DRAIN_SECONDS", "15"));
+        if (drain_seconds > 60) throw std::invalid_argument("Drain budget must be 1..60 seconds");
+        std::signal(SIGINT, stop_signal); std::signal(SIGTERM, stop_signal); std::signal(SIGUSR1, drain_signal);
+        reference::OperationsState operations;
+        std::unique_ptr<reference::OperationsServer> probes;
+        const auto ops_port = env("CHWELL_OPS_PORT");
+        if (!ops_port.empty()) probes = std::make_unique<reference::OperationsServer>(operations,
+            port_number(ops_port), env("CHWELL_OPS_BIND", "127.0.0.1"));
         service::AppHost host;
+        Inbox* inbox = nullptr;
         host.register_component_factory("role", [&](const auto&) -> std::unique_ptr<service::Component> {
-            if (role == "game") return std::make_unique<Game>(config, argv[3], port, argv[5]);
-            return std::make_unique<Gateway>(config);
+            std::unique_ptr<Inbox> component;
+            if (role == "game") component = std::make_unique<Game>(operations, config, argv[3], port, argv[5]);
+            else component = std::make_unique<Gateway>(operations, config);
+            inbox = component.get();
+            return component;
         });
         service::AppManifest manifest;
         manifest.listen_port = port; manifest.worker_threads = 1; manifest.use_epoll = true;
         core::ComponentConfig entry; entry.name = "role"; manifest.components.push_back(entry);
         if (!host.configure(manifest) || !host.start()) { std::cerr << host.last_error() << '\n'; return 1; }
-        std::signal(SIGINT, stop_signal); std::signal(SIGTERM, stop_signal);
+        operations.started();
         std::cout << "READY " << role << std::endl;
-        while (!stopping) { host.update(); std::this_thread::sleep_for(std::chrono::milliseconds(20)); }
+        bool drain_started = false;
+        Clock::time_point finished{};
+        while (true) {
+            operations.main_progress();
+            if (draining && !drain_started) { inbox->begin_drain(drain_seconds); drain_started = true; }
+            if (stopping && operations.complete()) {
+                if (finished == Clock::time_point{}) finished = Clock::now();
+                // Best-effort response flush window, not a client ACK or replay guarantee.
+                if (Clock::now() - finished >= std::chrono::seconds(1)) break;
+            }
+            host.update(); std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+        operations.stopped();
         host.stop();
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
     return 0;

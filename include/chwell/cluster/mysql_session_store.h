@@ -23,6 +23,8 @@ class MysqlSessionStore {
 public:
     explicit MysqlSessionStore(const storage::StorageConfig& config);
     bool connect();
+    // Read-only connectivity probe; reconnects after failure, never replays business work.
+    bool health_check();
     SessionResult acquire(const std::string& player, const std::string& owner,
                           const std::string& node, const std::string& incarnation, int ttl_seconds);
     SessionResult renew(const SessionLease& lease, int ttl_seconds);

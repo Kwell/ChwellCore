@@ -1233,6 +1233,8 @@ TcpServer（传统）                EpollTcpServer（高性能）
 新增 [MySQL 分布式会话所有权](docs/SESSION_OWNERSHIP.md)：双网关全局租约、持久 epoch、
 同事务写入 fencing 与进程故障接管。稳定客户端同步协议见
 [SYNC_PROTOCOL.md](docs/SYNC_PROTOCOL.md)。
+参考集群的独立探针、Prometheus 指标、排空替换和停写备份恢复见
+[部署操作契约](docs/DEPLOYMENT_OPERATIONS.md)。
 
 ### 已完成
 
