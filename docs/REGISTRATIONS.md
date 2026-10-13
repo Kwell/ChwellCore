@@ -1,7 +1,6 @@
 # Interfaces and owned registrations
 
-Service provides explicit interface bindings and cancellation ownership. These
-facilities are independently implemented; ARK was an architectural reference.
+Service provides explicit interface bindings and cancellation ownership.
 
 ## Interface bindings
 

@@ -1,6 +1,6 @@
 # 可选 EntitySchema 与内容流水线
 
-这条路径把字段定义用于 C++ 类型化访问、ORM 映射与同步可见性。以 ARK 的共享属性元信息和内容生成思路为参考，独立实现；没有复制其源码。现有手写 Entity、PersistableEntity、StateSyncRoom 可继续使用。
+这条路径把字段定义用于 C++ 类型化访问、ORM 映射与同步可见性。现有手写 Entity、PersistableEntity、StateSyncRoom 可继续使用。
 
 ## 构建和运行
 

@@ -1,6 +1,6 @@
 # Consul 发现与跨进程路由
 
-本实现只借鉴组织方式，独立编写，没有复制 ARK 源码。Consul 是可选外部后端，HTTP 使用 libcurl，JSON 使用 nlohmann-json；默认核心构建不增加这两个依赖。
+Consul 是可选外部后端，HTTP 使用 libcurl，JSON 使用 nlohmann-json；默认核心构建不增加这两个依赖。
 
 ## 数据和调用边界
 
