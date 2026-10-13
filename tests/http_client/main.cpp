@@ -74,6 +74,7 @@ int main(int argc, char** argv) try {
     request.url = base + "/binary";
     failure(client, request, ClientStatus::ResponseTooLarge, limited);
     request.url = base + "/compressed";
+    limited.max_response_bytes = 100; // Gzip fits on the wire; its 4096 decoded bytes exceed the budget.
     failure(client, request, ClientStatus::ResponseTooLarge, limited);
     limited = {};
     limited.max_header_bytes = 64;
