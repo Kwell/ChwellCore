@@ -71,7 +71,8 @@ cluster_reference gateway http://127.0.0.1:8500 9100
 | status | 无 | 当前健康节点、网关本地会话数 |
 | login | player、token | hash 选择 Game；取得全局租约后事务加载/建档；绑定当前连接 |
 | get | 无 | 当前玩家的 owner 快照 |
-| advance | 无 | level +1、gold +10；先提交 MySQL，再返回同步 delta |
+| advance | request_id、可选 steps（默认 1） | level +steps、gold +10*steps；业务与结果日志同事务提交；重复 ID 不再修改 |
+| request_result | request_id、原 steps | 登录后查询已提交业务结果；不修改数据或同步序号 |
 | observe | target | 读取目标玩家；按服务端连接身份过滤 public/owner 字段 |
 | logout | 无 | 释放精确身份的租约并删除本地绑定 |
 
@@ -83,7 +84,9 @@ cluster_reference gateway http://127.0.0.1:8500 9100
 字段 1=id、10=level 为 public，20=gold 为 owner，30=secret 为 server。
 secret 实际存入 `cluster_kv` 的 `cluster_players:<id>` ORM 文档，不进入客户端 packet；
 其他玩家只能看到 public 字段。没有业务内存写回缓存，每次请求在租约保护的事务中从 DB 加载，
-提交成功后响应。advance 的读取、递增和写入在同一连接/事务中；响应包含十进制字符串 epoch。
+提交成功后响应。advance 的读取、递增、写入和请求结果日志在同一连接/事务中；响应包含十进制字符串 epoch。
+Python 客户端在发送前生成/保留请求 ID，不自动重试。重连后的原结果查询与显式同 ID 重复、
+参数冲突、当前同步快照及日志保留契约见 [请求幂等与结果恢复](../../docs/REQUEST_IDEMPOTENCY.md)。
 
 网络回调仅入队；独立 worker 串行处理发现、路由、会话、schema 和阻塞 DB/RPC。
 参考 inbox 限 128 个活跃流、1024 个数据事件、1MiB 排队字节，另保留断连清理事件；
@@ -98,12 +101,12 @@ secret 实际存入 `cluster_kv` 的 `cluster_players:<id>` ORM 文档，不进�
   租约最多等待数据库 TTL=8 秒，另一网关才能接管；正常运行每 2 秒续租。
 - 数据库错误不会视为“玩家不存在”；当前请求返回错误并撤销会话，后续调用重新连接/登录。
 - 租约过期/旧 epoch/错误 Game incarnation 返回 session_lost；旧持有者续租或释放不能影响新租约。
-- `storage_unavailable` 表示读取失败，未尝试该业务写入；`outcome_unknown` 表示不能确定写入/
-  传输结果，调用方须重新读取确认，不能盲重放。响应丢失也可能已经提交。
+- `storage_unavailable` 表示当前存储操作失败、未确认提交；`outcome_unknown` 表示不能确定写入/
+  传输结果，调用方须用原请求 ID 查询确认；显式重复须保持同一 ID/参数。响应丢失也可能已经提交。
 
 所有权校验与文档写入共享 MySQL InnoDB 事务，单玩家行锁协调跨网关请求。
 完整契约及主库持久性前提见 [SESSION_OWNERSHIP.md](../../docs/SESSION_OWNERSHIP.md)。
-尚未实现跨玩家事务、幂等请求日志、灾难恢复或生产负载验证。
+尚未实现跨玩家事务、外部副作用的持久协调、无损主库容灾或生产负载验证。
 
 ## 自动验证
 

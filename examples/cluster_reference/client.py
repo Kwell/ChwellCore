@@ -6,6 +6,7 @@ import socket
 import struct
 import importlib.util
 import pathlib
+import uuid
 
 _spec = importlib.util.spec_from_file_location('chwell_sync_wire', pathlib.Path(__file__).with_name('sync_wire.py'))
 sync_wire = importlib.util.module_from_spec(_spec)
@@ -18,6 +19,7 @@ class Client:
         self.player = None
         self.stream = None
         self.replicas = {}
+        self.last_request = None
 
     def receive(self, size):
         chunks = bytearray()
@@ -29,6 +31,11 @@ class Client:
         return bytes(chunks)
 
     def ask(self, action, **fields):
+        if action == 'advance':
+            fields.setdefault('request_id', uuid.uuid4().hex)
+            # Save before sending. The application must persist this across
+            # client/process loss; no automatic retry or ID regeneration.
+            self.last_request = {'request_id': fields['request_id'], 'steps': fields.get('steps', 1)}
         fields.setdefault('sync_version', 1)
         if action == 'login':
             fields.setdefault('schema_version', sync_wire.CLUSTER_SCHEMA['version'])
@@ -99,14 +106,25 @@ def main():
     parser.add_argument('--port', type=int, default=9100)
     parser.add_argument('--player', default='alice')
     parser.add_argument('--advance', action='store_true')
+    parser.add_argument('--request-id', help='Persisted mutation ID for explicit recovery/retry')
+    parser.add_argument('--steps', type=int, default=1)
+    parser.add_argument('--result', action='store_true', help='Query a committed request result without mutation')
     args = parser.parse_args()
     with Client(args.host, args.port) as client:
         response = client.ask('login', player=args.player, token=os.environ.get('CHWELL_DEMO_TOKEN', ''))
         print(json.dumps(response, ensure_ascii=False))
         if not response.get('ok'):
             raise SystemExit(1)
-        if args.advance:
-            response = client.ask('advance')
+        if args.result or args.advance:
+            fields = {'steps': args.steps}
+            if args.request_id:
+                fields['request_id'] = args.request_id
+            if args.result and not args.request_id:
+                raise SystemExit('--result requires --request-id')
+            if args.advance and not args.result:
+                fields.setdefault('request_id', uuid.uuid4().hex)
+                print(json.dumps({'pending_request': fields}), flush=True)
+            response = client.ask('request_result' if args.result else 'advance', **fields)
             print(json.dumps(response, ensure_ascii=False))
             if not response.get('ok'):
                 raise SystemExit(1)

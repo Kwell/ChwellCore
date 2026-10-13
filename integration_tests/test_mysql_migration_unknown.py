@@ -1,4 +1,4 @@
-"""Drop a real MySQL COMMIT OK packet after migration; verify Unknown recovery.
+"""Lose MySQL responses at transaction boundaries; verify migration and request recovery.
 
 Only runs against the isolated CI database. The protocol proxy disables TLS in
 its greeting to inspect COM_QUERY; it is a fault-test helper, not a deployable service.
@@ -27,7 +27,9 @@ def packet(stream):
 
 
 def main():
-    expire_work = len(sys.argv) > 2 and sys.argv[2] == '--expired-work'
+    expire_work = '--expired-work' in sys.argv
+    request_journal = '--request-journal' in sys.argv
+    before_commit = '--before-commit' in sys.argv
     upstream = (os.environ['CHWELL_DB_HOST'], int(os.environ['CHWELL_DB_PORT']))
     dropped = threading.Event()
     stopping = threading.Event()
@@ -64,7 +66,8 @@ def main():
                         if query.startswith(b'\x00\x01'):
                             query = query[2:].strip()
                         state['commit'] = query == b'COMMIT'
-                        state['update'] = query.startswith(b'UPDATE `MIGRATION_CONTRACT_KV` SET V=')
+                        state['update'] = query.startswith(b'INSERT INTO CHWELL_REQUEST_RESULTS ' if request_journal else
+                                                           b'UPDATE `MIGRATION_CONTRACT_KV` SET V=')
                         if state['update']:
                             state['armed'] = True
                     if from_server and expire_work and state['update'] and payload[:1] == b'\x00':
@@ -74,10 +77,11 @@ def main():
                                 dropped.set()
                         if delay:
                             time.sleep(1.4)  # UPDATE ran; lease expires before its response is delivered.
-                    if from_server and not expire_work and state['armed'] and state['commit'] and payload[:1] == b'\x00':
+                    if from_server and not expire_work and state['armed'] and payload[:1] == b'\x00' and (
+                            state['update'] if before_commit else state['commit']):
                         with gate:
                             if not dropped.is_set():
-                                dropped.set()  # Server has committed; discard the OK response.
+                                dropped.set()  # Drop INSERT or COMMIT OK at the requested transaction boundary.
                                 return
                     target.sendall(header + payload)
             except (OSError, EOFError, ValueError):
@@ -107,12 +111,13 @@ def main():
     environment = dict(os.environ, CHWELL_DB_HOST='127.0.0.1',
                        CHWELL_DB_PORT=str(listener.getsockname()[1]))
     try:
-        result = subprocess.run([sys.argv[1], '--expired-work' if expire_work else '--lost-commit'],
+        result = subprocess.run([sys.argv[1], '--expired-work' if expire_work else
+                                 '--lost-before-commit' if before_commit else '--lost-commit'],
                                 env=environment, timeout=150)
         if result.returncode != 0:
-            raise RuntimeError('Migration recovery contract failed')
+            raise RuntimeError('Transaction recovery contract failed')
         if not dropped.is_set():
-            raise RuntimeError('Required migration response was not intercepted')
+            raise RuntimeError('Required transaction response was not intercepted')
     finally:
         stopping.set()
         listener.close()

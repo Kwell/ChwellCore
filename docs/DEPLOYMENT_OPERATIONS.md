@@ -29,7 +29,7 @@ cluster_reference probe 9300 ready
 
 `CHWELL_DRAIN_SECONDS` 默认 15，范围 1..60 秒。到期后不再启动下一条业务请求，未处理输入计入 `chwell_drain_dropped_inputs_total`。正在执行的 DB/RPC 不被强制中断，仍按其既有超时与事务规则完成；这不是严格的进程退出时间上限。业务 worker 结束时释放 Gateway 租约，预算不足的剩余租约由数据库 TTL 过期，不逐玩家延长预算。排空期间不再续租，等待过久的请求可能返回 session_lost。
 
-worker 完成后 `drained=true`；SIGTERM 再保留 1 秒给网络发送队列，最后执行 AppHost 停机。此窗口是尽力发送，不提供客户端 ACK、响应送达或自动重放保证。请求超时、断连或 outcome_unknown 后重新读取确认结果，不能重放 advance。部署终止宽限期应覆盖排空预算、当前 DB/RPC 超时、清理及发送窗口；Compose 使用 30 秒。业务复杂度或请求上限变化后须重新测量。
+worker 完成后 `drained=true`；SIGTERM 再保留 1 秒给网络发送队列，最后执行 AppHost 停机。此窗口是尽力发送，不提供客户端 ACK、响应送达或自动重放保证。请求超时、断连或 outcome_unknown 后按 [请求幂等契约](REQUEST_IDEMPOTENCY.md) 查询原 ID 的结果；需要显式重复时必须沿用相同 ID 和参数，不能换新 ID。部署终止宽限期应覆盖排空预算、当前 DB/RPC 超时、清理及发送窗口；Compose 使用 30 秒。业务复杂度或请求上限变化后须重新测量。
 
 本地双网关替换示例：
 
@@ -57,7 +57,7 @@ Prometheus UI 在 `http://127.0.0.1:9090`，抓取四个角色的私有操作端
 
 ## 停写备份与恢复
 
-备份须包含 `cluster_kv` 和 `chwell_session_leases`；epoch 不得回退、删除或重置。先排空并停止所有写入进程，包括外部迁移任务，再使用匹配构建序列化配置的逻辑备份。备份包含玩家数据，存放在仓库外。如下为本地 Compose 示例，密码通过环境传入，演示备份目录须事先创建：
+备份须同时包含 `cluster_kv`、`chwell_session_leases` 和 `chwell_request_results`；epoch 不得回退、删除或重置，不能遗漏已提交请求的结果记录。先排空并停止所有写入进程，包括外部迁移任务，再使用匹配构建序列化配置的逻辑备份。备份包含玩家数据，存放在仓库外。如下为本地 Compose 示例，密码通过环境传入，演示备份目录须事先创建：
 
 ```sh
 export MYSQL_PWD=local-root-password
@@ -66,6 +66,8 @@ docker compose -f examples/cluster_reference/compose.yml exec -T -e MYSQL_PWD my
   mysqldump --protocol=TCP -h127.0.0.1 -uroot --single-transaction --no-tablespaces --set-gtid-purged=OFF chwell \
   > /srv/chwell-backups/chwell.sql
 # 先在隔离数据库演练，验证玩家文档、TTL 和全部 epoch。目标数据库须为空。
+docker compose -f examples/cluster_reference/compose.yml exec -T -e MYSQL_PWD mysql \
+  mysql --protocol=TCP -h127.0.0.1 -uroot -e 'CREATE DATABASE isolated_restore'
 docker compose -f examples/cluster_reference/compose.yml exec -T -e MYSQL_PWD mysql \
   mysql --protocol=TCP -h127.0.0.1 -uroot isolated_restore < /srv/chwell-backups/chwell.sql
 ```
