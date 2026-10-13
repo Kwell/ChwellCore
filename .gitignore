@@ -38,7 +38,7 @@ dummy
 __pycache__/
 
 # Local research, implementation plans and maintenance notes
-/docs/ARK_COMPARISON.md
+/docs/*COMPARISON.md
 /docs/MAINTENANCE.md
 /docs/REFACTOR_PLAN.md
 /ARCHITECTURE_FIX.md

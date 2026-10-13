@@ -2,7 +2,7 @@
 
 `cluster::MysqlSessionStore` 是可选真实 MySQL 后端（`CHWELL_USE_MYSQL=ON`）。
 它将玩家租约和受保护文档放在同一数据库、同一连接的 InnoDB 事务中，避免外部锁检查
-通过后、文档写入前会话已换主的竞态。实现独立编写，未复制 ARK 源码。
+通过后、文档写入前会话已换主的竞态。
 `SessionLocator` 仍是进程内路由索引，不能充当全局写入授权。
 
 ## 契约

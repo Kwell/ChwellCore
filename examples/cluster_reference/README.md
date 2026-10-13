@@ -2,7 +2,7 @@
 
 独立实现的参考工程：TCP 客户端 → 网关 → Consul 发现的两个 Game → 真实 MySQL。
 使用 AppHost、DiscoveryRouter、SessionLocator、MysqlSessionStore、TcpRpcTransport、生成的 EntitySchema、
-Repository 和 SchemaSyncRoom；没有复制 ARK 源码。完整框架和这个参考服务需要 Linux/POSIX。
+Repository 和 SchemaSyncRoom。完整框架和这个参考服务需要 Linux/POSIX。
 
 ## 本地启动
 

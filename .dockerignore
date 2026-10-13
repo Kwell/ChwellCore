@@ -5,7 +5,7 @@ build*
 _*.py
 ARCHITECTURE_FIX.md
 BENCHMARK_REPORT.md
-docs/ARK_COMPARISON.md
+docs/*COMPARISON.md
 docs/MAINTENANCE.md
 docs/REFACTOR_PLAN.md
 generated
