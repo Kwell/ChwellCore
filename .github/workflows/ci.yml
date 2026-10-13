@@ -124,6 +124,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+      - name: Configure portable HTTP client with native TLS
+        run: cmake -S tests/http_client -B build-http-client -DCHWELL_TEST_FETCH_CURL=ON
+      - name: Build portable HTTP client contract
+        run: cmake --build build-http-client --config Debug --parallel 4
+      - name: Verify real HTTP, cancellation and TLS certificates
+        run: ctest --test-dir build-http-client -C Debug --output-on-failure --timeout 45
       - name: Configure standalone config tests
         run: cmake -S tests/config -B build-config
       - name: Build config tests

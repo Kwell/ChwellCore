@@ -23,11 +23,12 @@ target_link_libraries(my_service PRIVATE Chwell::schema)
 | `Chwell::core` / `core` | 始终可用 |
 | `Chwell::schema` / `schema` | `CHWELL_USE_ENTITY_SCHEMA=ON`，传递链接 core |
 | `Chwell::consul` / `consul` | `CHWELL_USE_CONSUL=ON`，libcurl >=7.68、nlohmann-json >=3.11 |
+| `Chwell::http_client` / `http_client` | `CHWELL_USE_HTTP_CLIENT=ON` 或 Consul 启用；独立于 core，libcurl >=7.68 且支持异步 DNS，见 [HTTP 客户端](HTTP_CLIENT.md) |
 | `Chwell::game_proto` / `game_proto` | 找到 Protobuf 并生成 game.pb.h/cc；头文件可直接 `#include "game.pb.h"` |
 
 请求未编译的 REQUIRED component 会在配置时失败。同名别名也可以在源码 `add_subdirectory` 后使用。源码目标名 chwell_core/chwell_schema 等保留。
 
-`ChwellCore_WITH_YAML/MYSQL/MONGODB/OPENSSL` 布尔变量报告包的编译能力，不表示这些后端已经连接到外部服务。
+`ChwellCore_WITH_YAML/MYSQL/MONGODB/OPENSSL/HTTP_CLIENT` 布尔变量报告包的编译能力，不表示这些后端已经连接到外部服务。
 
 启用 YAML、OpenSSL、MySQL、MongoDB 时，构建阶段必须能找到对应依赖；不会将启用但缺依赖的数据库/TLS 后端当作有效产物。YAML 仍可通过 FetchContent 获取固定上游版本；此路径将 yaml-cpp 库、头文件和 MIT 许可证一并安装，导出为 `Chwell::yaml_cpp`，消费者无需另找系统 YAML。使用系统 YAML 构建的包仍在消费者机器查找 yaml-cpp。Protobuf 保留原来的可选探测行为，缺失时关闭该目标。
 
