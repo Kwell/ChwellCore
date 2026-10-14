@@ -133,6 +133,14 @@ jobs:
         run: cmake --build build-http-client --config Debug --parallel 4
       - name: Verify real HTTP, cancellation and TLS certificates
         run: ctest --test-dir build-http-client -C Debug --output-on-failure --timeout 45
+      - name: Configure root portable IO package without application core
+        run: cmake -S . -B build-portable-io -DCHWELL_BUILD_CORE=OFF
+      - name: Build and test portable IO and public network declarations
+        run: |
+          cmake --build build-portable-io --config Release --parallel 4
+          ctest --test-dir build-portable-io -C Release --output-on-failure --timeout 30
+      - name: Verify relocated portable package with independent consumer
+        run: python integration_tests/test_portable_io_package.py build-portable-io
       - name: Configure standalone config tests
         run: cmake -S tests/config -B build-config
       - name: Build config tests
@@ -197,6 +205,12 @@ jobs:
         run: cmake --build build -j 4
       - name: Run tests
         run: ctest --test-dir build --verbose --timeout 600
+      - name: Verify portable root build and relocated IO package on Linux
+        run: |
+          cmake -S . -B build-portable-io -DCHWELL_BUILD_CORE=OFF -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-portable-io --parallel 4
+          ctest --test-dir build-portable-io --output-on-failure --timeout 30
+          python3 integration_tests/test_portable_io_package.py build-portable-io
 
   installed-package:
     runs-on: ubuntu-latest

@@ -5,7 +5,8 @@
 #include <thread>
 #include <atomic>
 
-#include "chwell/net/posix_io.h"
+#include "chwell/net/io_service.h"
+#include "chwell/net/socket_io.h"
 #include "chwell/http/http_request.h"
 #include "chwell/http/http_response.h"
 

@@ -20,7 +20,8 @@ target_link_libraries(my_service PRIVATE Chwell::schema)
 
 | 目标 / component | 可用条件 |
 | --- | --- |
-| `Chwell::core` / `core` | 始终可用 |
+| `Chwell::core` / `core` | `CHWELL_BUILD_CORE=ON`（默认），Linux 核心 |
+| `Chwell::io` / `io` | 始终可用；独立工作队列，见 [平台 IO 边界](PLATFORM_IO.md) |
 | `Chwell::schema` / `schema` | `CHWELL_USE_ENTITY_SCHEMA=ON`，传递链接 core |
 | `Chwell::consul` / `consul` | `CHWELL_USE_CONSUL=ON`，libcurl >=7.68、nlohmann-json >=3.11 |
 | `Chwell::http_client` / `http_client` | `CHWELL_USE_HTTP_CLIENT=ON` 或 Consul 启用；独立于 core，libcurl >=7.68 且支持异步 DNS，见 [HTTP 客户端](HTTP_CLIENT.md) |
@@ -28,7 +29,7 @@ target_link_libraries(my_service PRIVATE Chwell::schema)
 
 请求未编译的 REQUIRED component 会在配置时失败。同名别名也可以在源码 `add_subdirectory` 后使用。源码目标名 chwell_core/chwell_schema 等保留。
 
-`ChwellCore_WITH_YAML/MYSQL/MONGODB/OPENSSL/HTTP_CLIENT` 布尔变量报告包的编译能力，不表示这些后端已经连接到外部服务。
+`ChwellCore_WITH_CORE/YAML/MYSQL/MONGODB/OPENSSL/HTTP_CLIENT` 布尔变量报告包的编译能力，不表示这些后端已经连接到外部服务。
 
 启用 YAML、OpenSSL、MySQL、MongoDB 时，构建阶段必须能找到对应依赖；不会将启用但缺依赖的数据库/TLS 后端当作有效产物。YAML 仍可通过 FetchContent 获取固定上游版本；此路径将 yaml-cpp 库、头文件和 MIT 许可证一并安装，导出为 `Chwell::yaml_cpp`，消费者无需另找系统 YAML。使用系统 YAML 构建的包仍在消费者机器查找 yaml-cpp。Protobuf 保留原来的可选探测行为，缺失时关闭该目标。
 
@@ -49,6 +50,8 @@ target_include_directories(my_service PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/gener
 运行时内容包加载与发布通过 `Chwell::schema` 的 ContentStore，安装包附带 [版本契约](CONTENT_VERSIONS.md)。安装消费测试还验证原文件保留、包重建及同一进程中的切换/回滚。
 
 完整网络框架仍需要 Linux/POSIX。本机 Windows 可以验证可移植模块，不能据此宣称 Windows 整包运行。Linux CI 分别构建最小包、全部可选依赖包和 FetchContent YAML 包，再安装、移动目录、构建独立消费者并执行 TCP/关闭测试；另验证引用和 Excel 错误不会覆盖产物，以及工作簿/CSV/目录增删表会触发重新构建，删除 C# 输出会重新生成。
+
+`CHWELL_BUILD_CORE=OFF` 提供不含 POSIX 核心的独立安装包，Linux 和 Windows 都可消费 `Chwell::io`，也可显式启用 `Chwell::http_client`。REQUIRED core/schema/consul 组件不可用，YAML/Protobuf 默认选项不引入额外依赖，见 [独立 IO 构建](PLATFORM_IO.md)。
 
 运行 `python3 integration_tests/test_installed_package.py build-package` 前，需用同一 Python 安装 `tools/requirements-excel.txt`，并准备 .NET 8 SDK。测试把该解释器传给消费者 CMake，实际编译运行 C++ 内容和 C# 客户端契约；普通 CSV 内容构建不需要 Excel 依赖或 .NET SDK。
 

@@ -10,6 +10,8 @@ cmake --build build --parallel 4
 
 安装后消费：
 
+只构建可移植组件（包括 Windows）时添加 `-DCHWELL_BUILD_CORE=OFF`，即可从根目录构建和安装独立 IO/HTTP 包，无需 POSIX 核心。Linux 完整核心构建保留默认值。
+
 ```cmake
 find_package(ChwellCore 0.1 CONFIG REQUIRED COMPONENTS http_client)
 target_link_libraries(my_service PRIVATE Chwell::http_client)

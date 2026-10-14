@@ -9,7 +9,7 @@
 #include <chrono>
 #include <functional>
 
-#include "chwell/net/posix_io.h"
+#include "chwell/net/io_service.h"
 
 namespace chwell {
 

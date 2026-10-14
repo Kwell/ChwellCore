@@ -9,7 +9,7 @@
 #include <deque>
 #include <chrono>
 
-#include "chwell/net/posix_io.h"
+#include "chwell/net/socket_io.h"
 #include "chwell/net/epoll_demuxer.h"
 
 namespace chwell {

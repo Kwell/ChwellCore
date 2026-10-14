@@ -11,7 +11,7 @@
 #include <atomic>
 #include <thread>
 
-#include "chwell/net/posix_io.h"
+#include "chwell/net/io_service.h"
 #include "chwell/net/tcp_connection.h"
 #include "chwell/protocol/message.h"
 #include "chwell/protocol/parser.h"

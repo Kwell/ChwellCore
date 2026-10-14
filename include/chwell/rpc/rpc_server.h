@@ -9,7 +9,7 @@
 #include <atomic>
 #include <cstdint>
 
-#include "chwell/net/posix_io.h"
+#include "chwell/net/io_service.h"
 #include "chwell/net/tcp_server.h"
 #include "chwell/service/component.h"
 #include "chwell/protocol/message.h"

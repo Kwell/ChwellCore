@@ -1,3 +1,4 @@
+#include <sys/socket.h>
 #include "chwell/net/ws_connection.h"
 #include "chwell/core/logger.h"
 #include <cerrno>

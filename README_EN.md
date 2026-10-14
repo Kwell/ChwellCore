@@ -854,6 +854,7 @@ auto visible = aoi.get_entities_in_view(1);
 | `CHWELL_USE_OPENSSL` | `OFF` | TLS / WebSocket SHA-1 handshake |
 | `CHWELL_USE_CONSUL` | `OFF` | [Consul discovery and cross-process routing](docs/DISCOVERY.md), requires libcurl / nlohmann-json |
 | `CHWELL_USE_HTTP_CLIENT` | `OFF` | [HTTP client](docs/HTTP_CLIENT.md): overall deadline, cancellation, bounded responses and verified TLS; automatically enabled by Consul |
+| `CHWELL_BUILD_CORE` | `ON` | Linux application core; `OFF` builds an independent [IO worker queue](docs/PLATFORM_IO.md) package and optional HTTP client |
 | `CHWELL_USE_ENTITY_SCHEMA` | `OFF` | [Shared entity metadata and content generation](docs/ENTITY_SCHEMA.md), requires Python 3.8+ for generation |
 
 **Minimal build:**

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "chwell/net/posix_io.h"
+#include "chwell/net/socket_io.h"
 #include "chwell/core/logger.h"
 
 namespace chwell {
@@ -39,8 +39,8 @@ public:
     bool handshake();
 
     // 阻塞读/写，与 TcpSocket 类似
-    ssize_t read(void* buf, std::size_t len);
-    ssize_t write(const void* buf, std::size_t len);
+    std::ptrdiff_t read(void* buf, std::size_t len);
+    std::ptrdiff_t write(const void* buf, std::size_t len);
 
     void close();
 

@@ -11,7 +11,7 @@
 #include <mutex>
 #include <atomic>
 
-#include "chwell/net/posix_io.h"
+#include "chwell/net/socket_io.h"
 
 namespace chwell {
 namespace net {

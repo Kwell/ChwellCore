@@ -5,7 +5,8 @@
 #include <thread>
 #include <atomic>
 
-#include "chwell/net/posix_io.h"
+#include "chwell/net/io_service.h"
+#include "chwell/net/posix_endpoint.h"
 
 namespace chwell {
 namespace net {
