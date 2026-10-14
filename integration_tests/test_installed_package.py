@@ -98,9 +98,14 @@ def main():
         shutil.copyfile(pathlib.Path(__file__).with_name('package_probe.cpp'), source / 'package_probe.cpp')
         shutil.copyfile(pathlib.Path(__file__).resolve().parents[1] / 'tests/http_client/main.cpp',
                         source / 'http_client_contract.cpp')
+        shutil.copyfile(pathlib.Path(__file__).resolve().parents[1] / 'tests/io/main.cpp',
+                        source / 'io_contract.cpp')
         with (source / 'CMakeLists.txt').open('a', encoding='utf-8') as cmake:
             cmake.write('''
 add_executable(package_probe package_probe.cpp)
+find_package(ChwellCore 0.1 CONFIG REQUIRED COMPONENTS io)
+add_executable(io_contract io_contract.cpp)
+target_link_libraries(io_contract PRIVATE Chwell::io)
 if(ChwellCore_WITH_HTTP_CLIENT)
     find_package(ChwellCore 0.1 CONFIG REQUIRED COMPONENTS http_client)
     add_executable(http_client_contract http_client_contract.cpp)
@@ -178,6 +183,8 @@ endif()
                  '-DCMAKE_FIND_USE_PACKAGE_REGISTRY=OFF'])
             run([args.cmake, '--build', cluster_build, '--parallel', '2'])
         run([consumer / 'package_probe'])
+        output = run([consumer / 'io_contract'])
+        if 'PASS:' not in output: raise RuntimeError(output)
         if (consumer / 'http_client_contract').exists():
             run([sys.executable, pathlib.Path(__file__).with_name('test_http_client.py'),
                  consumer / 'http_client_contract'])

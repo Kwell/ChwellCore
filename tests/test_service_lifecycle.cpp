@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <netinet/in.h>
 #include <stdexcept>
 #include <future>
 #include "chwell/service/service.h"

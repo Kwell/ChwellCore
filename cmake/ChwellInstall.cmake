@@ -25,13 +25,20 @@ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/ChwellCoreConfig.cmake"
     "${CMAKE_CURRENT_BINARY_DIR}/ChwellCoreConfigVersion.cmake"
     cmake/ChwellEntitySchema.cmake cmake/FindChwellMySQL.cmake cmake/FindChwellMongoDB.cmake
     DESTINATION "${CHWELL_PACKAGE_DIR}")
+install(FILES docs/PLATFORM_IO.md docs/HTTP_CLIENT.md docs/PACKAGING.md
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/ChwellCore/docs")
+if(CHWELL_BUILD_CORE)
 install(FILES tools/entity_schema.py tools/requirements-excel.txt DESTINATION "${CHWELL_TOOL_DIR}")
 install(DIRECTORY clients/csharp/ DESTINATION "${CMAKE_INSTALL_DATADIR}/ChwellCore/clients/csharp"
     PATTERN "bin" EXCLUDE PATTERN "obj" EXCLUDE)
-install(DIRECTORY examples/reference_service/ DESTINATION "${CMAKE_INSTALL_DATADIR}/ChwellCore/examples/reference_service")
-install(DIRECTORY examples/cluster_reference/ DESTINATION "${CMAKE_INSTALL_DATADIR}/ChwellCore/examples/cluster_reference")
-install(DIRECTORY examples/runtime_plugin/ DESTINATION "${CMAKE_INSTALL_DATADIR}/ChwellCore/examples/runtime_plugin")
-install(FILES docs/HTTP_CLIENT.md docs/RUNTIME_PLUGINS.md docs/STORAGE_MIGRATIONS.md docs/DEPLOYMENT_OPERATIONS.md docs/REQUEST_IDEMPOTENCY.md DESTINATION "${CMAKE_INSTALL_DATADIR}/ChwellCore/docs")
-install(FILES docs/PACKAGING.md docs/ENTITY_SCHEMA.md docs/CONTENT_VERSIONS.md docs/APP_HOST.md docs/REGISTRATIONS.md docs/SESSION_OWNERSHIP.md docs/SYNC_PROTOCOL.md
+install(DIRECTORY examples/reference_service/ DESTINATION "${CMAKE_INSTALL_DATADIR}/ChwellCore/examples/reference_service"
+    PATTERN "__pycache__" EXCLUDE PATTERN "*.pyc" EXCLUDE)
+install(DIRECTORY examples/cluster_reference/ DESTINATION "${CMAKE_INSTALL_DATADIR}/ChwellCore/examples/cluster_reference"
+    PATTERN "__pycache__" EXCLUDE PATTERN "*.pyc" EXCLUDE)
+install(DIRECTORY examples/runtime_plugin/ DESTINATION "${CMAKE_INSTALL_DATADIR}/ChwellCore/examples/runtime_plugin"
+    PATTERN "__pycache__" EXCLUDE PATTERN "*.pyc" EXCLUDE)
+install(FILES docs/RUNTIME_PLUGINS.md docs/STORAGE_MIGRATIONS.md docs/DEPLOYMENT_OPERATIONS.md docs/REQUEST_IDEMPOTENCY.md DESTINATION "${CMAKE_INSTALL_DATADIR}/ChwellCore/docs")
+install(FILES docs/ENTITY_SCHEMA.md docs/CONTENT_VERSIONS.md docs/APP_HOST.md docs/REGISTRATIONS.md docs/SESSION_OWNERSHIP.md docs/SYNC_PROTOCOL.md
     DESTINATION "${CMAKE_INSTALL_DATADIR}/ChwellCore/docs")
+endif()
 install(FILES LICENSE DESTINATION "${CMAKE_INSTALL_DATADIR}/ChwellCore")

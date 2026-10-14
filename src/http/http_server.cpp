@@ -1,3 +1,5 @@
+#include <sys/socket.h>
+#include <fcntl.h>
 #include "chwell/http/http_server.h"
 #include "chwell/core/logger.h"
 #include <cstring>

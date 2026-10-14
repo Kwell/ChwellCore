@@ -7,7 +7,8 @@
 #include <atomic>
 #include <vector>
 
-#include "chwell/net/posix_io.h"
+#include "chwell/net/io_service.h"
+#include "chwell/net/socket_io.h"
 #include "chwell/net/tcp_connection.h"
 
 namespace chwell {

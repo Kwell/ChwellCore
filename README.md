@@ -914,6 +914,7 @@ auto visible = aoi.get_entities_in_view(1);
 | `CHWELL_USE_OPENSSL` | `OFF` | TLS / WebSocket SHA-1 握手 |
 | `CHWELL_USE_CONSUL` | `OFF` | [Consul 发现与跨进程路由](docs/DISCOVERY.md)，需要 libcurl / nlohmann-json |
 | `CHWELL_USE_HTTP_CLIENT` | `OFF` | [HTTP 客户端](docs/HTTP_CLIENT.md)：总期限、跨线程取消、有界响应和 TLS 校验；Consul 自动启用 |
+| `CHWELL_BUILD_CORE` | `ON` | Linux 应用核心；设为 `OFF` 可独立构建安装 [IO 工作队列](docs/PLATFORM_IO.md) 与可选 HTTP 客户端 |
 | `CHWELL_USE_ENTITY_SCHEMA` | `OFF` | [共享字段模型与生成流水线](docs/ENTITY_SCHEMA.md)，生成需要 Python 3.8+ |
 
 **最小化构建：**

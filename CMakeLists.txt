@@ -25,6 +25,40 @@ option(CHWELL_BUILD_TESTS "Build unit tests (GoogleTest)" ON)
 option(CHWELL_USE_CONSUL "Build optional Consul discovery (libcurl + nlohmann-json)" OFF)
 option(CHWELL_USE_HTTP_CLIENT "Build optional bounded HTTP client (libcurl)" OFF)
 option(CHWELL_USE_ENTITY_SCHEMA "Build optional typed entity schema and visibility sync" OFF)
+option(CHWELL_BUILD_CORE "Build the Linux/POSIX application core" ON)
+
+if(CHWELL_BUILD_TESTS)
+    enable_testing()
+endif()
+add_library(chwell_io src/net/io_service.cpp)
+target_include_directories(chwell_io PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
+target_compile_features(chwell_io PUBLIC cxx_std_17)
+target_compile_options(chwell_io PUBLIC $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+target_link_libraries(chwell_io PUBLIC Threads::Threads)
+if(CHWELL_BUILD_TESTS)
+    add_executable(chwell_io_contract tests/io/main.cpp)
+    target_link_libraries(chwell_io_contract PRIVATE chwell_io)
+    add_test(NAME io_service_contract COMMAND chwell_io_contract)
+    set_tests_properties(io_service_contract PROPERTIES TIMEOUT 30)
+endif()
+
+if(NOT CHWELL_BUILD_CORE AND (CHWELL_USE_CONSUL OR CHWELL_USE_ENTITY_SCHEMA OR
+        CHWELL_USE_MYSQL OR CHWELL_USE_MONGODB OR CHWELL_USE_OPENSSL))
+    message(FATAL_ERROR "Requested application component requires CHWELL_BUILD_CORE=ON")
+endif()
+if(CHWELL_BUILD_CORE AND NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    message(FATAL_ERROR "The application core requires Linux. Use CHWELL_BUILD_CORE=OFF for portable IO/HTTP components.")
+endif()
+if(NOT CHWELL_BUILD_CORE)
+    # These core-only defaults must not download or export unused dependencies.
+    set(CHWELL_USE_YAML OFF)
+    set(CHWELL_USE_PROTOBUF OFF)
+endif()
+set(CHWELL_BUNDLED_YAML OFF)
+
+if(CHWELL_BUILD_CORE)
 
 if(CHWELL_USE_PROTOBUF)
     find_package(Protobuf QUIET)
@@ -53,7 +87,6 @@ endif()
 
 
 # yaml-cpp（优先 find_package，未找到则 FetchContent，需 CMake 3.14+）
-set(CHWELL_BUNDLED_YAML OFF)
 if(CHWELL_USE_YAML)
     find_package(yaml-cpp 0.6 QUIET)
     if(NOT yaml-cpp_FOUND AND CMAKE_VERSION VERSION_GREATER_EQUAL 3.14)
@@ -154,7 +187,7 @@ target_include_directories(chwell_core
         $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 target_compile_features(chwell_core PUBLIC cxx_std_17)
-target_link_libraries(chwell_core PUBLIC Threads::Threads PRIVATE ${CMAKE_DL_LIBS})
+target_link_libraries(chwell_core PUBLIC chwell_io Threads::Threads PRIVATE ${CMAKE_DL_LIBS})
 target_compile_definitions(chwell_core PUBLIC $<$<BOOL:${CHWELL_USE_YAML}>:CHWELL_USE_YAML>)
 
 target_compile_definitions(chwell_core PRIVATE
@@ -181,8 +214,6 @@ if(CHWELL_USE_OPENSSL)
 endif()
 
 if (CHWELL_BUILD_TESTS)
-    enable_testing()
-
     # 优先使用系统安装的 GTest，其次使用 FetchContent 拉取
     find_package(GTest QUIET)
 
@@ -259,6 +290,7 @@ if (CHWELL_BUILD_TESTS)
             tests/test_rpc.cpp
             tests/test_gateway_multinode.cpp
             tests/test_udp_socket.cpp
+            tests/test_posix_io.cpp
         )
         target_link_libraries(chwell_core_tests PRIVATE chwell_core ${CHWELL_GTEST_LIB})
         target_sources(chwell_core_tests PRIVATE tests/test_runtime_plugin.cpp)
@@ -292,6 +324,8 @@ if (CHWELL_BUILD_TESTS)
         message(WARNING "GoogleTest not found, CHWELL_BUILD_TESTS is ON but tests will not be built")
     endif()
 endif()
+
+endif() # CHWELL_BUILD_CORE
 
 set(CHWELL_WITH_HTTP_CLIENT OFF)
 if(CHWELL_USE_HTTP_CLIENT OR CHWELL_USE_CONSUL)
@@ -364,10 +398,8 @@ if(CHWELL_USE_ENTITY_SCHEMA)
 endif()
 
 # Stable consumer names work with both add_subdirectory and installed packages.
-set(CHWELL_EXPORT_TARGETS chwell_core)
-set_target_properties(chwell_core PROPERTIES EXPORT_NAME core)
-add_library(Chwell::core ALIAS chwell_core)
-foreach(module schema consul game_proto http_client)
+set(CHWELL_EXPORT_TARGETS)
+foreach(module core io schema consul game_proto http_client)
     if(TARGET chwell_${module})
         list(APPEND CHWELL_EXPORT_TARGETS chwell_${module})
         set_target_properties(chwell_${module} PROPERTIES EXPORT_NAME ${module})
@@ -389,7 +421,7 @@ include(cmake/ChwellInstall.cmake)
 # 复制 config 到 build 目录，便于 example_storage 从 build 运行
 file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/config DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
 
-if (CHWELL_BUILD_EXAMPLES)
+if (CHWELL_BUILD_EXAMPLES AND CHWELL_BUILD_CORE)
     add_executable(example_config_driven examples/config_driven_demo.cpp)
     target_link_libraries(example_config_driven PRIVATE chwell_core)
 

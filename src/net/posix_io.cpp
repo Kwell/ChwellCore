@@ -1,8 +1,45 @@
-#include "chwell/net/posix_io.h"
-#include <thread>
+#include "chwell/net/socket_io.h"
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <unistd.h>
+#include <cstring>
 
 namespace chwell {
 namespace net {
+
+std::string ErrorCode::message() const {
+    return value_ == 0 ? "Success" : std::string(std::strerror(value_));
+}
+TcpSocket::~TcpSocket() { close_fd(); }
+TcpSocket& TcpSocket::operator=(TcpSocket&& other) noexcept {
+    if (this != &other) { close_fd(); fd_.store(other.fd_.exchange(-1)); }
+    return *this;
+}
+void TcpSocket::close_fd() {
+    const int fd = fd_.exchange(-1, std::memory_order_acq_rel);
+    if (fd >= 0) ::close(fd);
+}
+void TcpSocket::close(ErrorCode& ec) {
+    ec = ErrorCode(0);
+    close_fd();
+}
+void TcpSocket::shutdown(int how, ErrorCode& ec) {
+    ec = ErrorCode(0);
+    const int fd = native_handle();
+    if (fd >= 0 && ::shutdown(fd, how) != 0) ec = ErrorCode(errno);
+}
+std::ptrdiff_t TcpSocket::read(void* buf, std::size_t len) {
+    const int fd = native_handle();
+    if (fd >= 0) return ::read(fd, buf, len);
+    errno = EBADF;
+    return -1;
+}
+std::ptrdiff_t TcpSocket::write(const void* buf, std::size_t len) {
+    const int fd = native_handle();
+    if (fd >= 0) return ::write(fd, buf, len);
+    errno = EBADF;
+    return -1;
+}
 
 // TcpAcceptor
 TcpAcceptor::TcpAcceptor(unsigned short port) {
@@ -46,40 +83,6 @@ TcpSocket TcpAcceptor::accept(ErrorCode& ec) {
         return TcpSocket();
     }
     return TcpSocket(fd);
-}
-
-// IoService
-void IoService::run() {
-    while (!stopped_) {
-        std::function<void()> task;
-        {
-            std::unique_lock<std::mutex> lock(mutex_);
-            cv_.wait(lock, [this] { return stopped_ || !queue_.empty(); });
-            if (stopped_) break;
-            if (queue_.empty()) continue;
-            task = std::move(queue_.front());
-            queue_.pop();
-        }
-        if (task) task();
-    }
-}
-
-void IoService::stop() {
-    {
-        // Serialize the predicate change with run() entering its CV wait.
-        std::lock_guard<std::mutex> lock(mutex_);
-        stopped_ = true;
-    }
-    cv_.notify_all();
-}
-
-void IoService::post(std::function<void()> f) {
-    if (!f) return;
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        queue_.push(std::move(f));
-    }
-    cv_.notify_one();
 }
 
 } // namespace net

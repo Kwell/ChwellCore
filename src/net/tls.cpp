@@ -1,4 +1,6 @@
 #include "chwell/net/tls.h"
+#include <sys/socket.h>
+#include <cerrno>
 
 #ifdef CHWELL_USE_OPENSSL
 
@@ -133,11 +135,11 @@ bool TlsConnection::handshake() {
     return false;
 }
 
-ssize_t TlsConnection::read(void* buf, std::size_t len) {
+std::ptrdiff_t TlsConnection::read(void* buf, std::size_t len) {
     if (!ssl_) return -1;
     for (;;) {
         int n = SSL_read(static_cast<SSL*>(ssl_), buf, static_cast<int>(len));
-        if (n > 0) return static_cast<ssize_t>(n);
+        if (n > 0) return static_cast<std::ptrdiff_t>(n);
         int err = SSL_get_error(static_cast<SSL*>(ssl_), n);
         if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
             struct pollfd pfd;
@@ -154,11 +156,11 @@ ssize_t TlsConnection::read(void* buf, std::size_t len) {
     }
 }
 
-ssize_t TlsConnection::write(const void* buf, std::size_t len) {
+std::ptrdiff_t TlsConnection::write(const void* buf, std::size_t len) {
     if (!ssl_) return -1;
     for (;;) {
         int n = SSL_write(static_cast<SSL*>(ssl_), buf, static_cast<int>(len));
-        if (n > 0) return static_cast<ssize_t>(n);
+        if (n > 0) return static_cast<std::ptrdiff_t>(n);
         int err = SSL_get_error(static_cast<SSL*>(ssl_), n);
         if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
             struct pollfd pfd;
@@ -224,12 +226,12 @@ bool TlsConnection::handshake() {
     return false;
 }
 
-ssize_t TlsConnection::read(void*, std::size_t) {
+std::ptrdiff_t TlsConnection::read(void*, std::size_t) {
     CHWELL_LOG_ERROR("TLS not available: rebuild with CHWELL_USE_OPENSSL=ON");
     return -1;
 }
 
-ssize_t TlsConnection::write(const void*, std::size_t) {
+std::ptrdiff_t TlsConnection::write(const void*, std::size_t) {
     CHWELL_LOG_ERROR("TLS not available: rebuild with CHWELL_USE_OPENSSL=ON");
     return -1;
 }

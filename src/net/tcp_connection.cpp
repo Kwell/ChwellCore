@@ -1,6 +1,8 @@
+#include <sys/socket.h>
 #include "chwell/net/tcp_connection.h"
 #include "chwell/core/logger.h"
 #include <cerrno>
+#include <cstring>
 #include <netinet/tcp.h>
 
 namespace chwell {
