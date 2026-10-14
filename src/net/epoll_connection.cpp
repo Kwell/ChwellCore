@@ -1,4 +1,6 @@
 #include "chwell/net/epoll_connection.h"
+#include "chwell/net/epoll_demuxer.h"
+#include <sys/socket.h>
 #include <netinet/in.h>
 #include "chwell/core/logger.h"
 #include <cerrno>
@@ -9,7 +11,7 @@
 namespace chwell {
 namespace net {
 
-EpollTcpConnection::EpollTcpConnection(int fd, EpollDemuxer* demuxer)
+EpollTcpConnection::EpollTcpConnection(int fd, IoDemuxer* demuxer)
     : fd_(fd), demuxer_(demuxer), read_buffer_(kReadBufferSize) {
     if (fd_ >= 0) {
         set_nonblocking(fd_);
@@ -22,7 +24,7 @@ EpollTcpConnection::~EpollTcpConnection() {
     cleanup();
 }
 
-void EpollTcpConnection::bind_demuxer(EpollDemuxer* demuxer) {
+void EpollTcpConnection::bind_demuxer(IoDemuxer* demuxer) {
     demuxer_ = demuxer;
 }
 
@@ -36,8 +38,7 @@ void EpollTcpConnection::start() {
     int val = 1;
     ::setsockopt(fd_, IPPROTO_TCP, TCP_NODELAY, &val, sizeof(val));
 
-    CHWELL_LOG_INFO("EpollTcpConnection::start registering fd=" << fd_
-                    << " to demuxer epoll_fd=" << demuxer_->native_handle());
+    CHWELL_LOG_INFO("EpollTcpConnection::start registering fd=" << fd_);
 
     auto self = shared_from_this();
     IoEvent initial_events = IoEvent::Read | IoEvent::RdHangup;
@@ -63,7 +64,7 @@ void EpollTcpConnection::start() {
         });
 
     if (!ok) {
-        CHWELL_LOG_ERROR("EpollTcpConnection::start: epoll_ctl ADD failed for fd=" << fd_
+        CHWELL_LOG_ERROR("EpollTcpConnection::start: event registration failed for fd=" << fd_
                          << ", errno=" << errno);
     }
 

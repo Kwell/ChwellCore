@@ -1,4 +1,8 @@
 #include "chwell/net/io_service.h"
+#include "chwell/net/io_demuxer.h"
+#include "chwell/net/epoll_demuxer.h"
+#include "chwell/net/epoll_connection.h"
+#include "chwell/net/epoll_server.h"
 #include "chwell/net/socket_io.h"
 #include "chwell/net/tcp_connection.h"
 #include "chwell/net/tcp_server.h"
@@ -21,6 +25,11 @@
 // These headers must compile without POSIX system headers on Windows as well.
 static_assert(!std::is_copy_constructible<chwell::net::TcpSocket>::value, "socket owns its descriptor");
 static_assert(!std::is_copy_constructible<chwell::net::TcpAcceptor>::value, "acceptor owns its descriptor");
+static_assert(std::is_abstract<chwell::net::IoDemuxer>::value, "readiness interface is abstract");
+static_assert(std::is_base_of<chwell::net::IoDemuxer, chwell::net::EpollDemuxer>::value,
+              "epoll implements the readiness interface");
+static_assert(std::is_constructible<chwell::net::EpollTcpConnection, int, chwell::net::IoDemuxer*>::value,
+              "connection accepts any readiness backend");
 using chwell::net::IoService;
 using namespace std::chrono_literals;
 namespace {

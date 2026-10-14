@@ -10,7 +10,7 @@
 #include <chrono>
 
 #include "chwell/net/socket_io.h"
-#include "chwell/net/epoll_demuxer.h"
+#include "chwell/net/io_demuxer.h"
 
 namespace chwell {
 namespace net {
@@ -23,12 +23,12 @@ typedef std::function<void(const EpollTcpConnectionPtr&, std::string_view)> Epol
 typedef std::function<void(const EpollTcpConnectionPtr&)> EpollConnectionCallback;
 
 /**
- * @brief 事件驱动的 TCP 连接（epoll + non-blocking）
+ * @brief 事件驱动的非阻塞 TCP 连接，原生操作目前由 Linux core 实现
  *
  * 对外接口与原 TcpConnection 一致，内部改为：
  * - 非阻塞 socket
- * - 读事件由 epoll 驱动（EPOLLIN + ET）
- * - 写操作先入缓冲队列，EPOLLOUT 时刷出
+ * - 读事件由 IoDemuxer 驱动，默认水平触发
+ * - 写操作先入缓冲队列，可写事件到达时刷出
  *
  * 安全特性（P0-2 半包攻击防护）：
  * - max_read_buffer_: 读缓冲区上限，超过则关闭连接
@@ -38,10 +38,10 @@ typedef std::function<void(const EpollTcpConnectionPtr&)> EpollConnectionCallbac
  */
 class EpollTcpConnection : public std::enable_shared_from_this<EpollTcpConnection> {
 public:
-    explicit EpollTcpConnection(int fd, EpollDemuxer* demuxer = nullptr);
+    explicit EpollTcpConnection(int fd, IoDemuxer* demuxer = nullptr);
     ~EpollTcpConnection();
 
-    void bind_demuxer(EpollDemuxer* demuxer);
+    void bind_demuxer(IoDemuxer* demuxer);
     void start();
 
     void send(const std::vector<char>& data);
@@ -121,7 +121,7 @@ private:
 
     int fd_;
     std::uint64_t conn_id_ = generate_conn_id();
-    EpollDemuxer* demuxer_;
+    IoDemuxer* demuxer_;
 
     std::vector<char> read_buffer_;
     static constexpr size_t kReadBufferSize = 8192;

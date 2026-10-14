@@ -21,7 +21,7 @@ target_link_libraries(my_service PRIVATE Chwell::schema)
 | 目标 / component | 可用条件 |
 | --- | --- |
 | `Chwell::core` / `core` | `CHWELL_BUILD_CORE=ON`（默认），Linux 核心 |
-| `Chwell::io` / `io` | 始终可用；独立工作队列，见 [平台 IO 边界](PLATFORM_IO.md) |
+| `Chwell::io` / `io` | 始终可用；独立工作队列与事件分发接口，见 [平台 IO 边界](PLATFORM_IO.md)；Linux 后端链接 core |
 | `Chwell::schema` / `schema` | `CHWELL_USE_ENTITY_SCHEMA=ON`，传递链接 core |
 | `Chwell::consul` / `consul` | `CHWELL_USE_CONSUL=ON`，libcurl >=7.68、nlohmann-json >=3.11 |
 | `Chwell::http_client` / `http_client` | `CHWELL_USE_HTTP_CLIENT=ON` 或 Consul 启用；独立于 core，libcurl >=7.68 且支持异步 DNS，见 [HTTP 客户端](HTTP_CLIENT.md) |
