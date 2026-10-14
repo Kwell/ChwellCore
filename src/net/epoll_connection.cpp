@@ -1,4 +1,5 @@
 #include "chwell/net/epoll_connection.h"
+#include <netinet/in.h>
 #include "chwell/core/logger.h"
 #include <cerrno>
 #include <cstring>
