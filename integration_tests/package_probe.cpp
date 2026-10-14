@@ -1,5 +1,6 @@
 #include "chwell/storage/storage_factory.h"
 #include "chwell/net/tls.h"
+#include "chwell/net/epoll_demuxer.h"
 #include "excel_item.h"
 #ifdef PACKAGE_HAS_MONGODB
 #include "chwell/storage/mongodb_storage.h"
@@ -12,6 +13,11 @@
 #endif
 
 int main() {
+    chwell::net::EpollDemuxer reactor;
+    chwell::net::IoDemuxer& readiness = reactor;
+    if (!readiness.is_valid() || !readiness.wake()) return 1;
+    readiness.stop();
+    readiness.run(); // Stop-before-run must return in an installed consumer too.
     const auto content = chwell::generated::ReferenceItem::content();
     if (content.size() != 1 || content[0].id() != "excel" || content[0].get_power() != 12) return 1;
     // StorageFactory pulls in MySQL/Mongo implementations, without connecting to a DB.

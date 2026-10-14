@@ -129,6 +129,7 @@ add_library(chwell_core
     src/net/tcp_server.cpp
     src/net/tcp_connection.cpp
     src/net/epoll_connection.cpp
+    src/net/epoll_demuxer.cpp
     src/net/epoll_server.cpp
     src/net/udp_server.cpp
     src/net/udp_socket.cpp
@@ -291,6 +292,7 @@ if (CHWELL_BUILD_TESTS)
             tests/test_gateway_multinode.cpp
             tests/test_udp_socket.cpp
             tests/test_posix_io.cpp
+            tests/test_epoll_demuxer.cpp
         )
         target_link_libraries(chwell_core_tests PRIVATE chwell_core ${CHWELL_GTEST_LIB})
         target_sources(chwell_core_tests PRIVATE tests/test_runtime_plugin.cpp)
