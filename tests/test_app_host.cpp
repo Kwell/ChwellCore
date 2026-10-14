@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <netinet/in.h>
 #include <stdexcept>
 #include "chwell/service/app_host.h"
 
