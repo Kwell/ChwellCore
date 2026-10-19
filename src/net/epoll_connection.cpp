@@ -66,6 +66,11 @@ void EpollTcpConnection::start() {
     if (!ok) {
         CHWELL_LOG_ERROR("EpollTcpConnection::start: event registration failed for fd=" << fd_
                          << ", errno=" << errno);
+        // Registration failure is terminal for this connection. The server has
+        // already published it to its connection set, so close() also invokes
+        // the close callback and removes that published state.
+        close();
+        return;
     }
 
     CHWELL_LOG_DEBUG("EpollTcpConnection started, fd=" << fd_);

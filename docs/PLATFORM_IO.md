@@ -66,6 +66,8 @@ TcpSocket 保留单描述符所有权和 move 语义，close、read、write、sh
 
 注册、修改、注销和更换回调可跨线程调用，回调在注册锁外执行，可以注销自身。重复 add 返回 EEXIST，保留原注册和回调；注册失败不保留回调。Linux 后端给每次注册分配独立代号，注销或复用 fd 后跳过旧批次事件。remove 不等待已选中的回调结束，应用应自行同步状态销毁；应在关闭或复用 fd 前 remove。若 fd 已关闭，remove 会清理回调及代号，同时保留原生失败返回和 EBADF/ENOENT。未知事件位返回 EINVAL，原生系统错误通过 errno 报告。
 
+`EpollTcpConnection::start()` 注册失败时会立即关闭连接并触发 close callback，服务端已经发布的连接因此会从连接集合中移除，不会留下半注册连接或泄漏描述符。
+
 ## 回归验证
 
 跨平台测试覆盖多生产者/多 runner 的恰好一次派发、回调再次入队、空闲停止竞态和停止时允许在执行的回调完成。Linux socket 测试验证 move、描述符释放、错误值、shutdown 唤醒和真实 loopback accept；原有 TCP、网关与集群测试继续验证接入。
