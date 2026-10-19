@@ -51,8 +51,11 @@ public:
                     ::poll(&pending, 1, 300);
                     return;
                 }
+                if (mode == "close") return;
                 if (mode == "wrong-id") body[0] ^= 1;
-                auto response = chwell::protocol::serialize(chwell::protocol::Message(ntohs(cmd), body));
+                if (mode == "empty") body.clear();
+                const auto response_cmd = mode == "wrong-cmd" ? static_cast<std::uint16_t>(ntohs(cmd) + 1) : ntohs(cmd);
+                auto response = chwell::protocol::serialize(chwell::protocol::Message(response_cmd, body));
                 if (mode == "truncated") response.resize(5);
                 // Split the header across writes, then send the body.
                 if (::send(accepted, response.data(), 2, MSG_NOSIGNAL) != 2) return;
@@ -92,6 +95,29 @@ TEST(TcpRpcTransportTest, WrongCorrelationAndPartialRepliesCloseTheConnection) {
         EXPECT_FALSE(transport.healthy());
         EXPECT_EQ(response, (std::vector<char>{'o', 'l', 'd'}));
     }
+}
+
+TEST(TcpRpcTransportTest, InvalidResponseCommandAndLengthCloseTheConnection) {
+    for (const auto& mode : {"wrong-cmd", "empty"}) {
+        RpcPeer peer;
+        ASSERT_GT(peer.node.listen_port, 0);
+        ASSERT_TRUE(peer.serve(mode));
+        chwell::cluster::TcpRpcTransport transport(peer.node);
+        std::vector<char> response{'o', 'l', 'd'};
+        EXPECT_FALSE(transport.call(1, {'x'}, response, 1000));
+        EXPECT_FALSE(transport.healthy());
+        EXPECT_EQ(response, (std::vector<char>{'o', 'l', 'd'}));
+    }
+}
+
+TEST(TcpRpcTransportTest, PeerCloseDuringReplyInvalidatesReusableConnection) {
+    RpcPeer peer;
+    ASSERT_GT(peer.node.listen_port, 0);
+    ASSERT_TRUE(peer.serve("close"));
+    chwell::cluster::TcpRpcTransport transport(peer.node);
+    std::vector<char> response;
+    EXPECT_FALSE(transport.call(1, {'x'}, response, 1000));
+    EXPECT_FALSE(transport.healthy());
 }
 
 TEST(TcpRpcTransportTest, OneDeadlineBoundsAStalledPeer) {
