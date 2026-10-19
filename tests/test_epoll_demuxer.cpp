@@ -387,3 +387,29 @@ TEST(EpollDemuxerBoundary, ConnectionUsesInjectedReadinessBackendForReadAndWrite
     EXPECT_FALSE(connection->is_open());
     EXPECT_EQ(demuxer.registered, -1);
 }
+
+TEST(EpollDemuxerBoundary, ConnectionRegistrationFailureClosesAndNotifiesOwner) {
+    struct FailingDemuxer : IoDemuxer {
+        int remove_calls = 0;
+        bool is_valid() const override { return true; }
+        bool add(int, IoEvent, EventCallback, bool) override { errno = EBUSY; return false; }
+        bool modify(int, IoEvent) override { return false; }
+        bool set_callback(int, EventCallback) override { return false; }
+        bool remove(int) override { ++remove_calls; return false; }
+        void run(int) override {}
+        bool wake() override { return true; }
+        void stop() override {}
+    } demuxer;
+    Pair pair;
+    const int fd = pair.take(0);
+    auto connection = std::make_shared<chwell::net::EpollTcpConnection>(fd, &demuxer);
+    int close_calls = 0;
+    connection->set_close_callback([&](const auto&) { ++close_calls; });
+    connection->start();
+    EXPECT_FALSE(connection->is_open());
+    EXPECT_EQ(connection->native_handle(), -1);
+    EXPECT_EQ(close_calls, 1);
+    EXPECT_EQ(demuxer.remove_calls, 1);
+    EXPECT_EQ(::fcntl(fd, F_GETFD), -1);
+    EXPECT_EQ(errno, EBADF);
+}
