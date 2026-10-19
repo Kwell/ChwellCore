@@ -12,7 +12,7 @@
 | `chwell/net/posix_endpoint.h` | 现有 UDP IPv4 endpoint，保留 `sockaddr_in addr_`，只适用于 POSIX |
 | `chwell/net/posix_io.h` | 兼容原来的 POSIX 聚合入口，保留以上类型和原先的系统头 |
 
-TCP、WebSocket、HTTP server、TLS、连接池、节点与 RPC 公共声明使用它们所需的独立头，原生系统调用留在实现文件。socket 声明可以在 Windows 编译，本轮只提供 POSIX socket 实现；`int` 原生描述符不能直接保存 Windows 的 SOCKET。
+TCP、WebSocket、HTTP server、TLS、连接池、节点与 RPC 公共声明使用它们所需的独立头，原生系统调用留在实现文件。完整网络模块属于 Linux/POSIX core；本项目不承诺 Windows 网络实现。Windows 只验证不依赖该 core 的独立模块，例如 IO 工作队列、可选 HTTP 客户端、配置和字段模型。
 
 ## 独立构建和安装
 
@@ -72,6 +72,6 @@ TcpSocket 保留单描述符所有权和 move 语义，close、read、write、sh
 
 CI 从根目录构建不含 core 的包，安装后移动路径，使用独立消费者链接 Chwell::io，并检查缺失 core 的组件请求失败。完整安装包也验证独立 IO 目标；Linux ASan/UBSan、TSan 包含队列和 socket 测试。
 
-事件分发测试覆盖真实 socket 的读写、半关闭、挂起、原生错误、边缘触发、重复和失败注册、回调替换、自注销、描述符复用、旧批次隔离、跨线程唤醒、单 runner 与异常恢复，以及启动后立即停止。注入后端验证 TCP 连接收发和注销通过抽象接口执行。Windows 测试编译接口、后端和 TCP 公共声明；三种完整安装包实例化 Linux 后端并验证停止语义。
+事件分发测试覆盖真实 socket 的读写、半关闭、挂起、原生错误、边缘触发、重复和失败注册、回调替换、自注销、描述符复用、旧批次隔离、跨线程唤醒、单 runner 与异常恢复，以及启动后立即停止。注入后端验证 TCP 连接收发和注销通过抽象接口执行。Linux 测试覆盖 epoll、socket 和完整网络 core；Windows 测试只覆盖独立可移植模块；三种完整安装包实例化 Linux 后端并验证停止语义。
 
-工作队列与事件分发接口已完成隔离。后续还需定义能容纳各平台原生 socket 的句柄及错误模型，并实现目标平台后端；目前接口仍使用 int，不能直接承载 Windows SOCKET。UDP endpoint 的原生地址表示也需要兼容迁移。可靠 UDP 在业务明确需要时另行推进。
+工作队列与事件分发接口已完成隔离，Linux/POSIX epoll 后端是当前网络实现目标。接口仍使用 Linux 描述符和 errno，UDP endpoint 仍使用 POSIX IPv4 地址表示；不计划为 Windows 增加网络后端或进行 Windows socket 兼容迁移。可靠 UDP 在业务明确需要时另行推进。
