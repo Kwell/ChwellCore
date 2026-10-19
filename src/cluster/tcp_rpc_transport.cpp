@@ -10,20 +10,30 @@
 namespace chwell { namespace cluster {
 namespace {
 using Deadline = std::chrono::steady_clock::time_point;
-bool wait_ready(int fd, short event, Deadline deadline) {
+enum class WaitStatus { Ready, Timeout, Error };
+
+WaitStatus wait_ready(int fd, short event, Deadline deadline) {
     for (;;) {
         const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
             deadline - std::chrono::steady_clock::now()).count();
-        if (remaining <= 0) return false;
+        if (remaining <= 0) return WaitStatus::Timeout;
         pollfd pending{fd, event, 0};
         const int result = ::poll(&pending, 1, static_cast<int>(remaining));
         if (result < 0 && errno == EINTR) continue;
-        return result > 0 && (pending.revents & event);
+        if (result < 0) return WaitStatus::Error;
+        if (result == 0) return WaitStatus::Timeout;
+        if (pending.revents & POLLNVAL) return WaitStatus::Error;
+        // A hangup may be reported together with readable data. Let recv drain
+        // that data so a peer can close immediately after a complete response.
+        if (pending.revents & (POLLERR | POLLHUP)) {
+            if (!(pending.revents & event)) return WaitStatus::Error;
+        }
+        return (pending.revents & event) ? WaitStatus::Ready : WaitStatus::Error;
     }
 }
 bool transfer(int fd, char* data, std::size_t bytes, bool sending, Deadline deadline) {
     while (bytes) {
-        if (!wait_ready(fd, sending ? POLLOUT : POLLIN, deadline)) return false;
+        if (wait_ready(fd, sending ? POLLOUT : POLLIN, deadline) != WaitStatus::Ready) return false;
         const auto count = sending ? ::send(fd, data, bytes, MSG_NOSIGNAL) : ::recv(fd, data, bytes, 0);
         if (count < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)) continue;
         if (count <= 0) return false;
@@ -58,7 +68,7 @@ bool TcpRpcTransport::call(std::uint16_t cmd, const std::vector<char>& request,
         fd_ = ::socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
         if (fd_ < 0) return close_failed();
         if (::connect(fd_, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0) {
-            if (errno != EINPROGRESS || !wait_ready(fd_, POLLOUT, deadline)) return close_failed();
+            if (errno != EINPROGRESS || wait_ready(fd_, POLLOUT, deadline) != WaitStatus::Ready) return close_failed();
             int error = 0;
             socklen_t length = sizeof(error);
             if (::getsockopt(fd_, SOL_SOCKET, SO_ERROR, &error, &length) != 0 || error) return close_failed();

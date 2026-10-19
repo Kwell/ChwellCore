@@ -49,7 +49,7 @@ HTTP 传输复用 [有期限的 HTTP 客户端](HTTP_CLIENT.md)，连接、DNS�
 
 监听器不是后台 watch。健康查询成功时按前后快照发布加入、变化和下线，回调在锁外、查询线程上执行；监听器异常不会使有效快照失效。应用应串行执行健康查询与监听器增删，避免把并发请求的完成顺序当成注册中心事件顺序。当前轮询不使用阻塞索引，不能宣称全局严格事件顺序。
 
-`TcpRpcTransport` 用于现有 `cmd/len/body` RPC 协议，检查响应命令和 request ID，连接、发送与接收共用一个调用期限。它支持 Linux/POSIX 数字 IPv4 地址，单连接串行调用，最大业务负载 65531 字节。传输错误关闭连接且不修改调用者原响应。它暂不支持 TLS、域名解析、异步多路复用或 RPC 服务端业务错误编码；超时不等于命令没有执行。
+`TcpRpcTransport` 用于现有 `cmd/len/body` RPC 协议，检查响应命令和 request ID，连接、发送与接收共用一个调用期限。它支持 Linux/POSIX 数字 IPv4 地址，单连接串行调用，最大业务负载 65531 字节。连接就绪阶段会区分超时和 `POLLERR`、`POLLHUP`、`POLLNVAL`，响应阶段拒绝空帧、非法长度、错误命令、截断数据和错误 request ID；这些传输或协议错误都会关闭连接且不修改调用者原响应。它暂不支持 TLS、域名解析、异步多路复用或 RPC 服务端业务错误编码；超时不等于命令没有执行。
 
 ## 运行多进程参考
 
@@ -69,7 +69,7 @@ probe 是 JSON 行命令工具，连接现有 AppHost、发现和路由接口；
 
 ## 验证
 
-12 项可移植发现/路由测试已在 Windows/MSVC 实际运行。新增 TCP RPC 测试覆盖关联响应、连接复用、截断回复、错误 request ID、超时和连接拒绝。HTTP 适配、TCP 传输及参考程序通过 Linux/musl 交叉编译。
+12 项可移植发现/路由测试已在 Windows/MSVC 实际运行。新增 TCP RPC 测试覆盖关联响应、连接复用、截断回复、空响应、错误命令、错误 request ID、对端关闭、超时和连接拒绝。HTTP 适配、TCP 传输及参考程序通过 Linux/musl 交叉编译。
 
 CI 对可选模块运行 Linux 测试、ASan/UBSan、TSan 和 Windows 可移植测试；`consul-cluster` 任务执行真实 Consul 和多进程恢复测试。本机没有 Linux 或 Docker 运行环境，跨进程执行结果以该任务为准。
 
